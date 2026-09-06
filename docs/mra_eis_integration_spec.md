@@ -126,9 +126,11 @@ The sales API exposes endpoints for the last submitted online transaction and la
 
 The live Swagger currently exposes cancellation/voiding, credit/debit notes, VAT-5 certificate validation, TIN authorization-code checks, terminal blocking/unblocking checks, terminal site products, initial inventory upload, stock transfer/adjustment and related operations. Sitolo shall not assume every exposed MRA capability belongs in the first Sitolo release; the adapter shall implement only the approved capability set required for the business/legal scope. citeturn633109search0turn170859search2turn170859search6
 
-### 3.11 Current public materials contain a date discrepancy that must not be ignored
+### 3.11 EIS transition is complete and mandatory
 
-MRA's “Understanding EIS” material describes an implementation/transition sequence beginning in August 2025, while MRA's later public notice states that the EFD-to-EIS transition period ended on 31 January 2026 following publication of the 2025 EIS regulations on 9 January 2026. These materials are not internally identical in their stated transition timeline. The engineering team must use the latest written MRA position supplied for production/certification and must never derive legal compliance deadlines from an old PDF simply because it remains publicly reachable. citeturn170859search13turn170859search12
+As of September 2026, MRA's EIS transition is complete and mandatory: EFDs have been disallowed since 30 April 2026, and nationwide EIS rollout has been in effect since 1 May 2026, with more than 91% of targeted VAT-registered businesses onboarded as of 23 June 2026 (MRA public notice, 23 June 2026). Historical references to a “transition period” or EFD/EIS coexistence in older MRA materials are superseded. Sitolo's EIS integration must therefore assume EIS is the sole compliant invoicing path, not an optional or parallel system, for every taxpayer currently subject to the mandate.
+
+Large taxpayers integrate through the API; mid-size taxpayers use the web portal and do not require dedicated hardware. Terminal onboarding, certification, and production credentialing must be verified as live-system procedures, not pilot-program procedures. Any older EFD fallback or transition-grace language is historical context only and must not influence current operational behavior.
 
 ## 4. Scope
 

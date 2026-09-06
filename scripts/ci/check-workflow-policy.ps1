@@ -11,6 +11,15 @@ if (-not (Test-Path $workflows)) {
 
 $fail = $false
 
+# Phase 1 requires the trusted artifact and promotion paths to exist. Database
+# harness enforcement is intentionally excluded by the approved scope exception.
+foreach ($required in @("artifact.yml", "release.yml", "integration.yml")) {
+    if (-not (Test-Path (Join-Path $workflows $required))) {
+        Write-Output "POLICY VIOLATION: required Phase 1 workflow missing: $required"
+        $fail = $true
+    }
+}
+
 # Third-party actions must be pinned to an immutable 40-character commit SHA.
 $MutableUses = '(uses:\s+[A-Za-z0-9._/-]+@(v[0-9]+|stable|latest|nightly|master|main|beta|alpha|v[0-9]+\.[0-9]+))'
 $ElevatedEvents = 'pull_request_target|issue_comment|workflow_run|repository_dispatch'
@@ -34,6 +43,21 @@ foreach ($f in Get-ChildItem -Path $workflows -Filter *.yml) {
     if ($secrets) {
         Write-Output "POLICY NOTICE in $($f.Name): review secret references in workflow files before merge."
         $secrets | ForEach-Object { Write-Output ("    " + $_.Line.Trim()) }
+    }
+}
+
+if (Test-Path (Join-Path $workflows "artifact.yml")) {
+    $artifact = Get-Content -Raw (Join-Path $workflows "artifact.yml")
+    if ($artifact -notmatch 'attestations:\s*write' -or $artifact -notmatch 'id-token:\s*write') {
+        Write-Output "POLICY VIOLATION in artifact.yml: provenance permissions are required."
+        $fail = $true
+    }
+}
+if (Test-Path (Join-Path $workflows "release.yml")) {
+    $release = Get-Content -Raw (Join-Path $workflows "release.yml")
+    if ($release -notmatch 'environment:\s*production' -or $release -match 'pull_request:') {
+        Write-Output "POLICY VIOLATION in release.yml: promotion must be protected and cannot run for pull requests."
+        $fail = $true
     }
 }
 

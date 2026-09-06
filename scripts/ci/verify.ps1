@@ -27,6 +27,10 @@ Write-Output "==> Unit tests"
 & cargo test --workspace --all-targets --all-features --locked 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Output "unit tests failed"; exit $LASTEXITCODE }
 
+Write-Output "==> Release build"
+& cargo build --workspace --release --locked 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Output "release build failed"; exit $LASTEXITCODE }
+
 Write-Output "==> Architecture check"
 & "$ROOT\scripts\ci\check-architecture.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Output "architecture check failed"; exit $LASTEXITCODE }

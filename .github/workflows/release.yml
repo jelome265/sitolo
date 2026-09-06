@@ -1,0 +1,29 @@
+name: release-promotion
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  verify_before_production_promotion:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Download immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ github.event.release.tag_name }}" --pattern 'sitolo-*.tar.gz' --pattern release-metadata.json --pattern SHA256SUMS --dir release
+      - name: Verify published artifact digest
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+      - name: Verify GitHub build provenance
+        working-directory: release
+        run: gh attestation verify sitolo-*.tar.gz --repo "${{ github.repository }}"
+      - name: Publish promotion evidence
+        working-directory: release
+        run: cat release-metadata.json

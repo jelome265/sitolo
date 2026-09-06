@@ -23,8 +23,14 @@ cargo check --workspace --all-targets --all-features --locked
 echo "==> Unit tests"
 cargo test --workspace --all-targets --all-features --locked
 
+echo "==> Release build"
+cargo build --workspace --release --locked
+
 echo "==> Architecture check"
 ./scripts/ci/check-architecture
+
+echo "==> Phase 2 policy check"
+./scripts/ci/check-phase2-policy
 
 echo "==> Dependency and license policy"
 if command -v cargo-deny >/dev/null 2>&1; then

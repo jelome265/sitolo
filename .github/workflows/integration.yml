@@ -1,0 +1,25 @@
+name: integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  non_database_contracts:
+    name: non-database contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          components: rustfmt, clippy
+      - name: Run boundary and contract tests
+        run: cargo test --workspace --all-targets --all-features --locked
+      - name: Record explicit Phase 1 exclusion
+        run: echo "PostgreSQL integration harness is intentionally deferred by the approved Phase 1 scope exception."

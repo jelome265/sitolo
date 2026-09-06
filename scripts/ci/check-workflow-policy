@@ -11,10 +11,32 @@ fi
 
 fail=0
 
+# Phase 1 requires trusted artifact and promotion controls. PostgreSQL harness
+# enforcement is excluded by the approved scope exception.
+for workflow in artifact.yml release.yml integration.yml; do
+  if [[ ! -f ".github/workflows/$workflow" ]]; then
+    echo "POLICY VIOLATION: required Phase 1 workflow missing: $workflow"
+    fail=1
+  fi
+done
+
 # Third-party actions must be pinned to an immutable 40-character commit SHA.
 # Mutable references (v tags, branches) are rejected (Phase 1 spec, section 27).
 if rg -n 'uses: [A-Za-z0-9._/-]+@(v[0-9]+|stable|latest|nightly|master|main|beta|alpha|v[0-9]+\.[0-9]+)' .github/workflows -g '*.yml' -g '*.yaml'; then
   echo "POLICY VIOLATION: third-party actions must be pinned to full immutable commit SHAs."
+  fail=1
+fi
+
+if [[ -f .github/workflows/artifact.yml ]] && ! rg -q 'attestations:\s*write' .github/workflows/artifact.yml; then
+  echo "POLICY VIOLATION in artifact.yml: provenance permissions are required."
+  fail=1
+fi
+if [[ -f .github/workflows/artifact.yml ]] && ! rg -q 'id-token:\s*write' .github/workflows/artifact.yml; then
+  echo "POLICY VIOLATION in artifact.yml: provenance permissions are required."
+  fail=1
+fi
+if [[ -f .github/workflows/release.yml ]] && { ! rg -q 'environment:\s*production' .github/workflows/release.yml || rg -q 'pull_request:' .github/workflows/release.yml; }; then
+  echo "POLICY VIOLATION in release.yml: promotion must be protected and cannot run for pull requests."
   fail=1
 fi
 
