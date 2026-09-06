@@ -60,6 +60,6 @@ jobs:
         with:
           languages: rust
       - name: Autobuild
-        uses: github/codeql-action/autobuild@6f5948dfacef28e207b48d0905cf90c03365536d
+        uses: github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938
       - name: Analyze
         uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d
