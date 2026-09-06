@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT"
+
+echo "==> Verify toolchain"
+rustc --version
+cargo --version
+
+echo "==> Verify lockfile (fails if stale)"
+cargo metadata --format-version 1 --locked >/dev/null
+
+echo "==> Format check"
+cargo fmt --all -- --check
+
+echo "==> Lint"
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+echo "==> Compile"
+cargo check --workspace --all-targets --all-features --locked
+
+echo "==> Unit tests"
+cargo test --workspace --all-targets --all-features --locked
+
+echo "==> Architecture check"
+./scripts/ci/check-architecture
+
+echo "==> Dependency and license policy"
+if command -v cargo-deny >/dev/null 2>&1; then
+  cargo deny check
+else
+  echo "    cargo-deny not installed; skipping (the CI security workflow installs it unconditionally)"
+fi
+if command -v cargo-audit >/dev/null 2>&1; then
+  cargo audit
+else
+  echo "    cargo-audit not installed; skipping (the CI security workflow installs it unconditionally)"
+fi
+
+echo "==> All verification passed"

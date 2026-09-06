@@ -1,0 +1,28 @@
+# Repository ownership model.
+#
+# CODEOWNERS complements branch protection; it does not replace it.
+# GitHub requires at least one reviewer from the owning team for these paths.
+
+# Default ownership for anything not matched below.
+* @jelome265
+
+# CI and GitHub configuration are security-sensitive executable configuration.
+.github/workflows/ @jelome265
+.github/ @jelome265
+
+# Database migrations are durable and reviewable artifacts.
+/migrations/ @jelome265
+
+# Security-sensitive crates.
+/crates/sitolo-auth/ @jelome265
+/crates/sitolo-authz/ @jelome265
+/crates/sitolo-tenancy/ @jelome265
+/crates/sitolo-persistence/ @jelome265
+/crates/sitolo-sync/ @jelome265
+/crates/sitolo-integrations/ @jelome265
+
+# Deployment and infrastructure.
+/infra/ @jelome265
+
+# Documented architecture boundaries and phase specifications.
+/docs/ @jelome265

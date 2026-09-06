@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT"
+
+if [ ! -d .github/workflows ]; then
+  echo "Workflow policy check PASSED (no workflow files present)"
+  exit 0
+fi
+
+fail=0
+
+# Third-party actions must be pinned to an immutable 40-character commit SHA.
+# Mutable references (v tags, branches) are rejected (Phase 1 spec, section 27).
+if rg -n 'uses: [A-Za-z0-9._/-]+@(v[0-9]+|stable|latest|nightly|master|main|beta|alpha|v[0-9]+\.[0-9]+)' .github/workflows -g '*.yml' -g '*.yaml'; then
+  echo "POLICY VIOLATION: third-party actions must be pinned to full immutable commit SHAs."
+  fail=1
+fi
+
+# Elevated-trust events are trust-boundary changes and require explicit review.
+if rg -n 'pull_request_target|issue_comment|workflow_run|repository_dispatch' .github/workflows -g '*.yml' -g '*.yaml'; then
+  echo "POLICY VIOLATION: elevated-trust workflow events require explicit justification and review."
+  fail=1
+fi
+
+# No production secrets may be referenced without a ${{ secrets. }} form under
+# an explicitly allowed name; this is a lint-level signal, defense-in-depth only.
+if rg -n '(secret_password|secret_token|access_key|private_key|CREDENTIALS)' .github/workflows -g '*.yml' -g '*.yaml'; then
+  echo "POLICY NOTICE: review secret references in workflow files before merge."
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "Workflow policy check FAILED"
+  exit 1
+fi
+
+echo "Workflow policy check PASSED"

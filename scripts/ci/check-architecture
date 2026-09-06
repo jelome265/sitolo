@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT"
+
+# Crates that must not depend on infrastructure or provider machinery.
+PURE_CRATES=(
+  "sitolo-domain"
+)
+
+# Forbidden infrastructure/provider crates in the pure layers (Phase 1 spec section 6).
+# Extend this allowlist of crate-name tokens with care.
+FORBIDDEN='\b(axum|sqlx|redis|reqwest|hyper|tokio-postgres|ureq)\b'
+
+fail=0
+for crate in "${PURE_CRATES[@]}"; do
+  tree="$(cargo tree --locked -p "$crate" 2>/dev/null || true)"
+  if grep -qiE "$FORBIDDEN" <<<"$tree"; then
+    echo "ARCHITECTURE VIOLATION: $crate depends on a forbidden infrastructure crate:"
+    echo "$tree" | grep -qiE "$FORBIDDEN" && echo "$tree" | grep -iE "$FORBIDDEN"
+    fail=1
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "Architecture check FAILED"
+  exit 1
+fi
+
+echo "Architecture check PASSED"

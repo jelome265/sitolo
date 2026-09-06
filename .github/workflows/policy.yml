@@ -1,0 +1,28 @@
+name: policy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/**"
+      - "deny.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Workflow policy check
+        run: ./scripts/ci/check-workflow-policy
+      - name: Repository policy presence
+        run: |
+          for f in rust-toolchain.toml deny.toml Cargo.lock .github/CODEOWNERS; do
+            test -f "$f" || { echo "missing required policy file: $f"; exit 1; }
+          done
