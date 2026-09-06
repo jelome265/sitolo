@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/api",
+    "apps/worker",
+    "crates/sitolo-api",
+    "crates/sitolo-application",
+    "crates/sitolo-audit",
+    "crates/sitolo-auth",
+    "crates/sitolo-authz",
+    "crates/sitolo-config",
+    "crates/sitolo-domain",
+    "crates/sitolo-events",
+    "crates/sitolo-integrations",
+    "crates/sitolo-observability",
+    "crates/sitolo-persistence",
+    "crates/sitolo-sync",
+    "crates/sitolo-tenancy",
+    "crates/sitolo-testkit",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+debug = "line-tables-only"

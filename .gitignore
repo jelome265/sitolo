@@ -1,0 +1,43 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Local test / coverage output
+/coverage/
+/coverage.json
+lcov.info
+*.profraw
+*.profdata
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Local configuration that may contain machine-specific values
+# (repository-approved build/CI configuration is committed; developer-local
+# override files are not)
+!.cargo/config.toml
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!tests/fixtures/**/*.pem
+
+# Generated API clients / schema tooling output
+/generated/
+
+# OS noise
+Thumbs.db
+desktop.ini
+
+# IDE noise
+.vscode/
+.idea/
+*.iml

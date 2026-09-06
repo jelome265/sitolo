@@ -1,0 +1,7 @@
+# Repository-approved Cargo configuration.
+#
+# Per the Phase 1 specification (section 9), this file must not contain
+# developer-specific absolute paths, credentials, private tokens, or
+# production registry passwords. Source replacement, private registries,
+# custom linkers, and unusual build flags alter the build trust model and
+# require review before being added here.
