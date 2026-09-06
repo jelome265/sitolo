@@ -1,0 +1,14 @@
+schema_version: 1
+forbidden_classes:
+  - secret_value
+  - authorization_header
+  - session_token
+  - password
+  - payment_credential
+  - mra_terminal_secret
+  - raw_request_body
+  - raw_provider_body
+rules:
+  - "Secret values are never serialized into logs, traces, metrics, API responses, or diagnostics."
+  - "References may be represented only by a non-secret fingerprint where correlation is required."
+  - "User-controlled identifiers are never metric labels."

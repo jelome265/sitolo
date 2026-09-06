@@ -6,3 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+sha2.workspace = true
+sitolo-security.workspace = true
+thiserror.workspace = true

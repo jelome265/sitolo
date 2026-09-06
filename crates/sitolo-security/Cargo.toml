@@ -1,9 +1,10 @@
 [package]
-name = "sitolo-api"
+name = "sitolo-security"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-sitolo-observability = { path = "../sitolo-observability" }
+async-trait.workspace = true
+thiserror.workspace = true

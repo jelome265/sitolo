@@ -1,0 +1,10 @@
+schema_version: 1
+metrics:
+  - { name: sitolo_http_requests_total, type: counter, unit: requests, labels: [method, route_template, status_class] }
+  - { name: sitolo_http_request_duration_seconds, type: histogram, unit: seconds, labels: [method, route_template] }
+  - { name: sitolo_errors_total, type: counter, unit: errors, labels: [error_family, operation] }
+  - { name: sitolo_configuration_load_failures_total, type: counter, unit: failures, labels: [reason] }
+  - { name: sitolo_secret_access_failures_total, type: counter, unit: failures, labels: [secret_class] }
+  - { name: sitolo_telemetry_dropped_records_total, type: counter, unit: records, labels: [priority] }
+  - { name: sitolo_db_pool_wait_seconds, type: histogram, unit: seconds, labels: [result] }
+  - { name: sitolo_worker_jobs_total, type: counter, unit: jobs, labels: [job_type, result] }

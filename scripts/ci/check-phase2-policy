@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$root"
+for path in docs/telemetry/{events,metrics,redaction}.yaml docs/runbooks/{secret-compromise,telemetry-blackout,configuration-poisoning,error-storm}.md; do
+  [[ -f "$path" ]] || { echo "PHASE 2 POLICY VIOLATION: missing $path"; exit 1; }
+done
+violations="$(rg -n 'std::env::(var|vars)' crates apps -g '*.rs' | grep -vE 'crates/sitolo-(config|security)/' || true)"
+[[ -z "$violations" ]] || { echo "$violations"; exit 1; }
+console="$(rg -n '\b(println!|dbg!)' crates apps -g '*.rs' || true)"
+[[ -z "$console" ]] || { echo "$console"; exit 1; }
+echo "Phase 2 policy check PASSED"

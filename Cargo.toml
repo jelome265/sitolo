@@ -14,6 +14,7 @@ members = [
     "crates/sitolo-integrations",
     "crates/sitolo-observability",
     "crates/sitolo-persistence",
+    "crates/sitolo-security",
     "crates/sitolo-sync",
     "crates/sitolo-tenancy",
     "crates/sitolo-testkit",
@@ -26,6 +27,13 @@ rust-version = "1.98.1"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+async-trait = { version = "0.1.83", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+tracing = { version = "0.1", default-features = false }
+sitolo-security = { path = "crates/sitolo-security" }
 
 [profile.dev]
 overflow-checks = true

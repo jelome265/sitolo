@@ -31,6 +31,10 @@ Write-Output "==> Architecture check"
 & "$ROOT\scripts\ci\check-architecture.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Output "architecture check failed"; exit $LASTEXITCODE }
 
+Write-Output "==> Phase 2 policy check"
+& "$ROOT\scripts\ci\check-phase2-policy.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Output "phase 2 policy check failed"; exit $LASTEXITCODE }
+
 Write-Output "==> Dependency and license policy"
 $deny = Get-Command cargo-deny -ErrorAction SilentlyContinue
 if ($deny) {

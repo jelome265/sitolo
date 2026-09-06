@@ -1,0 +1,12 @@
+schema_version: 1
+events:
+  - { name: service.starting, owner: platform, classification: operational }
+  - { name: service.ready, owner: platform, classification: operational }
+  - { name: configuration.loaded, owner: platform, classification: operational }
+  - { name: configuration.validation.failed, owner: platform, classification: security }
+  - { name: secret.access.failed, owner: security, classification: security }
+  - { name: http.request.completed, owner: api, classification: operational }
+  - { name: application.error, owner: platform, classification: operational }
+  - { name: telemetry.export.failed, owner: platform, classification: operational }
+  - { name: telemetry.record.dropped, owner: platform, classification: operational }
+  - { name: external.request.unknown_outcome, owner: integrations, classification: operational }
