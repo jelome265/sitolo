@@ -158,7 +158,7 @@ mod tests {
             lockout: Duration::from_secs(10),
         };
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        limiter.check(AbuseClass::Login, "user-1", &rule, now);
+        let _ = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         let decision = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         assert!(matches!(decision, RateLimitDecision::Locked { .. }));
         let later = now + Duration::from_secs(11);
@@ -176,7 +176,7 @@ mod tests {
         };
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         for _ in 0..3 {
-            limiter.check(AbuseClass::Login, "user-1", &rule, now);
+            let _ = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         }
         let later = now + Duration::from_secs(61);
         let decision = limiter.check(AbuseClass::Login, "user-1", &rule, later);

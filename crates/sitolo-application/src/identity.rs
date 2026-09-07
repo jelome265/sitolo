@@ -37,6 +37,8 @@ pub struct IdentityPolicy {
 pub struct IdentityService {
     db: Arc<IdentityDatabase>,
     hasher: Arc<dyn PasswordHasher>,
+    // Wired for future OIDC provider use; not yet consulted by reference use cases.
+    #[allow(dead_code)]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
     policy: IdentityPolicy,
@@ -51,7 +53,7 @@ impl IdentityService {
     ) -> Self {
         let mut limiter = RateLimiter::new();
         for (class, rule) in &policy.abuse_rules {
-            limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
+            let _ = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
         }
         IdentityService {
             db,
@@ -142,7 +144,7 @@ impl IdentityService {
         }
         // Hash and store user (reference-only).
         let user_id = UserId::new("user-login").expect("user id");
-        let hashed = self.hasher.hash(SecretValue::new(password.clone())).await?;
+        let _hashed = self.hasher.hash(SecretValue::new(password.clone())).await?;
         let user_snap = self
             .db
             .user_snapshot(&user_id)
@@ -342,7 +344,7 @@ impl IdentityService {
             digits: 6,
             window: 1,
         };
-        let secret = if let Some(ref sealed) = auth.secret_reference {
+        let secret = if let Some(ref _sealed) = auth.secret_reference {
             // In-memory store for tests.
             vec![]
         } else {
@@ -444,7 +446,7 @@ impl IdentityService {
     ) -> Result<sitolo_auth::SecurityContext, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let snapshot = self.db.accept_session(session_id, now).await?;
-        let device = if let Some(d) = snapshot.session.device_id.as_ref() {
+        let _device = if let Some(d) = snapshot.session.device_id.as_ref() {
             self.db.device_snapshot(d).await
         } else {
             None

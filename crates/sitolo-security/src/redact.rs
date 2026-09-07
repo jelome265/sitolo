@@ -156,7 +156,12 @@ fn field_at(bytes: &[u8], at: usize, name: &str) -> bool {
         return false;
     }
     let before_ok = at == 0 || is_field_boundary(bytes[at - 1]);
-    let after_ok = end == bytes.len() || bytes[end] == b'=' || bytes[end] == b':';
+    let after_ok = end == bytes.len()
+        || bytes[end] == b'='
+        || bytes[end] == b':'
+        || (bytes[end] == b'"'
+            && end + 1 < bytes.len()
+            && bytes[end + 1] == b':');
     before_ok && after_ok
 }
 
@@ -177,6 +182,14 @@ fn value_end(bytes: &[u8], start: usize) -> usize {
             b' ' | b'\t' | b'\n' | b'\r' | b'&' | b';' | b'"' | b'\'' | b'}'
         )
     {
+        i += 1;
+    }
+    i
+}
+
+fn eol_end(bytes: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < bytes.len() && !matches!(bytes[i], b'\n' | b'\r') {
         i += 1;
     }
     i
@@ -208,12 +221,17 @@ pub fn sanitize_authentication_text(input: &str) -> String {
                 out.push_str(&input[i..i + name.len()]);
                 let mut j = i + name.len();
                 // Consume the `=`/`:` separator and any spaces/quote after it.
-                while j < bytes.len() && (bytes[j] == b':' || bytes[j] == b'=' || bytes[j] == b' ')
+                while j < bytes.len()
+                    && (bytes[j] == b':' || bytes[j] == b'=' || bytes[j] == b' ' || bytes[j] == b'"')
                 {
                     out.push(bytes[j] as char);
                     j += 1;
                 }
-                let value_end_at = value_end(bytes, j);
+                let value_end_at = if name.eq_ignore_ascii_case("authorization") {
+                    eol_end(bytes, j)
+                } else {
+                    value_end(bytes, j)
+                };
                 out.push_str(REDACTED);
                 i = value_end_at;
                 replaced = true;

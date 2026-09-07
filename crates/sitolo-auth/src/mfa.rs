@@ -327,10 +327,10 @@ impl MfaState {
             .authenticators
             .get_mut(id)
             .ok_or(AuthError::InvalidIdentifier)?;
-        if let Some(last) = auth.last_accepted_step {
-            if step <= last {
-                return Err(AuthError::MfaFailed);
-            }
+        if let Some(last) = auth.last_accepted_step
+            && step <= last
+        {
+            return Err(AuthError::MfaFailed);
         }
         auth.last_accepted_step = Some(step);
         Ok(())
