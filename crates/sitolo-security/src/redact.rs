@@ -159,9 +159,7 @@ fn field_at(bytes: &[u8], at: usize, name: &str) -> bool {
     let after_ok = end == bytes.len()
         || bytes[end] == b'='
         || bytes[end] == b':'
-        || (bytes[end] == b'"'
-            && end + 1 < bytes.len()
-            && bytes[end + 1] == b':');
+        || (bytes[end] == b'"' && end + 1 < bytes.len() && bytes[end + 1] == b':');
     before_ok && after_ok
 }
 
@@ -222,7 +220,10 @@ pub fn sanitize_authentication_text(input: &str) -> String {
                 let mut j = i + name.len();
                 // Consume the `=`/`:` separator and any spaces/quote after it.
                 while j < bytes.len()
-                    && (bytes[j] == b':' || bytes[j] == b'=' || bytes[j] == b' ' || bytes[j] == b'"')
+                    && (bytes[j] == b':'
+                        || bytes[j] == b'='
+                        || bytes[j] == b' '
+                        || bytes[j] == b'"')
                 {
                     out.push(bytes[j] as char);
                     j += 1;

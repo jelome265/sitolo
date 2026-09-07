@@ -142,6 +142,9 @@ impl Session {
     /// Creates an authoritative session inside its class lifetime. Creation is
     /// transactional at the repository boundary; a partial activation never
     /// becomes observable (Appendix A.1).
+    // Explicit 9-field domain constructor; bundling into a params struct would
+    // obscure the Appendix A.1 creation invariant at call sites.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn create(
         id: SessionId,
@@ -184,14 +187,14 @@ impl Session {
             self.state = SessionState::SecurityRevoked;
             return Err(AuthError::SecurityVersionMismatch);
         }
-        if let Some(device) = device_state {
-            if device != crate::device::DeviceState::Active {
-                return Err(match device {
-                    crate::device::DeviceState::Revoked => AuthError::DeviceRevoked,
-                    crate::device::DeviceState::Suspended => AuthError::DeviceSuspended,
-                    _ => AuthError::DeviceVerificationRequired,
-                });
-            }
+        if let Some(device) = device_state
+            && device != crate::device::DeviceState::Active
+        {
+            return Err(match device {
+                crate::device::DeviceState::Revoked => AuthError::DeviceRevoked,
+                crate::device::DeviceState::Suspended => AuthError::DeviceSuspended,
+                _ => AuthError::DeviceVerificationRequired,
+            });
         }
         if self.state == SessionState::Revoked {
             return Err(AuthError::SessionRevoked);

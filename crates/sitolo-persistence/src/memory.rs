@@ -389,15 +389,13 @@ impl IdentityStores for IdentityDatabase {
             let session = state.sessions.get_mut(&sid).expect("session");
             let matches = match scope {
                 RevocationScope::CurrentSession => {
-                    user_id.map_or(false, |uid| &session.user_id == uid)
-                        && device_id.map_or(true, |did| session.device_id.as_ref() == Some(did))
+                    (user_id == Some(&session.user_id))
+                        && device_id.is_none_or(|did| session.device_id.as_ref() == Some(did))
                 }
                 RevocationScope::AllSessionsOnCurrentDevice => {
-                    device_id.map_or(false, |did| session.device_id.as_ref() == Some(did))
+                    device_id.is_some_and(|did| session.device_id.as_ref() == Some(did))
                 }
-                RevocationScope::AllUserSessions => {
-                    user_id.map_or(false, |uid| &session.user_id == uid)
-                }
+                RevocationScope::AllUserSessions => user_id == Some(&session.user_id),
                 RevocationScope::AuthenticatorFamily => true,
             };
             if matches {
