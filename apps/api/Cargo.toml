@@ -9,4 +9,19 @@ license.workspace = true
 name = "sitolo-api"
 path = "src/main.rs"
 
+[lib]
+name = "sitolo_api_bin"
+path = "src/lib.rs"
+
 [dependencies]
+sitolo-config.workspace = true
+sitolo-observability.workspace = true
+sitolo-security.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true

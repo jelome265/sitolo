@@ -19,10 +19,17 @@ use crate::{SecretClass, SecretRef};
 ///
 /// Secrets fail closed: a missing, invalid, or expired secret is never replaced
 /// by a source-embedded default (Phase 2 specification, §16).
+///
+/// F-014: error text carries the secret *class* and a non-secret reference
+/// fingerprint only. Raw reference paths can expose environment/project
+/// naming, so they never enter error strings, logs, or telemetry.
 #[derive(Debug, Error)]
 pub enum SecretError {
-    #[error("secret missing: {class} ref {path}")]
-    Missing { class: SecretClass, path: String },
+    #[error("secret missing: {class} ref {reference}")]
+    Missing {
+        class: SecretClass,
+        reference: String,
+    },
     #[error("secret provider unavailable for {class}")]
     Unavailable { class: SecretClass },
     #[error("secret provider denied access for {class}")]
@@ -50,6 +57,12 @@ pub trait SecretProvider: Send + Sync {
 /// mapping provided by the caller. Must never be selected in production;
 /// `get` returns [`SecretError::LocalProviderForbidden`] when constructed with
 /// `production = true`.
+///
+/// F-013, Model 1 (explicit class-only mapping): the reference *path* is
+/// deliberately ignored when selecting the environment variable; only the
+/// secret *class* maps to a variable. Two references of the same class
+/// therefore resolve through the same variable by design. Changing a path
+/// does not change which credential is selected.
 pub struct EnvSecretProvider {
     production: bool,
     /// Maps a `SecretClass` to the environment variable name it should read.
@@ -97,7 +110,7 @@ impl SecretProvider for EnvSecretProvider {
             Ok(v) if !v.is_empty() => Ok(SecretValue::new(v)),
             _ => Err(SecretError::Missing {
                 class: reference.class(),
-                path: reference.path().to_string(),
+                reference: reference.reference_fingerprint(),
             }),
         }
     }
@@ -107,14 +120,21 @@ impl SecretProvider for EnvSecretProvider {
 mod tests {
     use super::*;
 
+    const SENTINEL: &str = "TEST_ONLY_PROVIDER_SECRET_001";
+
     #[test]
-    fn env_provider_rejects_production() {
-        let p = EnvSecretProvider::new(true);
-        assert!(p.production, "production provider guard must be armed");
-        let r = SecretRef::new(SecretClass::Database, "prod/sitolo/db").unwrap();
-        // Invoking the async fn in a minimal runtime to prove the guard fires
-        // before any environment read is exercised in the config integration
-        // tests; here we only confirm the invariant that the guard is set.
-        let _ = r.class();
+    fn missing_secret_error_carries_no_path_or_value() {
+        // F-014: the error identifies the class and a non-secret reference
+        // fingerprint, never the raw path or a value.
+        let error = SecretError::Missing {
+            class: SecretClass::Database,
+            reference: SecretRef::new(SecretClass::Database, "prod/sitolo/db")
+                .unwrap()
+                .reference_fingerprint(),
+        };
+        let text = format!("{error}");
+        assert!(text.contains("database"));
+        assert!(!text.contains("prod/sitolo/db"));
+        assert!(!text.contains(SENTINEL));
     }
 }

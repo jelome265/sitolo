@@ -271,15 +271,39 @@ pub mod defaults {
             }
         }
 
-        /// A production-safe preset: everything required, no local provider,
-        /// no telemetry unless explicitly configured.
+        /// A staging preset: production posture (no local provider, no
+        /// development secret namespace), but database identity must still be
+        /// supplied explicitly. There are no implicit staging credentials.
+        pub fn staging() -> Self {
+            Builder {
+                environment: Environment::Staging,
+                log_level: LogLevel::Info,
+                allow_local_secret_provider: false,
+                otel_endpoint: None,
+                db_host: String::new(),
+                db_name: String::new(),
+                db_user: String::new(),
+                db_password_ref: None,
+                ..Builder::default()
+            }
+        }
+
+        /// A production-safe baseline: no local provider, no development
+        /// secret namespace, and no implicit database identity. Database
+        /// host/name/user/reference must be supplied explicitly; validation
+        /// rejects the empty placeholders (F-002: production must never
+        /// inherit development-only defaults).
         pub fn production() -> Self {
             Builder {
                 environment: Environment::Production,
                 log_level: LogLevel::Info,
                 allow_local_secret_provider: false,
                 otel_endpoint: Some("https://collector.sitolo.internal".to_string()),
-                ..Builder::development()
+                db_host: String::new(),
+                db_name: String::new(),
+                db_user: String::new(),
+                db_password_ref: None,
+                ..Builder::default()
             }
         }
     }

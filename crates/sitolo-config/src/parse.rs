@@ -15,13 +15,23 @@ impl EnvLoader {
     pub fn from_pairs(
         pairs: impl IntoIterator<Item = (String, String)>,
     ) -> Result<defaults::Builder, UnknownKey> {
+        // Duplicate keys: last occurrence in input order wins. The map
+        // iteration itself is sorted and therefore deterministic.
         let mut values = BTreeMap::new();
         for (key, value) in pairs {
             if let Some(name) = key.strip_prefix(ENV_PREFIX) {
                 values.insert(name.to_string(), value);
             }
         }
-        let mut b = defaults::Builder::development();
+        // F-002: the environment selector runs before any defaults are
+        // chosen, so production/staging never inherit development-only
+        // values. An absent selector keeps the development baseline.
+        let mut b = match values.get("RUNTIME__ENVIRONMENT").map(String::as_str) {
+            None | Some("development") => defaults::Builder::development(),
+            Some("staging") => defaults::Builder::staging(),
+            Some("production") => defaults::Builder::production(),
+            Some(_) => return Err(UnknownKey("RUNTIME__ENVIRONMENT".to_string())),
+        };
         for (key, value) in values {
             apply(&mut b, &key, &value)?;
         }

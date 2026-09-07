@@ -1,9 +1,55 @@
-//! Sitolo API binary.
+//! Sitolo API binary: process entry and listener lifecycle.
 //!
-//! Owns process entry, runtime assembly, and wiring of HTTP routes to
-//! application services. Business rules must not be implemented here.
-//!
-//! This is a Phase 1 scaffold and is not production functionality.
+//! Phase 0–2 audit (F-001/F-020): `main` only orchestrates
+//! build → bind → serve → shutdown. Composition lives in [`bootstrap`].
+//! The listener binds only after [`bootstrap::StartupContext`] exists, so a
+//! socket is never published before startup checks complete.
 #![forbid(unsafe_code)]
 
-fn main() {}
+use std::sync::Arc;
+
+use sitolo_api_bin::bootstrap::{StartupContext, StartupError};
+use sitolo_api_bin::serve::serve;
+use tokio::sync::oneshot;
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
+    match run().await {
+        Ok(()) => {}
+        Err(error) => {
+            eprintln!("sitolo-api: startup failed: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run() -> Result<(), StartupError> {
+    let context = StartupContext::build().await?;
+    // Structural readiness gate: no socket exists before this point.
+    let listener = tokio::net::TcpListener::bind(context.config().bind_address)
+        .await
+        .map_err(|_| StartupError::ConfigRejected { problems: 0 })?;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let serve = tokio::spawn(serve(listener, Arc::clone(context.state()), shutdown_rx));
+    wait_for_shutdown_signal().await;
+    let _ = shutdown_tx.send(());
+    let _ = serve.await;
+    Ok(())
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = terminate.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
