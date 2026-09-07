@@ -123,10 +123,10 @@ impl RefreshLedger {
         }
         // The family may have been compromised by an earlier replay; refuse
         // to issue a successor in that case (§12.2).
-        if let Some(family) = self.families.get(&existing.family_id) {
-            if family.compromised {
-                return Err(AuthError::RefreshTokenReused);
-            }
+        if let Some(family) = self.families.get(&existing.family_id)
+            && family.compromised
+        {
+            return Err(AuthError::RefreshTokenReused);
         }
         let previous = self.credentials.get_mut(&id).expect("existing");
         previous.state = RefreshState::Consumed;

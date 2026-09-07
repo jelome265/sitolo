@@ -64,11 +64,7 @@ impl IdentityService {
         }
     }
 
-    fn check_rate(
-        &self,
-        class: AbuseClass,
-        key: &str,
-    ) -> RateLimitDecision {
+    fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
         let mut limiter = self.limiter.lock().expect("limiter lock");
         let rule = self
             .policy
@@ -84,6 +80,9 @@ impl IdentityService {
         limiter.check(class, key, &rule, SystemTime::now())
     }
 
+    // Explicit audit-event fields keep each call site reviewable; bundling
+    // into a params struct would hide which auth context is populated.
+    #[allow(clippy::too_many_arguments)]
     async fn emit_audit(
         &self,
         name: AuthEventName,
@@ -132,7 +131,20 @@ impl IdentityService {
         let now = SystemTime::now();
         let decision = self.check_rate(AbuseClass::Login, "subject");
         if matches!(decision, RateLimitDecision::Locked { .. }) {
-            self.emit_audit(AuthEventName::LoginRateLimited, EventResult::Failure, None, None, None, Some(platform), None, None, None, None, now).await;
+            self.emit_audit(
+                AuthEventName::LoginRateLimited,
+                EventResult::Failure,
+                None,
+                None,
+                None,
+                Some(platform),
+                None,
+                None,
+                None,
+                None,
+                now,
+            )
+            .await;
             return Err(sitolo_auth::AuthError::AuthenticationRateLimited);
         }
         // For the reference implementation, accept any non-empty password
@@ -149,41 +161,81 @@ impl IdentityService {
             .db
             .user_snapshot(&user_id)
             .await
-            .unwrap_or(
-                UserSnapshot {
-                    id: user_id.clone(),
-                    security_version: SecurityVersion(1),
-                    suspended: false,
-                    has_password: false,
-                    mfa_active: false,
-                    password_verifier: None,
-                    password_policy_version: 1,
-                },
-            );
+            .unwrap_or(UserSnapshot {
+                id: user_id.clone(),
+                security_version: SecurityVersion(1),
+                suspended: false,
+                has_password: false,
+                mfa_active: false,
+                password_verifier: None,
+                password_policy_version: 1,
+            });
         if user_snap.suspended {
-            self.emit_audit(AuthEventName::LoginFailure, EventResult::Failure, Some(&user_id), None, None, Some(platform), Some(AuthenticationMethod::Password), None, None, Some(user_snap.security_version), now).await;
+            self.emit_audit(
+                AuthEventName::LoginFailure,
+                EventResult::Failure,
+                Some(&user_id),
+                None,
+                None,
+                Some(platform),
+                Some(AuthenticationMethod::Password),
+                None,
+                None,
+                Some(user_snap.security_version),
+                now,
+            )
+            .await;
             return Err(sitolo_auth::AuthError::AuthenticationFailed);
         }
         if user_snap.has_password {
             if let Some(verifier) = &user_snap.password_verifier {
-                let ok = self.hasher.verify(SecretValue::new(password), &sitolo_auth::PasswordVerifierRecord {
-                    verifier: verifier.clone(),
-                    policy_version: user_snap.password_policy_version,
-                }).await?;
+                let ok = self
+                    .hasher
+                    .verify(
+                        SecretValue::new(password),
+                        &sitolo_auth::PasswordVerifierRecord {
+                            verifier: verifier.clone(),
+                            policy_version: user_snap.password_policy_version,
+                        },
+                    )
+                    .await?;
                 if !ok {
-                    self.emit_audit(AuthEventName::LoginFailure, EventResult::Failure, Some(&user_id), None, None, Some(platform), Some(AuthenticationMethod::Password), None, Some("invalid_credential"), Some(user_snap.security_version), now).await;
+                    self.emit_audit(
+                        AuthEventName::LoginFailure,
+                        EventResult::Failure,
+                        Some(&user_id),
+                        None,
+                        None,
+                        Some(platform),
+                        Some(AuthenticationMethod::Password),
+                        None,
+                        Some("invalid_credential"),
+                        Some(user_snap.security_version),
+                        now,
+                    )
+                    .await;
                     return Err(sitolo_auth::AuthError::AuthenticationFailed);
                 }
             } else {
-                self.emit_audit(AuthEventName::LoginFailure, EventResult::Failure, Some(&user_id), None, None, Some(platform), Some(AuthenticationMethod::Password), None, Some("missing_verifier"), Some(user_snap.security_version), now).await;
+                self.emit_audit(
+                    AuthEventName::LoginFailure,
+                    EventResult::Failure,
+                    Some(&user_id),
+                    None,
+                    None,
+                    Some(platform),
+                    Some(AuthenticationMethod::Password),
+                    None,
+                    Some("missing_verifier"),
+                    Some(user_snap.security_version),
+                    now,
+                )
+                .await;
                 return Err(sitolo_auth::AuthError::AuthenticationFailed);
             }
         }
-        let assurance = if user_snap.mfa_active {
-            Assurance::A1 // MFA step-up required later
-        } else {
-            Assurance::A1
-        };
+        // MFA step-up required later when mfa_active; initial grant stays A1.
+        let assurance = Assurance::A1;
         let established = self
             .db
             .establish_session(
@@ -196,7 +248,20 @@ impl IdentityService {
                 now,
             )
             .await?;
-        self.emit_audit(AuthEventName::LoginSuccess, EventResult::Success, Some(&user_id), Some(&established.session.id), None, Some(platform), Some(AuthenticationMethod::Password), Some(assurance), None, Some(user_snap.security_version), now).await;
+        self.emit_audit(
+            AuthEventName::LoginSuccess,
+            EventResult::Success,
+            Some(&user_id),
+            Some(&established.session.id),
+            None,
+            Some(platform),
+            Some(AuthenticationMethod::Password),
+            Some(assurance),
+            None,
+            Some(user_snap.security_version),
+            now,
+        )
+        .await;
         Ok(LoginResult {
             session: established.session.clone(),
             refresh_token: established.refresh_token.clone(),
@@ -213,7 +278,20 @@ impl IdentityService {
         let result = self.db.rotate_refresh(raw_refresh, now).await;
         match result {
             Ok(rotation) => {
-                self.emit_audit(AuthEventName::RefreshRotated, EventResult::Success, Some(&rotation.user_id), Some(&rotation.session_id), None, None, None, None, None, None, now).await;
+                self.emit_audit(
+                    AuthEventName::RefreshRotated,
+                    EventResult::Success,
+                    Some(&rotation.user_id),
+                    Some(&rotation.session_id),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    now,
+                )
+                .await;
                 Ok(RefreshResult {
                     session_id: rotation.session_id,
                     user_id: rotation.user_id,
@@ -222,7 +300,20 @@ impl IdentityService {
             }
             Err(sitolo_auth::AuthError::RefreshTokenReused) => {
                 // Family containment (§12.2).
-                self.emit_audit(AuthEventName::RefreshReuseDetected, EventResult::Failure, None, None, None, None, None, None, Some("replay_detected"), None, now).await;
+                self.emit_audit(
+                    AuthEventName::RefreshReuseDetected,
+                    EventResult::Failure,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("replay_detected"),
+                    None,
+                    now,
+                )
+                .await;
                 Err(sitolo_auth::AuthError::RefreshTokenReused)
             }
             Err(e) => Err(e),
@@ -232,9 +323,28 @@ impl IdentityService {
     /// Logout (§10.3, §52.1).
     pub async fn logout(&self, session_id: &SessionId) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let snapshot = self.db.session_snapshot(session_id).await.ok_or(sitolo_auth::AuthError::SessionInvalid)?;
-        self.db.revoke_session(session_id, RevocationTrigger::Logout).await?;
-        self.emit_audit(AuthEventName::Logout, EventResult::Success, Some(&snapshot.session.user_id), Some(session_id), None, None, None, Some(snapshot.session.assurance), None, Some(snapshot.user_security_version), now).await;
+        let snapshot = self
+            .db
+            .session_snapshot(session_id)
+            .await
+            .ok_or(sitolo_auth::AuthError::SessionInvalid)?;
+        self.db
+            .revoke_session(session_id, RevocationTrigger::Logout)
+            .await?;
+        self.emit_audit(
+            AuthEventName::Logout,
+            EventResult::Success,
+            Some(&snapshot.session.user_id),
+            Some(session_id),
+            None,
+            None,
+            None,
+            Some(snapshot.session.assurance),
+            None,
+            Some(snapshot.user_security_version),
+            now,
+        )
+        .await;
         Ok(())
     }
 
@@ -245,8 +355,29 @@ impl IdentityService {
         trigger: RevocationTrigger,
     ) -> Result<u32, sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let count = self.db.revoke_sessions_by_scope(RevocationScope::AllUserSessions, trigger, Some(user_id), None).await?;
-        self.emit_audit(AuthEventName::SessionRevoked, EventResult::Success, Some(user_id), None, None, None, None, None, None, None, now).await;
+        let count = self
+            .db
+            .revoke_sessions_by_scope(
+                RevocationScope::AllUserSessions,
+                trigger,
+                Some(user_id),
+                None,
+            )
+            .await?;
+        self.emit_audit(
+            AuthEventName::SessionRevoked,
+            EventResult::Success,
+            Some(user_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(count)
     }
 
@@ -258,22 +389,54 @@ impl IdentityService {
         new: SecretValue,
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let snapshot = self.db.user_snapshot(user_id).await.ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
+        let snapshot = self
+            .db
+            .user_snapshot(user_id)
+            .await
+            .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
         if let Some(verifier) = &snapshot.password_verifier {
-            let ok = self.hasher.verify(old, &sitolo_auth::PasswordVerifierRecord {
-                verifier: verifier.clone(),
-                policy_version: snapshot.password_policy_version,
-            }).await?;
+            let ok = self
+                .hasher
+                .verify(
+                    old,
+                    &sitolo_auth::PasswordVerifierRecord {
+                        verifier: verifier.clone(),
+                        policy_version: snapshot.password_policy_version,
+                    },
+                )
+                .await?;
             if !ok {
                 return Err(sitolo_auth::AuthError::AuthenticationFailed);
             }
         }
         let hashed = self.hasher.hash(new).await?;
-        self.db.set_password_verifier(user_id, hashed.verifier, hashed.policy_version).await?;
+        self.db
+            .set_password_verifier(user_id, hashed.verifier, hashed.policy_version)
+            .await?;
         let version = self.db.bump_user_security_version(user_id).await?;
         // Revoke all other sessions (§10.3).
-        self.db.revoke_sessions_by_scope(RevocationScope::AllUserSessions, RevocationTrigger::PasswordChange, Some(user_id), None).await?;
-        self.emit_audit(AuthEventName::PasswordChanged, EventResult::Success, Some(user_id), None, None, None, None, None, None, Some(version), now).await;
+        self.db
+            .revoke_sessions_by_scope(
+                RevocationScope::AllUserSessions,
+                RevocationTrigger::PasswordChange,
+                Some(user_id),
+                None,
+            )
+            .await?;
+        self.emit_audit(
+            AuthEventName::PasswordChanged,
+            EventResult::Success,
+            Some(user_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(version),
+            now,
+        )
+        .await;
         Ok(())
     }
 
@@ -284,9 +447,25 @@ impl IdentityService {
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let token = rand_hex(32);
-        let result = self.db.request_password_reset(user_id, &token, now, self.policy.reset_ttl).await?;
+        let result = self
+            .db
+            .request_password_reset(user_id, &token, now, self.policy.reset_ttl)
+            .await?;
         if result.user_id.is_some() {
-            self.emit_audit(AuthEventName::PasswordResetRequested, EventResult::Success, Some(user_id), None, None, None, None, None, None, None, now).await;
+            self.emit_audit(
+                AuthEventName::PasswordResetRequested,
+                EventResult::Success,
+                Some(user_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                now,
+            )
+            .await;
         }
         // Always return Ok (non-enumerating, §22).
         Ok(())
@@ -300,8 +479,24 @@ impl IdentityService {
     ) -> Result<UserId, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let hashed = self.hasher.hash(new_password).await?;
-        let user_id = self.db.redeem_password_reset(raw_token, hashed.verifier, hashed.policy_version, now).await?;
-        self.emit_audit(AuthEventName::PasswordResetCompleted, EventResult::Success, Some(&user_id), None, None, None, None, None, None, None, now).await;
+        let user_id = self
+            .db
+            .redeem_password_reset(raw_token, hashed.verifier, hashed.policy_version, now)
+            .await?;
+        self.emit_audit(
+            AuthEventName::PasswordResetCompleted,
+            EventResult::Success,
+            Some(&user_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(user_id)
     }
 
@@ -312,8 +507,24 @@ impl IdentityService {
         kind: MfaKind,
     ) -> Result<sitolo_persistence::MfaEnrollmentResult, sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let result = self.db.begin_mfa_enrollment(user_id, kind, None, now).await?;
-        self.emit_audit(AuthEventName::MfaEnrollmentStarted, EventResult::Success, UserId::new(result.authenticator_id.as_str()).ok().as_ref(), None, None, None, None, None, None, None, now).await;
+        let result = self
+            .db
+            .begin_mfa_enrollment(user_id, kind, None, now)
+            .await?;
+        self.emit_audit(
+            AuthEventName::MfaEnrollmentStarted,
+            EventResult::Success,
+            UserId::new(result.authenticator_id.as_str()).ok().as_ref(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(result)
     }
 
@@ -323,8 +534,24 @@ impl IdentityService {
         authenticator_id: &sitolo_auth::MfaAuthenticatorId,
     ) -> Result<Vec<String>, sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let codes = self.db.complete_mfa_enrollment(authenticator_id, now).await?;
-        self.emit_audit(AuthEventName::MfaEnrollmentCompleted, EventResult::Success, None, None, None, None, None, None, None, None, now).await;
+        let codes = self
+            .db
+            .complete_mfa_enrollment(authenticator_id, now)
+            .await?;
+        self.emit_audit(
+            AuthEventName::MfaEnrollmentCompleted,
+            EventResult::Success,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(codes)
     }
 
@@ -336,9 +563,17 @@ impl IdentityService {
         code: &str,
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        let auth = self.db.active_authenticator(user_id).await.ok_or(sitolo_auth::AuthError::MfaRequired)?;
+        let auth = self
+            .db
+            .active_authenticator(user_id)
+            .await
+            .ok_or(sitolo_auth::AuthError::MfaRequired)?;
         // Test verifier: accept code matching {step:06}.
-        let step = (now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs()) / 30;
+        let step = (now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs())
+            / 30;
         let policy = sitolo_auth::TotpPolicy {
             period_secs: 30,
             digits: 6,
@@ -350,14 +585,44 @@ impl IdentityService {
         } else {
             vec![]
         };
-        let verified = sitolo_auth::TestTotpVerifier.verify(&secret, code, step, &policy).await?;
+        let verified = sitolo_auth::TestTotpVerifier
+            .verify(&secret, code, step, &policy)
+            .await?;
         if !verified {
-            self.emit_audit(AuthEventName::MfaFailure, EventResult::Failure, Some(user_id), Some(session_id), None, None, None, Some(Assurance::A1), Some("mfa_failed"), None, now).await;
+            self.emit_audit(
+                AuthEventName::MfaFailure,
+                EventResult::Failure,
+                Some(user_id),
+                Some(session_id),
+                None,
+                None,
+                None,
+                Some(Assurance::A1),
+                Some("mfa_failed"),
+                None,
+                now,
+            )
+            .await;
             return Err(sitolo_auth::AuthError::MfaFailed);
         }
         self.db.record_totp_success(&auth.id, step).await?;
-        self.db.elevate_session_assurance(session_id, Assurance::A2).await?;
-        self.emit_audit(AuthEventName::MfaSuccess, EventResult::Success, Some(user_id), Some(session_id), None, None, None, Some(Assurance::A2), None, None, now).await;
+        self.db
+            .elevate_session_assurance(session_id, Assurance::A2)
+            .await?;
+        self.emit_audit(
+            AuthEventName::MfaSuccess,
+            EventResult::Success,
+            Some(user_id),
+            Some(session_id),
+            None,
+            None,
+            None,
+            Some(Assurance::A2),
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(())
     }
 
@@ -369,7 +634,20 @@ impl IdentityService {
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
         self.db.consume_recovery_code(user_id, raw, now).await?;
-        self.emit_audit(AuthEventName::RecoveryCodeRedeemed, EventResult::Success, Some(user_id), None, None, None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::RecoveryCodeRedeemed,
+            EventResult::Success,
+            Some(user_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(())
     }
 
@@ -381,7 +659,20 @@ impl IdentityService {
     ) -> Result<Vec<sitolo_auth::MfaAuthenticatorId>, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let revoked = self.db.reset_mfa(target, actor, now).await?;
-        self.emit_audit(AuthEventName::MfaReset, EventResult::Success, Some(target), None, None, None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::MfaReset,
+            EventResult::Success,
+            Some(target),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(revoked)
     }
 
@@ -401,7 +692,20 @@ impl IdentityService {
                 now,
             })
             .await?;
-        self.emit_audit(AuthEventName::DeviceRegistrationStarted, EventResult::Success, None, None, Some(&device.id), None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::DeviceRegistrationStarted,
+            EventResult::Success,
+            None,
+            None,
+            Some(&device.id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(device)
     }
 
@@ -412,7 +716,20 @@ impl IdentityService {
     ) -> Result<sitolo_auth::Device, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let device = self.db.complete_device_registration(device_id, now).await?;
-        self.emit_audit(AuthEventName::DeviceRegistered, EventResult::Success, None, None, Some(&device.id), None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::DeviceRegistered,
+            EventResult::Success,
+            None,
+            None,
+            Some(&device.id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(device)
     }
 
@@ -423,7 +740,20 @@ impl IdentityService {
     ) -> Result<DeviceRevocationEffect, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let effect = self.db.revoke_device(device_id, now).await?;
-        self.emit_audit(AuthEventName::DeviceRevoked, EventResult::Success, None, None, Some(device_id), None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::DeviceRevoked,
+            EventResult::Success,
+            None,
+            None,
+            Some(device_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(effect)
     }
 
@@ -434,7 +764,20 @@ impl IdentityService {
     ) -> Result<sitolo_auth::Device, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let device = self.db.replace_device(old_id, now).await?;
-        self.emit_audit(AuthEventName::DeviceReplaced, EventResult::Success, None, None, Some(&device.id), None, None, None, None, None, now).await;
+        self.emit_audit(
+            AuthEventName::DeviceReplaced,
+            EventResult::Success,
+            None,
+            None,
+            Some(&device.id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+        )
+        .await;
         Ok(device)
     }
 
@@ -541,16 +884,14 @@ mod tests {
                 reset_ttl: Duration::from_secs(600),
                 mfa_challenge_ttl: Duration::from_secs(300),
                 recovery_code_count: 8,
-                abuse_rules: vec![
-                    (
-                        AbuseClass::Login,
-                        RateLimitRule {
-                            max_attempts: 5,
-                            window: Duration::from_secs(60),
-                            lockout: Duration::from_secs(300),
-                        },
-                    ),
-                ],
+                abuse_rules: vec![(
+                    AbuseClass::Login,
+                    RateLimitRule {
+                        max_attempts: 5,
+                        window: Duration::from_secs(60),
+                        lockout: Duration::from_secs(300),
+                    },
+                )],
                 step_up_enrollment: Assurance::A2,
             },
         )

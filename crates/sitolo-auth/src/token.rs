@@ -154,10 +154,10 @@ pub async fn validate_token(
         return Err(AuthError::SessionExpired);
     }
     // Not-before with clock skew (§13).
-    if let Some(nbf) = claims.not_before {
-        if now < nbf - policy.clock_skew {
-            return Err(AuthError::AuthenticationFailed);
-        }
+    if let Some(nbf) = claims.not_before
+        && now < nbf - policy.clock_skew
+    {
+        return Err(AuthError::AuthenticationFailed);
     }
     // Key ID presence (§13).
     if policy.require_key_id && claims.key_id.is_empty() {
@@ -232,16 +232,16 @@ impl JwksCache {
             self.refresh_count = 0;
         }
         // Negative cache (§14.1).
-        if let Some(negative) = self.last_negative {
-            if now < negative + self.policy.negative_ttl {
-                return KeyResolution::Backoff;
-            }
+        if let Some(negative) = self.last_negative
+            && now < negative + self.policy.negative_ttl
+        {
+            return KeyResolution::Backoff;
         }
         // Known key.
-        if let Some(fetched_at) = self.keys.get(key_id) {
-            if now < *fetched_at + self.policy.ttl {
-                return KeyResolution::Trusted;
-            }
+        if let Some(fetched_at) = self.keys.get(key_id)
+            && now < *fetched_at + self.policy.ttl
+        {
+            return KeyResolution::Trusted;
         }
         // Unknown or stale; check refresh budget (§67).
         if self.refresh_count >= self.policy.max_refreshes_per_window {

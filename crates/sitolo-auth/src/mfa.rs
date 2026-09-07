@@ -412,12 +412,12 @@ impl MfaState {
         let ids = self.by_user.remove(user_id).unwrap_or_default();
         let mut revoked = Vec::new();
         for id in ids {
-            if let Some(auth) = self.authenticators.get_mut(&id) {
-                if auth.state != MfaAuthenticatorState::Revoked {
-                    auth.state = MfaAuthenticatorState::Revoked;
-                    auth.revoked_at = Some(now);
-                    revoked.push(id);
-                }
+            if let Some(auth) = self.authenticators.get_mut(&id)
+                && auth.state != MfaAuthenticatorState::Revoked
+            {
+                auth.state = MfaAuthenticatorState::Revoked;
+                auth.revoked_at = Some(now);
+                revoked.push(id);
             }
         }
         let recovery_ids = self.recovery_by_user.remove(user_id).unwrap_or_default();
