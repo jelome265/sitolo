@@ -1546,5 +1546,22 @@ CI secret exposure regression
 9. OpenTelemetry Semantic Conventions: https://opentelemetry.io/docs/specs/semconv/  
 10. OpenTelemetry general semantic conventions: https://opentelemetry.io/docs/specs/semconv/general/
 
+## Scope Exception SCOPE-EXC-001 — PostgreSQL Integration Harness Deferred
+
+**Status:** Active, bounded exception (audit F-018).
+**Owner:** platform.
+**Reason:** SQLx/schema/RLS implementation belongs to Phase 5; no database
+semantics exist yet to integrate against, so a PostgreSQL service job would
+exercise nothing.
+**Scope:** `.github/workflows/integration.yml` runs boundary and contract
+tests only; its `Record explicit Phase 1 exclusion` step names this record.
+**Review/expiry:** review on 2026-12-01 or at Phase 5 start, whichever comes
+first. Phase 5 database work automatically retires this exception by adding
+a real PostgreSQL 18 service job; a production certification MUST NOT treat
+this exception as satisfied evidence for database claims.
+**Release restriction:** database security/integrity claims (RLS, roles,
+transactions, concurrency) require real-PostgreSQL evidence once Phase 5
+begins; unit-test success is not a substitute.
+
 Document end — Sitolo Testing Strategy, Phase 0 / File 09 of 16.
 

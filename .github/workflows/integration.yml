@@ -21,5 +21,9 @@ jobs:
           components: rustfmt, clippy
       - name: Run boundary and contract tests
         run: cargo test --workspace --all-targets --all-features --locked
+      # F-018 scope-exception governance. This textual record is backed by
+      # docs/testing_strategy.md ("PostgreSQL integration exception
+      # SCOPE-EXC-001"), which names the owner, scope, review date, and the
+      # Phase 5 completion gate that retires it.
       - name: Record explicit Phase 1 exclusion
-        run: echo "PostgreSQL integration harness is intentionally deferred by the approved Phase 1 scope exception."
+        run: echo "SCOPE-EXC-001 active: PostgreSQL integration harness deferred to Phase 5 (owner: platform; review: 2026-12-01; see docs/testing_strategy.md)."

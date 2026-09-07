@@ -7,3 +7,8 @@ license.workspace = true
 
 [dependencies]
 tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tracing-subscriber.workspace = true

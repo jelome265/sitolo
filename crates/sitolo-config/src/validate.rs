@@ -27,6 +27,38 @@ impl std::fmt::Display for ConfigValidationError {
     }
 }
 impl std::error::Error for ConfigValidationError {}
+
+/// Reports whether `endpoint` is loopback-local. Accepts `scheme://authority`
+/// and bare `host[:port]` shapes; the host is loopback only for `localhost`,
+/// `127.*`, or `::1` (brackets optional).
+fn is_loopback_endpoint(endpoint: &str) -> bool {
+    let without_scheme = endpoint
+        .split_once("://")
+        .map_or(endpoint, |(_, rest)| rest);
+    let authority = without_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    // Bracketed IPv6 literal, optionally with a port: `[::1]` / `[::1]:4317`.
+    if let Some(inner) = hostport.strip_prefix('[') {
+        return inner.split(']').next().is_some_and(|host| host == "::1");
+    }
+    if hostport.eq_ignore_ascii_case("::1") {
+        return true;
+    }
+    let host = hostport.rsplit_once(':').map_or(hostport, |(h, _)| h);
+    if host.is_empty() {
+        return false;
+    }
+    host.eq_ignore_ascii_case("localhost") || host.starts_with("127.")
+}
+
+/// Whether `endpoint` may use plaintext transport. Loopback collectors may be
+/// plaintext outside production; everything else must be `https://`.
+fn endpoint_allows_plaintext(endpoint: &str, production: bool) -> bool {
+    is_loopback_endpoint(endpoint) && !production
+}
+
 pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError> {
     let mut p = Vec::new();
     let mut add = |l, f, r| {
@@ -36,20 +68,26 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             reason: r,
         })
     };
-    if b.service_name.is_empty() || b.service_name.len() > ceilings::MAX_BOUNDED_STRING_BYTES {
-        add(
-            ValidationLayer::Semantic,
-            "service_name",
-            "must be bounded and non-empty",
-        );
-    }
-    if b.service_version.is_empty() || b.service_version.len() > ceilings::MAX_BOUNDED_STRING_BYTES
-    {
-        add(
-            ValidationLayer::Semantic,
-            "service_version",
-            "must be bounded and non-empty",
-        );
+    // F-005: service identity reaches logs/telemetry, so it carries the
+    // same control-character rejection as database identity fields.
+    for (field, value) in [
+        ("service_name", b.service_name.as_str()),
+        ("service_version", b.service_version.as_str()),
+    ] {
+        if value.is_empty() || value.len() > ceilings::MAX_BOUNDED_STRING_BYTES {
+            add(
+                ValidationLayer::Semantic,
+                field,
+                "must be bounded and non-empty",
+            );
+        }
+        if value.bytes().any(|byte| byte.is_ascii_control()) {
+            add(
+                ValidationLayer::Security,
+                field,
+                "must contain no control characters",
+            );
+        }
     }
     if b.db_host.is_empty() || b.db_name.is_empty() || b.db_user.is_empty() {
         add(
@@ -157,14 +195,29 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "too verbose in production",
         );
     }
+    // F-004: transport security is explicit. A missing scheme does not imply
+    // a local endpoint: bare `host:port` values are remote unless loopback.
+    // Plaintext HTTP to loopback is allowed outside production only.
     if let Some(endpoint) = &b.otel_endpoint
-        && endpoint.contains("://")
+        && !endpoint_allows_plaintext(endpoint, b.environment.is_production())
         && !endpoint.starts_with("https://")
     {
         add(
             ValidationLayer::Security,
             "otel_endpoint",
             "remote endpoint requires TLS",
+        );
+    }
+    // F-003: secret-reference provenance. Production must never resolve a
+    // development-namespace reference, even when the provider would serve it.
+    if b.environment.is_production()
+        && let Some(reference) = &b.db_password_ref
+        && reference.path().starts_with("development/")
+    {
+        add(
+            ValidationLayer::Environment,
+            "db_password_ref",
+            "production must not use a development secret namespace",
         );
     }
     if b.db_password_ref.is_none() {

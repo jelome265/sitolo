@@ -87,6 +87,94 @@ mod contract_tests {
         assert!(validate(config).is_err());
     }
 
+    fn pair(key: &str, value: &str) -> (String, String) {
+        (format!("SITOLO__{key}"), value.to_string())
+    }
+
+    #[test]
+    fn environment_selector_chooses_baseline_before_overlays() {
+        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")]).unwrap();
+        assert_eq!(staging.environment, Environment::Staging);
+        let production =
+            EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")]).unwrap();
+        assert_eq!(production.environment, Environment::Production);
+        assert!(EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "qa")]).is_err());
+    }
+
+    #[test]
+    fn production_baseline_requires_explicit_database_identity() {
+        // F-002: no implicit development database or secret namespace.
+        let builder = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")]).unwrap();
+        assert!(validate(builder).is_err());
+        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")]).unwrap();
+        assert!(validate(staging).is_err());
+    }
+
+    #[test]
+    fn production_rejects_development_secret_namespace() {
+        // F-003: a fully explicit production config with a development
+        // secret namespace is rejected; a production namespace is accepted.
+        let mut dev_ns = defaults::Builder::production();
+        dev_ns.db_host = "db.internal".into();
+        dev_ns.db_name = "sitolo".into();
+        dev_ns.db_user = "sitolo_api".into();
+        dev_ns.db_password_ref =
+            Some(SecretRef::new(SecretClass::Database, "development/sitolo/db").unwrap());
+        assert!(validate(dev_ns).is_err());
+
+        let mut prod_ns = defaults::Builder::production();
+        prod_ns.db_host = "db.internal".into();
+        prod_ns.db_name = "sitolo".into();
+        prod_ns.db_user = "sitolo_api".into();
+        prod_ns.db_password_ref =
+            Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+        assert!(validate(prod_ns).is_ok());
+    }
+
+    #[test]
+    fn telemetry_endpoint_transport_is_explicit() {
+        // F-004: (endpoint, production, expected valid).
+        for (endpoint, production, valid) in [
+            ("https://collector.example", false, true),
+            ("https://collector.example", true, true),
+            ("http://collector.example", false, false),
+            ("http://collector.example", true, false),
+            ("collector.example:4317", false, false),
+            ("collector.example:4317", true, false),
+            ("http://localhost:4317", false, true),
+            ("http://localhost:4317", true, false),
+            ("localhost:4317", false, true),
+            ("localhost:4317", true, false),
+        ] {
+            let mut builder = defaults::Builder::development();
+            if production {
+                builder.environment = Environment::Production;
+                builder.allow_local_secret_provider = false;
+                // F-003: production rows need a production secret namespace
+                // so only the endpoint rule is under test here.
+                builder.db_password_ref =
+                    Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+            }
+            builder.otel_endpoint = Some(endpoint.into());
+            assert_eq!(
+                validate(builder).is_ok(),
+                valid,
+                "endpoint={endpoint} production={production}"
+            );
+        }
+    }
+
+    #[test]
+    fn service_identity_rejects_control_characters() {
+        // F-005.
+        let mut builder = defaults::Builder::development();
+        builder.service_name = "sitolo\ninjected".into();
+        assert!(validate(builder).is_err());
+        let mut builder = defaults::Builder::development();
+        builder.service_version = "1.0.0\r".into();
+        assert!(validate(builder).is_err());
+    }
+
     #[test]
     fn catalogue_and_parser_key_contracts_are_identical() {
         let mut catalogue_keys: Vec<_> = catalogue().iter().map(|field| field.key).collect();
