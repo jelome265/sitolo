@@ -47,6 +47,10 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 |---|---|
 | [`phase1_repository_rust_workspace_ci_deep_implementation.md`](phase1_repository_rust_workspace_ci_deep_implementation.md) | Repository, Rust workspace, CI, supply-chain and build governance |
 | [`phase2_config_secrets_logging_errors_telemetry_implementation.md`](phase2_config_secrets_logging_errors_telemetry_implementation.md) | Config, secrets, logging, errors, telemetry |
+| [`phase2_appconfig_fingerprint_coverage_and_configuration_contract_remediation.md`](phase2_appconfig_fingerprint_coverage_and_configuration_contract_remediation.md) | Phase 2 configuration contract and fingerprint remediation |
+| [`phase2_ci_sha256_fingerprint_lowerhex_failure_remediation.md`](phase2_ci_sha256_fingerprint_lowerhex_failure_remediation.md) | Phase 2 SHA-256 compatibility remediation |
+| [`phase2_postgresql_runtime_configuration_persistence_boundary_implementation.md`](phase2_postgresql_runtime_configuration_persistence_boundary_implementation.md) | Phase 2 PostgreSQL runtime boundary |
+| [`postgresql-runtime-development.md`](postgresql-runtime-development.md) | Safe local PostgreSQL runtime-development path |
 | [`phase3_identity_sessions_mfa_device_identity_implementation.md`](phase3_identity_sessions_mfa_device_identity_implementation.md) | Identity, sessions, MFA, device identity |
 | [`phase4_tenant_organization_branch_iam_implementation.md`](phase4_tenant_organization_branch_iam_implementation.md) | Tenant, organization, branch, IAM |
 | [`phase5_postgresql_schema_migrations_constraints_rls_implementation.md`](phase5_postgresql_schema_migrations_constraints_rls_implementation.md) | PostgreSQL schema, migrations, constraints, RLS |

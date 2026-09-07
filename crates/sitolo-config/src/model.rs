@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use sitolo_security::{SecretClass, SecretRef};
 
@@ -123,6 +124,33 @@ pub struct AppConfig {
     pub config_schema_version: u32,
 }
 
+/// Validated, non-connecting PostgreSQL runtime intent.
+///
+/// This is deliberately component-based: it carries a secret *reference*, not
+/// a credential-bearing DSN. `sitolo-persistence` consumes this narrow view
+/// and resolves the secret only while constructing a future database capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseRuntimeConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub password_ref: SecretRef,
+    pub pool_min: u32,
+    pub pool_max: u32,
+    pub acquire_timeout: Duration,
+}
+
+/// Safe database target identity for diagnostics. It intentionally omits the
+/// password reference as well as the resolved credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseTarget {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+}
+
 impl AppConfig {
     /// Matches a `db_password_ref` to the database secret class.
     pub fn db_secret_ref(&self) -> &SecretRef {
@@ -132,6 +160,30 @@ impl AppConfig {
     /// The classified secret reference for the database.
     pub fn database_secret_class(&self) -> SecretClass {
         SecretClass::Database
+    }
+
+    /// Produces validated database connection intent without network I/O.
+    pub fn database_runtime(&self) -> DatabaseRuntimeConfig {
+        DatabaseRuntimeConfig {
+            host: self.db_host.clone(),
+            port: self.db_port,
+            database: self.db_name.clone(),
+            username: self.db_user.clone(),
+            password_ref: self.db_password_ref.clone(),
+            pool_min: self.db_pool_min,
+            pool_max: self.db_pool_max,
+            acquire_timeout: Duration::from_millis(self.db_acquire_timeout_ms),
+        }
+    }
+
+    /// Returns only safe database identity fields for diagnostics/telemetry.
+    pub fn database_target(&self) -> DatabaseTarget {
+        DatabaseTarget {
+            host: self.db_host.clone(),
+            port: self.db_port,
+            database: self.db_name.clone(),
+            username: self.db_user.clone(),
+        }
     }
 }
 

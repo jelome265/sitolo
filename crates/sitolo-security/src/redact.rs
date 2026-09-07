@@ -129,6 +129,105 @@ impl RedactBuf {
     }
 }
 
+/// Field names whose values must never appear in emitted authentication text.
+/// Phase 3 specification, §40 and §62: authentication-specific fixtures are
+/// enforced by CI, and this list is the fixture grammar.
+pub const AUTH_FORBIDDEN_FIELDS: &[&str] = &[
+    "password",
+    "otp",
+    "totp_secret",
+    "recovery_code",
+    "refresh_token",
+    "access_token",
+    "id_token",
+    "authorization",
+    "authorization_code",
+    "client_secret",
+    "code_verifier",
+];
+
+fn is_field_boundary(byte: u8) -> bool {
+    !(byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn field_at(bytes: &[u8], at: usize, name: &str) -> bool {
+    let end = at + name.len();
+    if end > bytes.len() || !bytes[at..end].eq_ignore_ascii_case(name.as_bytes()) {
+        return false;
+    }
+    let before_ok = at == 0 || is_field_boundary(bytes[at - 1]);
+    let after_ok = end == bytes.len() || bytes[end] == b'=' || bytes[end] == b':';
+    before_ok && after_ok
+}
+
+fn value_end(bytes: &[u8], start: usize) -> usize {
+    let mut i = start;
+    // Quoted value: consume through the closing quote.
+    if i < bytes.len() && bytes[i] == b'"' {
+        i += 1;
+        while i < bytes.len() && bytes[i] != b'"' {
+            i += 1;
+        }
+        return (i + 1).min(bytes.len());
+    }
+    // Unquoted value: stop at a structural delimiter.
+    while i < bytes.len()
+        && !matches!(
+            bytes[i],
+            b' ' | b'\t' | b'\n' | b'\r' | b'&' | b';' | b'"' | b'\'' | b'}'
+        )
+    {
+        i += 1;
+    }
+    i
+}
+
+/// Masks authentication field values in arbitrary bounded text.
+///
+/// Both explicit structured fields and accidental debug formatting are covered
+/// (Phase 3 specification, §40: the difference is architectural, not
+/// stylistic). `name=value`, `name: value`, and `"name":"value"` shapes have
+/// their value replaced with [`REDACTED`]; `Bearer ...` credentials are
+/// likewise replaced.
+pub fn sanitize_authentication_text(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Bearer credential masking.
+        if bytes[i..].len().ge(&7) && bytes[i..i + 7].eq_ignore_ascii_case(b"Bearer ") {
+            out.push_str("Bearer ");
+            let end = value_end(bytes, i + 7);
+            out.push_str(REDACTED);
+            i = end;
+            continue;
+        }
+        let mut replaced = false;
+        for name in AUTH_FORBIDDEN_FIELDS {
+            if field_at(bytes, i, name) {
+                out.push_str(&input[i..i + name.len()]);
+                let mut j = i + name.len();
+                // Consume the `=`/`:` separator and any spaces/quote after it.
+                while j < bytes.len() && (bytes[j] == b':' || bytes[j] == b'=' || bytes[j] == b' ')
+                {
+                    out.push(bytes[j] as char);
+                    j += 1;
+                }
+                let value_end_at = value_end(bytes, j);
+                out.push_str(REDACTED);
+                i = value_end_at;
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +252,78 @@ mod tests {
         assert!(!out.contains("TEST_SECRET_DATABASE_001"));
         assert!(out.contains(REDACTED));
         assert!(out.contains("connect with"));
+    }
+
+    // Phase 3 specification, §40/§78: CI must prove authentication credentials
+    // never appear in emitted events, covering both structured fields and
+    // debug/error formatting shapes.
+    #[test]
+    fn authentication_fixtures_are_all_masked() {
+        let fixtures = [
+            (
+                "auth header",
+                "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload",
+                "eyJhbGciOiJIUzI1NiJ9",
+            ),
+            (
+                "query form",
+                "POST /token refresh_token=r3fr.esH.value ok",
+                "r3fr.esH.value",
+            ),
+            (
+                "login body",
+                "user submitted password=hunter2!x now",
+                "hunter2!x",
+            ),
+            ("otp field", "challenge otp=123456 pending", "123456"),
+            (
+                "callback code",
+                "callback authorization_code=SplxlOBeZQQYbYS6WxSbIA done",
+                "SplxlOBeZQQYbYS6WxSbIA",
+            ),
+            (
+                "client secret",
+                "config client_secret=cs_live_9f3aa secret",
+                "cs_live_9f3aa",
+            ),
+            (
+                "totp seed",
+                "enrollment totp_secret=JBSWY3DPEHPK3PXP issued",
+                "JBSWY3DPEHPK3PXP",
+            ),
+            (
+                "recovery",
+                "recovery_code=a1b2-c3d4-e5f6 redeemed",
+                "a1b2-c3d4-e5f6",
+            ),
+            (
+                "json form",
+                r#"{"password":"plain-text-pw","user":"u1"}"#,
+                "plain-text-pw",
+            ),
+            (
+                "access token json",
+                r#"{"access_token":"at.abcdef","id_token":"idt.xyz"}"#,
+                "at.abcdef",
+            ),
+            (
+                "pkce verifier",
+                "exchange code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1rwW4jN3B9w",
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r",
+            ),
+        ];
+        for (label, input, secret) in fixtures {
+            let out = sanitize_authentication_text(input);
+            assert!(!out.contains(secret), "{label} leaked credential: {out}");
+            assert!(out.contains(REDACTED), "{label} was not redacted: {out}");
+        }
+    }
+
+    #[test]
+    fn safe_text_passes_through() {
+        assert_eq!(
+            sanitize_authentication_text("method=password platform=android"),
+            "method=password platform=android"
+        );
     }
 }

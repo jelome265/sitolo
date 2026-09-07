@@ -1,6 +1,20 @@
 //! Persistence.
 //!
-//! Owns the SQLx/PostgreSQL implementation, repositories, transactions, and
-//! mapping (Phase 1 specification, §5.7). PostgreSQL is the authoritative
-//! server-side business state.
+//! Owns the repository ports and in-memory reference implementation.
+//! PostgreSQL implementations arrive in Phase 5; this crate provides the
+//! semantic boundary that application code depends on (§51).
 #![forbid(unsafe_code)]
+
+mod memory;
+mod ports;
+mod runtime;
+
+pub use memory::{
+    DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
+    MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
+};
+pub use ports::IdentityStores;
+pub use runtime::{
+    DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
+    PersistenceFailureKind, PersistenceInitError,
+};

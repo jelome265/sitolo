@@ -34,6 +34,11 @@ serde_json = { version = "1", default-features = false }
 sha2 = { version = "0.11", default-features = false }
 tracing = { version = "0.1", default-features = false }
 sitolo-security = { path = "crates/sitolo-security" }
+sitolo-auth = { path = "crates/sitolo-auth" }
+sitolo-audit = { path = "crates/sitolo-audit" }
+sitolo-observability = { path = "crates/sitolo-observability" }
+sitolo-persistence = { path = "crates/sitolo-persistence" }
+sitolo-config = { path = "crates/sitolo-config" }
 
 [profile.dev]
 overflow-checks = true

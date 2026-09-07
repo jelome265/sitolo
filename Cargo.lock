@@ -120,14 +120,37 @@ version = "0.1.0"
 [[package]]
 name = "sitolo-application"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sha2",
+ "sitolo-audit",
+ "sitolo-auth",
+ "sitolo-observability",
+ "sitolo-persistence",
+ "sitolo-security",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-audit"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sitolo-auth",
+ "sitolo-observability",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-auth"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sha2",
+ "sitolo-observability",
+ "sitolo-security",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-authz"
@@ -164,12 +187,22 @@ dependencies = [
 [[package]]
 name = "sitolo-persistence"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sha2",
+ "sitolo-audit",
+ "sitolo-auth",
+ "sitolo-config",
+ "sitolo-security",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-security"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "sha2",
  "thiserror",
 ]
 

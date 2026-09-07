@@ -1,6 +1,6 @@
 //! Deterministic environment layer parsing. Environment is an input at startup,
 //! never an authority consulted during request handling.
-use crate::{ENV_PREFIX, defaults};
+use crate::{ACCEPTED_KEYS, ENV_PREFIX, defaults};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,9 @@ impl EnvLoader {
 fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), UnknownKey> {
     use crate::{Environment, LogLevel, SecretClass, SecretRef};
     let bad = || Err(UnknownKey(key.to_string()));
+    if !ACCEPTED_KEYS.contains(&key) {
+        return bad();
+    }
     match key {
         "RUNTIME__ENVIRONMENT" => {
             b.environment = match value {
@@ -87,7 +90,7 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
             b.allow_local_secret_provider = value.parse().map_err(|_| UnknownKey(key.into()))?
         }
         "RUNTIME__CONFIG_SCHEMA_VERSION" => b.config_schema_version = number(key, value)?,
-        _ => return bad(),
+        _ => unreachable!("catalogue and parser key sets must remain aligned"),
     };
     Ok(())
 }

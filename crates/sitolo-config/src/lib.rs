@@ -26,9 +26,13 @@ mod model;
 mod parse;
 mod validate;
 
-pub use field::{ConfigClass, ConfigField, catalogue};
-pub use fingerprint::config_fingerprint;
-pub use model::{AppConfig, Environment, LogLevel, ceilings, defaults};
+pub use field::{ACCEPTED_KEYS, ConfigClass, ConfigField, catalogue};
+pub use fingerprint::{
+    FINGERPRINT_FORMAT_VERSION, canonical_non_secret_config, config_fingerprint,
+};
+pub use model::{
+    AppConfig, DatabaseRuntimeConfig, DatabaseTarget, Environment, LogLevel, ceilings, defaults,
+};
 pub use parse::{EnvLoader, UnknownKey};
 pub use sitolo_security::{SecretClass, SecretRef};
 pub use validate::{ConfigProblem, ConfigValidationError, ValidationLayer, validate};
@@ -74,5 +78,21 @@ mod contract_tests {
         config.db_pool_min = 21;
         config.db_pool_max = 20;
         assert!(validate(config).is_err());
+    }
+
+    #[test]
+    fn zero_database_port_is_rejected() {
+        let mut config = defaults::Builder::development();
+        config.db_port = 0;
+        assert!(validate(config).is_err());
+    }
+
+    #[test]
+    fn catalogue_and_parser_key_contracts_are_identical() {
+        let mut catalogue_keys: Vec<_> = catalogue().iter().map(|field| field.key).collect();
+        let mut parser_keys = ACCEPTED_KEYS.to_vec();
+        catalogue_keys.sort_unstable();
+        parser_keys.sort_unstable();
+        assert_eq!(catalogue_keys, parser_keys);
     }
 }

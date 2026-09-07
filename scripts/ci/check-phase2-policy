@@ -9,4 +9,6 @@ violations="$(rg -n 'std::env::(var|vars)' crates apps -g '*.rs' | grep -vE 'cra
 [[ -z "$violations" ]] || { echo "$violations"; exit 1; }
 console="$(rg -n '\b(println!|dbg!)' crates apps -g '*.rs' || true)"
 [[ -z "$console" ]] || { echo "$console"; exit 1; }
+aliases="$(rg -n '\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b' crates apps -g '*.rs' || true)"
+[[ -z "$aliases" ]] || { echo "$aliases"; exit 1; }
 echo "Phase 2 policy check PASSED"

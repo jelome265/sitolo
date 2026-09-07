@@ -58,6 +58,28 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "identity fields must be non-empty",
         );
     }
+    for (field, value) in [
+        ("db_host", b.db_host.as_str()),
+        ("db_name", b.db_name.as_str()),
+        ("db_user", b.db_user.as_str()),
+    ] {
+        if value.len() > ceilings::MAX_BOUNDED_STRING_BYTES
+            || value.bytes().any(|byte| byte.is_ascii_control())
+        {
+            add(
+                ValidationLayer::Security,
+                field,
+                "must be bounded and contain no control characters",
+            );
+        }
+    }
+    if b.db_port == 0 {
+        add(
+            ValidationLayer::Semantic,
+            "db_port",
+            "must be a non-zero TCP port",
+        );
+    }
     if b.max_request_body_bytes == 0
         || b.max_request_body_bytes > ceilings::MAX_REQUEST_BODY_CEILING_BYTES
     {
