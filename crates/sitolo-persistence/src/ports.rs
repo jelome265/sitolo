@@ -2,7 +2,7 @@
 //!
 //! Repositories expose semantic operations rather than generic database
 //! mutation. The IdentityStores trait bundles all Phase 3 identity
-//! persistence; implementations own transaction boundaries (§52).
+//! persistence; TenancyStores bundles Phase 4 tenancy and IAM persistence.
 
 use async_trait::async_trait;
 
@@ -11,7 +11,14 @@ use sitolo_auth::{
     Assurance, AuthenticationMethod, ClientPlatform, Device, DeviceId, MfaAuthenticatorId, MfaKind,
     RecoveryCodeId, SecurityVersion, SessionClass, SessionId, UserId,
 };
+use sitolo_authz::{
+    BranchId, InvitationId, MembershipId, OrganizationId, OwnershipTransferId, RoleId, Scope,
+};
 use sitolo_security::SealedRef;
+use sitolo_tenancy::{
+    Branch, BranchStatus, Invitation, Membership, MembershipStatus, Organization,
+    OrganizationStatus, OwnershipTransferRequest, TenancyError,
+};
 
 use crate::memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, MfaEnrollmentResult,
@@ -42,8 +49,6 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
     async fn suspend_user(&self, id: &UserId) -> Result<(), sitolo_auth::AuthError>;
 
     // --- sessions ---
-    // Explicit session-establishment port; bundling would obscure the §52
-    // transaction boundary implementors must enforce.
     #[allow(clippy::too_many_arguments)]
     async fn establish_session(
         &self,
@@ -163,4 +168,125 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
         event: AuthenticationEvent,
     ) -> Result<(), sitolo_audit::AuditError>;
     async fn audit_trail(&self) -> Vec<AuthenticationEvent>;
+}
+
+/// Bundled tenancy & IAM persistence port (Phase 4).
+#[async_trait]
+pub trait TenancyStores: Send + Sync {
+    // --- organization ---
+    async fn create_organization(&self, org: Organization) -> Result<Organization, TenancyError>;
+    async fn get_organization(
+        &self,
+        id: &OrganizationId,
+    ) -> Result<Option<Organization>, TenancyError>;
+    async fn update_organization_status(
+        &self,
+        id: &OrganizationId,
+        status: OrganizationStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Organization, TenancyError>;
+    async fn update_organization_name(
+        &self,
+        id: &OrganizationId,
+        name: String,
+        now_epoch_secs: u64,
+    ) -> Result<Organization, TenancyError>;
+
+    // --- branch ---
+    async fn create_branch(&self, branch: Branch) -> Result<Branch, TenancyError>;
+    async fn get_branch(
+        &self,
+        org_id: &OrganizationId,
+        branch_id: &BranchId,
+    ) -> Result<Option<Branch>, TenancyError>;
+    async fn list_branches(&self, org_id: &OrganizationId) -> Result<Vec<Branch>, TenancyError>;
+    async fn update_branch_status(
+        &self,
+        org_id: &OrganizationId,
+        branch_id: &BranchId,
+        status: BranchStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Branch, TenancyError>;
+
+    // --- membership ---
+    async fn create_membership(&self, membership: Membership) -> Result<Membership, TenancyError>;
+    async fn get_membership(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Result<Option<Membership>, TenancyError>;
+    async fn get_membership_by_user(
+        &self,
+        org_id: &OrganizationId,
+        user_id: &UserId,
+    ) -> Result<Option<Membership>, TenancyError>;
+    async fn list_memberships(
+        &self,
+        org_id: &OrganizationId,
+    ) -> Result<Vec<Membership>, TenancyError>;
+    async fn list_user_memberships(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<Membership>, TenancyError>;
+    async fn update_membership_status(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        status: MembershipStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError>;
+    async fn assign_membership_role(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: RoleId,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError>;
+    async fn revoke_membership_role(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: &RoleId,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError>;
+    async fn update_membership_scopes(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        scopes: Vec<Scope>,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError>;
+
+    // --- invitation ---
+    async fn create_invitation(&self, invitation: Invitation) -> Result<Invitation, TenancyError>;
+    async fn get_invitation(&self, id: &InvitationId) -> Result<Option<Invitation>, TenancyError>;
+    async fn list_invitations(
+        &self,
+        org_id: &OrganizationId,
+    ) -> Result<Vec<Invitation>, TenancyError>;
+    async fn accept_invitation(
+        &self,
+        id: &InvitationId,
+        now_epoch_secs: u64,
+    ) -> Result<Invitation, TenancyError>;
+    async fn revoke_invitation(
+        &self,
+        org_id: &OrganizationId,
+        id: &InvitationId,
+    ) -> Result<Invitation, TenancyError>;
+
+    // --- ownership transfer ---
+    async fn create_ownership_transfer(
+        &self,
+        req: OwnershipTransferRequest,
+    ) -> Result<OwnershipTransferRequest, TenancyError>;
+    async fn get_ownership_transfer(
+        &self,
+        id: &OwnershipTransferId,
+    ) -> Result<Option<OwnershipTransferRequest>, TenancyError>;
+    async fn approve_ownership_transfer(
+        &self,
+        id: &OwnershipTransferId,
+        now_epoch_secs: u64,
+    ) -> Result<OwnershipTransferRequest, TenancyError>;
 }

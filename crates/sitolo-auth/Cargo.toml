@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+serde.workspace = true
 sha2.workspace = true
 sitolo-security.workspace = true
 sitolo-observability.workspace = true

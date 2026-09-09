@@ -1,10 +1,12 @@
 //! Closed operational event and metric registries.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventDefinition {
     pub name: &'static str,
     pub schema_version: u16,
     pub owner: &'static str,
 }
+
 pub const EVENTS: &[EventDefinition] = &[
     EventDefinition {
         name: "service.starting",
@@ -57,6 +59,7 @@ pub const EVENTS: &[EventDefinition] = &[
         owner: "integrations",
     },
 ];
+
 pub fn event(name: &str) -> Option<&'static EventDefinition> {
     EVENTS.iter().find(|e| e.name == name)
 }
@@ -67,6 +70,7 @@ pub enum MetricKind {
     Histogram,
     Gauge,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MetricDefinition {
     pub name: &'static str,
@@ -74,6 +78,7 @@ pub struct MetricDefinition {
     pub unit: &'static str,
     pub labels: &'static [&'static str],
 }
+
 pub const METRICS: &[MetricDefinition] = &[
     MetricDefinition {
         name: "sitolo_http_requests_total",
@@ -123,7 +128,32 @@ pub const METRICS: &[MetricDefinition] = &[
         unit: "jobs",
         labels: &["job_type", "result"],
     },
+    MetricDefinition {
+        name: "sitolo_organizations_created_total",
+        kind: MetricKind::Counter,
+        unit: "organizations",
+        labels: &["client_platform"],
+    },
+    MetricDefinition {
+        name: "sitolo_membership_invites_total",
+        kind: MetricKind::Counter,
+        unit: "invitations",
+        labels: &["scope_type"],
+    },
+    MetricDefinition {
+        name: "sitolo_membership_revocations_total",
+        kind: MetricKind::Counter,
+        unit: "revocations",
+        labels: &["reason_class"],
+    },
+    MetricDefinition {
+        name: "sitolo_cross_scope_denials_total",
+        kind: MetricKind::Counter,
+        unit: "denials",
+        labels: &["operation"],
+    },
 ];
+
 pub fn metric(name: &str) -> Option<&'static MetricDefinition> {
     METRICS.iter().find(|m| m.name == name)
 }

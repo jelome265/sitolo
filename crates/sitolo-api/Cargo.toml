@@ -6,4 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sitolo-authz = { path = "../sitolo-authz" }
+sitolo-tenancy = { path = "../sitolo-tenancy" }
 sitolo-observability = { path = "../sitolo-observability" }
+thiserror.workspace = true

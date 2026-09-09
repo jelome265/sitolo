@@ -6,3 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+thiserror.workspace = true
+serde.workspace = true
+sitolo-auth.workspace = true
+sitolo-security.workspace = true
+sitolo-authz = { path = "../sitolo-authz" }
+
+[dev-dependencies]
+sitolo-application = { path = "../sitolo-application" }
+sitolo-persistence = { path = "../sitolo-persistence" }
+tokio.workspace = true

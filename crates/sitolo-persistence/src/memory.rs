@@ -1,15 +1,12 @@
-//! In-memory identity database.
+//! In-memory identity and tenancy databases.
 //!
-//! Reference implementation of [`IdentityStores`] for tests and local
+//! Reference implementation of [`IdentityStores`] and [`TenancyStores`] for tests and local
 //! development. Each method simulates a transaction: a single lock is held
 //! for the duration of the operation, so concurrent callers serialize and
 //! the "one legal transition" invariant (§41) is provable with threads.
 //! Production implementations replace this with PostgreSQL-backed
 //! repositories that enforce the same semantics via row locks and unique
 //! constraints (§12.3, §52).
-//!
-//! The deterministic randomness here is test-only and clearly labeled;
-//! production wiring must use an OS CSPRNG through `sitolo_security::RandomSource`.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -28,9 +25,16 @@ use sitolo_auth::{
     RefreshLedger, RefreshState, ResetArtifactId, RevocationScope, RevocationTrigger,
     SecurityVersion, Session, SessionClass, SessionId, SessionPolicySet, UserId,
 };
+use sitolo_authz::{
+    BranchId, InvitationId, MembershipId, OrganizationId, OwnershipTransferId, RoleId, Scope,
+};
 use sitolo_security::SealedRef;
+use sitolo_tenancy::{
+    Branch, BranchStatus, Invitation, Membership, MembershipStatus, Organization,
+    OrganizationStatus, OwnershipTransferRequest, TenancyError,
+};
 
-use crate::ports::IdentityStores;
+use crate::ports::{IdentityStores, TenancyStores};
 
 /// Session snapshot returned to the application layer.
 #[derive(Debug, Clone)]
@@ -572,8 +576,6 @@ impl IdentityStores for IdentityDatabase {
         )?;
         let challenge_id =
             ChallengeId::new(format!("chal-{}", Self::random_hex(8))).expect("challenge id");
-        // For the reference implementation, bind the challenge to a dummy session;
-        // production implementations require a real session context.
         let dummy_session = SessionId::new("enrollment-session").expect("session id");
         state.mfa.issue_challenge(
             challenge_id.clone(),
@@ -734,10 +736,458 @@ impl AuditRecorder for IdentityDatabase {
     }
 }
 
+/// In-memory database for tenancy and IAM (Phase 4).
+pub struct TenancyDatabase {
+    state: Mutex<TenancyState>,
+}
+
+struct TenancyState {
+    organizations: BTreeMap<OrganizationId, Organization>,
+    branches: BTreeMap<BranchId, Branch>,
+    memberships: BTreeMap<MembershipId, Membership>,
+    invitations: BTreeMap<InvitationId, Invitation>,
+    ownership_transfers: BTreeMap<OwnershipTransferId, OwnershipTransferRequest>,
+}
+
+impl Default for TenancyDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TenancyDatabase {
+    pub fn new() -> Self {
+        Self {
+            state: Mutex::new(TenancyState {
+                organizations: BTreeMap::new(),
+                branches: BTreeMap::new(),
+                memberships: BTreeMap::new(),
+                invitations: BTreeMap::new(),
+                ownership_transfers: BTreeMap::new(),
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl TenancyStores for TenancyDatabase {
+    async fn create_organization(&self, org: Organization) -> Result<Organization, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        if state.organizations.contains_key(&org.id) {
+            return Err(TenancyError::ConcurrencyConflict);
+        }
+        state.organizations.insert(org.id.clone(), org.clone());
+        Ok(org)
+    }
+
+    async fn get_organization(
+        &self,
+        id: &OrganizationId,
+    ) -> Result<Option<Organization>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        Ok(state.organizations.get(id).cloned())
+    }
+
+    async fn update_organization_status(
+        &self,
+        id: &OrganizationId,
+        status: OrganizationStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Organization, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let org = state
+            .organizations
+            .get_mut(id)
+            .ok_or_else(|| TenancyError::OrganizationNotFound { id: id.to_string() })?;
+        match status {
+            OrganizationStatus::Active => org.activate(now_epoch_secs)?,
+            OrganizationStatus::Suspended => org.suspend(now_epoch_secs)?,
+            OrganizationStatus::Closing => org.start_closing(now_epoch_secs)?,
+            OrganizationStatus::Closed => org.close(now_epoch_secs)?,
+            OrganizationStatus::Provisioning => {
+                return Err(TenancyError::InvalidStatusTransition {
+                    from: org.status.as_str().to_string(),
+                    to: "provisioning".to_string(),
+                });
+            }
+        }
+        Ok(org.clone())
+    }
+
+    async fn update_organization_name(
+        &self,
+        id: &OrganizationId,
+        name: String,
+        now_epoch_secs: u64,
+    ) -> Result<Organization, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let org = state
+            .organizations
+            .get_mut(id)
+            .ok_or_else(|| TenancyError::OrganizationNotFound { id: id.to_string() })?;
+        if name.trim().is_empty() || name.len() > 256 {
+            return Err(TenancyError::InvalidIdentifier);
+        }
+        org.name = name;
+        org.security_version = org.security_version.next();
+        org.updated_at_epoch_secs = now_epoch_secs;
+        Ok(org.clone())
+    }
+
+    async fn create_branch(&self, branch: Branch) -> Result<Branch, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        if !state.organizations.contains_key(&branch.organization_id) {
+            return Err(TenancyError::OrganizationNotFound {
+                id: branch.organization_id.to_string(),
+            });
+        }
+        state.branches.insert(branch.id.clone(), branch.clone());
+        Ok(branch)
+    }
+
+    async fn get_branch(
+        &self,
+        org_id: &OrganizationId,
+        branch_id: &BranchId,
+    ) -> Result<Option<Branch>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        if let Some(branch) = state
+            .branches
+            .get(branch_id)
+            .filter(|b| &b.organization_id == org_id)
+        {
+            return Ok(Some(branch.clone()));
+        }
+        Ok(None)
+    }
+
+    async fn list_branches(&self, org_id: &OrganizationId) -> Result<Vec<Branch>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        let branches = state
+            .branches
+            .values()
+            .filter(|b| &b.organization_id == org_id)
+            .cloned()
+            .collect();
+        Ok(branches)
+    }
+
+    async fn update_branch_status(
+        &self,
+        org_id: &OrganizationId,
+        branch_id: &BranchId,
+        status: BranchStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Branch, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let branch =
+            state
+                .branches
+                .get_mut(branch_id)
+                .ok_or_else(|| TenancyError::BranchNotFound {
+                    id: branch_id.to_string(),
+                })?;
+        if &branch.organization_id != org_id {
+            return Err(TenancyError::BranchNotFound {
+                id: branch_id.to_string(),
+            });
+        }
+        match status {
+            BranchStatus::Suspended => branch.suspend(now_epoch_secs)?,
+            BranchStatus::Closed => branch.close(now_epoch_secs)?,
+            _ => branch.status = status,
+        }
+        Ok(branch.clone())
+    }
+
+    async fn create_membership(&self, membership: Membership) -> Result<Membership, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        if !state
+            .organizations
+            .contains_key(&membership.organization_id)
+        {
+            return Err(TenancyError::OrganizationNotFound {
+                id: membership.organization_id.to_string(),
+            });
+        }
+        let exists = state.memberships.values().any(|m| {
+            m.organization_id == membership.organization_id
+                && m.user_id == membership.user_id
+                && m.is_active()
+        });
+        if exists {
+            return Err(TenancyError::MembershipAlreadyExists);
+        }
+        state
+            .memberships
+            .insert(membership.id.clone(), membership.clone());
+        Ok(membership)
+    }
+
+    async fn get_membership(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Result<Option<Membership>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        if let Some(m) = state
+            .memberships
+            .get(membership_id)
+            .filter(|m| &m.organization_id == org_id)
+        {
+            return Ok(Some(m.clone()));
+        }
+        Ok(None)
+    }
+
+    async fn get_membership_by_user(
+        &self,
+        org_id: &OrganizationId,
+        user_id: &UserId,
+    ) -> Result<Option<Membership>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        let m = state
+            .memberships
+            .values()
+            .find(|m| &m.organization_id == org_id && &m.user_id == user_id && m.is_active())
+            .cloned();
+        Ok(m)
+    }
+
+    async fn list_memberships(
+        &self,
+        org_id: &OrganizationId,
+    ) -> Result<Vec<Membership>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        let list = state
+            .memberships
+            .values()
+            .filter(|m| &m.organization_id == org_id)
+            .cloned()
+            .collect();
+        Ok(list)
+    }
+
+    async fn list_user_memberships(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<Membership>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        let list = state
+            .memberships
+            .values()
+            .filter(|m| &m.user_id == user_id && m.is_active())
+            .cloned()
+            .collect();
+        Ok(list)
+    }
+
+    async fn update_membership_status(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        status: MembershipStatus,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let m = state.memberships.get_mut(membership_id).ok_or_else(|| {
+            TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            }
+        })?;
+        if &m.organization_id != org_id {
+            return Err(TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            });
+        }
+        match status {
+            MembershipStatus::Active => m.reactivate(now_epoch_secs)?,
+            MembershipStatus::Suspended => m.suspend(now_epoch_secs)?,
+            MembershipStatus::Revoked => m.revoke(now_epoch_secs)?,
+            _ => m.status = status,
+        }
+        Ok(m.clone())
+    }
+
+    async fn assign_membership_role(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: RoleId,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let m = state.memberships.get_mut(membership_id).ok_or_else(|| {
+            TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            }
+        })?;
+        if &m.organization_id != org_id {
+            return Err(TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            });
+        }
+        m.assign_role(role, now_epoch_secs);
+        Ok(m.clone())
+    }
+
+    async fn revoke_membership_role(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: &RoleId,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let m = state.memberships.get_mut(membership_id).ok_or_else(|| {
+            TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            }
+        })?;
+        if &m.organization_id != org_id {
+            return Err(TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            });
+        }
+        m.revoke_role(role, now_epoch_secs);
+        Ok(m.clone())
+    }
+
+    async fn update_membership_scopes(
+        &self,
+        org_id: &OrganizationId,
+        membership_id: &MembershipId,
+        scopes: Vec<Scope>,
+        now_epoch_secs: u64,
+    ) -> Result<Membership, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let m = state.memberships.get_mut(membership_id).ok_or_else(|| {
+            TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            }
+        })?;
+        if &m.organization_id != org_id {
+            return Err(TenancyError::MembershipNotFound {
+                id: membership_id.to_string(),
+            });
+        }
+        m.scope_grants = scopes;
+        m.security_version = m.security_version.next();
+        m.updated_at_epoch_secs = now_epoch_secs;
+        Ok(m.clone())
+    }
+
+    async fn create_invitation(&self, invitation: Invitation) -> Result<Invitation, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        if !state
+            .organizations
+            .contains_key(&invitation.organization_id)
+        {
+            return Err(TenancyError::OrganizationNotFound {
+                id: invitation.organization_id.to_string(),
+            });
+        }
+        state
+            .invitations
+            .insert(invitation.id.clone(), invitation.clone());
+        Ok(invitation)
+    }
+
+    async fn get_invitation(&self, id: &InvitationId) -> Result<Option<Invitation>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        Ok(state.invitations.get(id).cloned())
+    }
+
+    async fn list_invitations(
+        &self,
+        org_id: &OrganizationId,
+    ) -> Result<Vec<Invitation>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        let list = state
+            .invitations
+            .values()
+            .filter(|i| &i.organization_id == org_id)
+            .cloned()
+            .collect();
+        Ok(list)
+    }
+
+    async fn accept_invitation(
+        &self,
+        id: &InvitationId,
+        now_epoch_secs: u64,
+    ) -> Result<Invitation, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let inv = state
+            .invitations
+            .get_mut(id)
+            .ok_or_else(|| TenancyError::InvitationNotFound { id: id.to_string() })?;
+        inv.accept(now_epoch_secs)?;
+        Ok(inv.clone())
+    }
+
+    async fn revoke_invitation(
+        &self,
+        org_id: &OrganizationId,
+        id: &InvitationId,
+    ) -> Result<Invitation, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let inv = state
+            .invitations
+            .get_mut(id)
+            .ok_or_else(|| TenancyError::InvitationNotFound { id: id.to_string() });
+        let inv = inv?;
+        if &inv.organization_id != org_id {
+            return Err(TenancyError::InvitationNotFound { id: id.to_string() });
+        }
+        inv.revoke()?;
+        Ok(inv.clone())
+    }
+
+    async fn create_ownership_transfer(
+        &self,
+        req: OwnershipTransferRequest,
+    ) -> Result<OwnershipTransferRequest, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        if !state.organizations.contains_key(&req.organization_id) {
+            return Err(TenancyError::OrganizationNotFound {
+                id: req.organization_id.to_string(),
+            });
+        }
+        state
+            .ownership_transfers
+            .insert(req.id.clone(), req.clone());
+        Ok(req)
+    }
+
+    async fn get_ownership_transfer(
+        &self,
+        id: &OwnershipTransferId,
+    ) -> Result<Option<OwnershipTransferRequest>, TenancyError> {
+        let state = self.state.lock().expect("state lock");
+        Ok(state.ownership_transfers.get(id).cloned())
+    }
+
+    async fn approve_ownership_transfer(
+        &self,
+        id: &OwnershipTransferId,
+        now_epoch_secs: u64,
+    ) -> Result<OwnershipTransferRequest, TenancyError> {
+        let mut state = self.state.lock().expect("state lock");
+        let req = state
+            .ownership_transfers
+            .get_mut(id)
+            .ok_or(TenancyError::OwnershipTransferInvalidState)?;
+        req.approve(now_epoch_secs)?;
+        Ok(req.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sitolo_auth::SessionLifetime;
+    use sitolo_authz::ROLE_OWNER;
 
     #[test]
     fn database_constructs() {
@@ -757,5 +1207,69 @@ mod tests {
         };
         let db = IdentityDatabase::new(policy, Duration::from_secs(3600));
         assert!(db.state.lock().is_ok());
+
+        let tdb = TenancyDatabase::new();
+        assert!(tdb.state.lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn tenancy_database_isolation_and_operations() {
+        let db = TenancyDatabase::new();
+
+        let org_a_id = OrganizationId::new("org-a").unwrap();
+        let org_a = Organization::create(org_a_id.clone(), "Merchant A", 1000).unwrap();
+        db.create_organization(org_a).await.unwrap();
+
+        let org_b_id = OrganizationId::new("org-b").unwrap();
+        let org_b = Organization::create(org_b_id.clone(), "Merchant B", 1000).unwrap();
+        db.create_organization(org_b).await.unwrap();
+
+        // Create branch for Org A
+        let branch_a1_id = BranchId::new("branch-a1").unwrap();
+        let branch_a1 = Branch::create(
+            branch_a1_id.clone(),
+            org_a_id.clone(),
+            "Main Branch A",
+            true,
+            1000,
+        )
+        .unwrap();
+        db.create_branch(branch_a1).await.unwrap();
+
+        // Cross-tenant lookup: requesting Branch A with Org B ID returns None!
+        let cross_branch = db.get_branch(&org_b_id, &branch_a1_id).await.unwrap();
+        assert!(cross_branch.is_none());
+
+        // Correct lookup
+        let branch_found = db.get_branch(&org_a_id, &branch_a1_id).await.unwrap();
+        assert!(branch_found.is_some());
+        assert_eq!(branch_found.unwrap().name, "Main Branch A");
+
+        // Membership creation & tenant-scoped lookups
+        let user_1 = UserId::new("user-1").unwrap();
+        let mem_id = MembershipId::new("mem-1").unwrap();
+        let mem = Membership::create_active(
+            mem_id.clone(),
+            org_a_id.clone(),
+            user_1.clone(),
+            vec![RoleId::new(ROLE_OWNER).unwrap()],
+            vec![Scope::Organization],
+            1000,
+        );
+        db.create_membership(mem).await.unwrap();
+
+        // Cross-tenant membership lookup returns None
+        assert!(
+            db.get_membership(&org_b_id, &mem_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.get_membership(&org_a_id, &mem_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

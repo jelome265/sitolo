@@ -9,7 +9,12 @@ license.workspace = true
 async-trait.workspace = true
 sha2.workspace = true
 sitolo-auth.workspace = true
+sitolo-authz = { path = "../sitolo-authz" }
+sitolo-tenancy = { path = "../sitolo-tenancy" }
 sitolo-audit.workspace = true
 sitolo-config.workspace = true
 sitolo-security.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

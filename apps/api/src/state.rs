@@ -6,8 +6,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use sitolo_application::TenancyService;
 use sitolo_config::DatabaseTarget;
 use sitolo_observability::TelemetryBuffer;
+use sitolo_persistence::TenancyDatabase;
 
 /// Immutable shared application state.
 pub struct AppState {
@@ -16,6 +18,7 @@ pub struct AppState {
     config_fingerprint: String,
     db_target: DatabaseTarget,
     telemetry: Arc<Mutex<TelemetryBuffer>>,
+    tenancy_service: Arc<TenancyService<TenancyDatabase>>,
 }
 
 impl AppState {
@@ -25,6 +28,7 @@ impl AppState {
         config_fingerprint: String,
         db_target: DatabaseTarget,
         telemetry: Arc<Mutex<TelemetryBuffer>>,
+        tenancy_service: Arc<TenancyService<TenancyDatabase>>,
     ) -> Self {
         AppState {
             service_name,
@@ -32,6 +36,7 @@ impl AppState {
             config_fingerprint,
             db_target,
             telemetry,
+            tenancy_service,
         }
     }
 
@@ -55,5 +60,9 @@ impl AppState {
 
     pub fn telemetry(&self) -> &Arc<Mutex<TelemetryBuffer>> {
         &self.telemetry
+    }
+
+    pub fn tenancy_service(&self) -> &Arc<TenancyService<TenancyDatabase>> {
+        &self.tenancy_service
     }
 }

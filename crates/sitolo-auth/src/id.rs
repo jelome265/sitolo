@@ -4,11 +4,14 @@
 //! server state, never authority. They embed no email, phone, user, tenant,
 //! role, branch, or revealing timestamp material.
 
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
 /// Opaque server-issued identifier. Production values must come from a
 /// cryptographically secure source through [`sitolo_security::RandomSource`].
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         pub struct $name(String);
 
         impl $name {
@@ -28,10 +31,14 @@ macro_rules! opaque_id {
                 &self.0
             }
         }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
     };
 }
-
-use thiserror::Error;
 
 use crate::error::AuthError;
 
@@ -84,7 +91,7 @@ opaque_id!(AuditEventId);
 
 /// Monotonic invalidation counter for stale authority (§31). It never
 /// decreases; a mismatch denies or triggers controlled reauthentication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SecurityVersion(pub u64);
 
 impl SecurityVersion {
@@ -96,7 +103,7 @@ impl SecurityVersion {
 }
 
 /// Authentication assurance levels (§16): A0 anonymous through A4 break-glass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Assurance {
     A0,
     A1,
@@ -126,7 +133,7 @@ impl Assurance {
 
 /// Session risk class (§11.1). Lifetime policy is class-based configuration;
 /// domain code must not hard-code a single lifetime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SessionClass {
     Merchant,
     Administrator,
@@ -145,7 +152,7 @@ impl SessionClass {
 }
 
 /// How an identity was authenticated (bounded metric label, §38).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthenticationMethod {
     Password,
     OidcAssertion,
@@ -170,7 +177,7 @@ impl AuthenticationMethod {
 }
 
 /// Client surface (bounded metric label, §38).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ClientPlatform {
     Android,
     Ios,

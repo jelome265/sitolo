@@ -21,10 +21,12 @@
 
 use std::sync::{Arc, Mutex};
 
+use sitolo_application::TenancyService;
 use sitolo_config::{
     AppConfig, DatabaseRuntimeConfig, EnvLoader, LogLevel, config_fingerprint, validate,
 };
 use sitolo_observability::TelemetryBuffer;
+use sitolo_persistence::TenancyDatabase;
 use sitolo_security::{EnvSecretProvider, SecretProvider};
 use thiserror::Error;
 
@@ -76,9 +78,6 @@ impl StartupContext {
             .iter()
             .find(|(key, _)| key == "SITOLO__RUNTIME__ENVIRONMENT")
             .map(|(_, value)| value.as_str());
-        // Environment-appropriate default provider. Production has no
-        // managed adapter yet, so it resolves to nothing and fails closed
-        // below instead of silently using the development provider.
         let default: Option<Arc<dyn SecretProvider>> = match selector {
             None | Some("development") | Some("staging") => {
                 Some(Arc::new(EnvSecretProvider::new(false)))
@@ -115,13 +114,8 @@ impl StartupContext {
             config.otel_max_queue as usize,
         )));
 
-        // F-020 fail-closed startup: without an explicit provider there is
-        // nothing production-safe to use, so startup refuses.
         let provider = provider.ok_or(StartupError::SecretProviderUnavailable)?;
 
-        // Startup secret probe: proves the reference resolves through the
-        // selected provider, then drops the value immediately. State never
-        // holds credentials; only the provider capability is retained.
         let probe = provider.get(config.db_secret_ref()).await.map_err(|_| {
             StartupError::SecretProbeFailed {
                 class: config.database_secret_class().as_str(),
@@ -143,12 +137,17 @@ impl StartupContext {
             db_user = config.db_user.as_str(),
             "sitolo-api startup complete"
         );
+
+        let tenancy_db = TenancyDatabase::new();
+        let tenancy_service = Arc::new(TenancyService::new(tenancy_db));
+
         let state = Arc::new(AppState::new(
             config.service_name.clone(),
             config.service_version.clone(),
             fingerprint,
             config.database_target(),
             Arc::clone(&telemetry),
+            tenancy_service,
         ));
         Ok(StartupContext {
             config,
@@ -159,8 +158,6 @@ impl StartupContext {
         })
     }
 
-    /// Validated, non-connecting database intent for the future
-    /// persistence capability. No I/O has been performed.
     pub fn db_intent(&self) -> &DatabaseRuntimeConfig {
         &self.db_intent
     }
@@ -206,9 +203,6 @@ fn logging_level(level: LogLevel) -> tracing::level_filters::LevelFilter {
     }
 }
 
-/// Installs the process-global JSON subscriber exactly once. Later calls are
-/// no-ops: the first initialization wins for the process lifetime, which is
-/// also what makes multi-bootstrap test processes deterministic.
 fn init_logging(level: LogLevel) {
     let _ = tracing_subscriber::fmt()
         .json()

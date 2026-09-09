@@ -7,8 +7,14 @@
 //! Phase 3: identity use cases that wire authentication, sessions, MFA,
 //! device lifecycle, password management, and security-context construction
 //! against the persistence ports.
+//!
+//! Phase 4: tenancy use cases that wire organization provisioning, branch
+//! lifecycle, membership management, role assignment, scope grants, and IAM context
+//! switching.
 #![forbid(unsafe_code)]
 
 mod identity;
+mod tenancy;
 
 pub use identity::IdentityService;
+pub use tenancy::TenancyService;

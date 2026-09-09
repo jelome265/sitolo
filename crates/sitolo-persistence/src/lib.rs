@@ -11,9 +11,10 @@ mod runtime;
 
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
-    MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
+    MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, TenancyDatabase,
+    UserSnapshot,
 };
-pub use ports::IdentityStores;
+pub use ports::{IdentityStores, TenancyStores};
 pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,

@@ -1,9 +1,7 @@
-//! Authentication audit events and record shape.
+//! Authentication and IAM audit events and record shape.
 //!
-//! Phase 3 specification, §37, §37.1. The minimum event set is enumerated
-//! here; records are constructed from secret-free fields by design. The
-//! recorder port is async so that production implementations can write to
-//! durable storage transactionally.
+//! Phase 3 specification §37; Phase 4 specification §31.
+//! Minimum event sets are enumerated here; records are constructed from secret-free fields by design.
 
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -13,9 +11,7 @@ use thiserror::Error;
 
 use sitolo_auth::{Assurance, AuditEventId, AuthenticationMethod, ClientPlatform, SecurityVersion};
 
-/// Authentication audit event names (§37). The dotted lowercase names are
-/// consistent with the existing observability registry; the SCREAMING names
-/// in the specification map 1:1 to these.
+/// Authentication audit event names (§37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthEventName {
     LoginSuccess,
@@ -85,6 +81,69 @@ impl AuthEventName {
     }
 }
 
+/// IAM audit event names (Phase 4 §31).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IamEventName {
+    OrganizationCreated,
+    OrganizationUpdated,
+    OrganizationSuspended,
+    OrganizationReactivated,
+    OrganizationClosed,
+
+    InvitationCreated,
+    InvitationAccepted,
+    InvitationRevoked,
+    InvitationExpired,
+
+    MembershipCreated,
+    MembershipRoleChanged,
+    MembershipScopeChanged,
+    MembershipSuspended,
+    MembershipReactivated,
+    MembershipRevoked,
+
+    BranchCreated,
+    BranchUpdated,
+    BranchClosed,
+
+    OwnershipTransferRequested,
+    OwnershipTransferApproved,
+    OwnershipTransferRejected,
+}
+
+impl IamEventName {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IamEventName::OrganizationCreated => "iam.organization.created",
+            IamEventName::OrganizationUpdated => "iam.organization.updated",
+            IamEventName::OrganizationSuspended => "iam.organization.suspended",
+            IamEventName::OrganizationReactivated => "iam.organization.reactivated",
+            IamEventName::OrganizationClosed => "iam.organization.closed",
+
+            IamEventName::InvitationCreated => "iam.invitation.created",
+            IamEventName::InvitationAccepted => "iam.invitation.accepted",
+            IamEventName::InvitationRevoked => "iam.invitation.revoked",
+            IamEventName::InvitationExpired => "iam.invitation.expired",
+
+            IamEventName::MembershipCreated => "iam.membership.created",
+            IamEventName::MembershipRoleChanged => "iam.membership.role_changed",
+            IamEventName::MembershipScopeChanged => "iam.membership.scope_changed",
+            IamEventName::MembershipSuspended => "iam.membership.suspended",
+            IamEventName::MembershipReactivated => "iam.membership.reactivated",
+            IamEventName::MembershipRevoked => "iam.membership.revoked",
+
+            IamEventName::BranchCreated => "iam.branch.created",
+            IamEventName::BranchUpdated => "iam.branch.updated",
+            IamEventName::BranchClosed => "iam.branch.closed",
+
+            IamEventName::OwnershipTransferRequested => "iam.ownership.transfer_requested",
+            IamEventName::OwnershipTransferApproved => "iam.ownership.transfer_approved",
+            IamEventName::OwnershipTransferRejected => "iam.ownership.transfer_rejected",
+        }
+    }
+}
+
 /// Audit event outcome (§37.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {
@@ -93,12 +152,6 @@ pub enum EventResult {
 }
 
 /// Authentication audit record (§37.1).
-///
-/// Secret-bearing fields are structurally impossible: the record is
-/// constructed from pseudonymous references, bounded labels, and outcome
-/// classifications. The forbidden list in §37.1 (password, otp, mfa
-/// secret, refresh token, access token, authorization code, client secret,
-/// private key, recovery code) is not part of this shape.
 #[derive(Debug, Clone)]
 pub struct AuthenticationEvent {
     pub event_id: AuditEventId,
@@ -112,6 +165,22 @@ pub struct AuthenticationEvent {
     pub client_platform: Option<ClientPlatform>,
     pub authentication_method: Option<AuthenticationMethod>,
     pub assurance_level: Option<Assurance>,
+    pub result: EventResult,
+    pub reason_class: Option<&'static str>,
+    pub security_version: Option<SecurityVersion>,
+}
+
+/// IAM audit record (Phase 4 §31).
+#[derive(Debug, Clone)]
+pub struct IamAuditEvent {
+    pub event_id: AuditEventId,
+    pub event_name: IamEventName,
+    pub occurred_at: SystemTime,
+    pub request_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub actor_ref: Option<String>,
+    pub organization_ref: Option<String>,
+    pub target_ref: Option<String>,
     pub result: EventResult,
     pub reason_class: Option<&'static str>,
     pub security_version: Option<SecurityVersion>,
@@ -139,12 +208,22 @@ pub trait AuditRecorder: Send + Sync {
         event: AuthenticationEvent,
         requirement: AuditRequirement,
     ) -> Result<(), AuditError>;
+
+    async fn record_iam(
+        &self,
+        event: IamAuditEvent,
+        requirement: AuditRequirement,
+    ) -> Result<(), AuditError> {
+        let _ = (event, requirement);
+        Ok(())
+    }
 }
 
 /// In-memory audit sink for tests and local reference wiring.
 #[derive(Default)]
 pub struct InMemoryAuditSink {
     events: Mutex<Vec<AuthenticationEvent>>,
+    iam_events: Mutex<Vec<IamAuditEvent>>,
 }
 
 impl InMemoryAuditSink {
@@ -152,9 +231,14 @@ impl InMemoryAuditSink {
         Self::default()
     }
 
-    /// Returns a snapshot of all recorded events.
+    /// Returns a snapshot of all recorded authentication events.
     pub fn events(&self) -> Vec<AuthenticationEvent> {
         self.events.lock().expect("audit sink lock").clone()
+    }
+
+    /// Returns a snapshot of all recorded IAM events.
+    pub fn iam_events(&self) -> Vec<IamAuditEvent> {
+        self.iam_events.lock().expect("audit sink lock").clone()
     }
 }
 
@@ -166,6 +250,15 @@ impl AuditRecorder for InMemoryAuditSink {
         _requirement: AuditRequirement,
     ) -> Result<(), AuditError> {
         self.events.lock().expect("audit sink lock").push(event);
+        Ok(())
+    }
+
+    async fn record_iam(
+        &self,
+        event: IamAuditEvent,
+        _requirement: AuditRequirement,
+    ) -> Result<(), AuditError> {
+        self.iam_events.lock().expect("audit sink lock").push(event);
         Ok(())
     }
 }
@@ -182,14 +275,19 @@ mod tests {
             "auth.refresh.reuse_detected"
         );
         assert_eq!(AuthEventName::DeviceRevoked.as_str(), "auth.device.revoked");
+
+        assert_eq!(
+            IamEventName::OrganizationCreated.as_str(),
+            "iam.organization.created"
+        );
+        assert_eq!(
+            IamEventName::MembershipRoleChanged.as_str(),
+            "iam.membership.role_changed"
+        );
     }
 
     #[test]
     fn record_shape_has_no_secret_fields() {
-        // The record shape is secret-free by construction. This test
-        // documents the invariant: no field in AuthenticationEvent can hold
-        // a password, otp, mfa secret, refresh token, access token,
-        // authorization code, client secret, private key, or recovery code.
         let event = AuthenticationEvent {
             event_id: AuditEventId::new("evt-1").unwrap(),
             event_name: AuthEventName::LoginSuccess,

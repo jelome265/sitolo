@@ -7,3 +7,6 @@
 //! SQLx, Redis, HTTP clients, filesystem/network implementations, or provider
 //! SDKs (Phase 1 specification, §5.1, §6).
 #![forbid(unsafe_code)]
+
+pub use sitolo_authz as authz;
+pub use sitolo_tenancy as tenancy;

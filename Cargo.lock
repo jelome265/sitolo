@@ -170,6 +170,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
@@ -239,7 +240,12 @@ dependencies = [
 name = "sitolo-api"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "sitolo-authz",
  "sitolo-observability",
+ "sitolo-tenancy",
+ "thiserror",
 ]
 
 [[package]]
@@ -247,9 +253,15 @@ name = "sitolo-api-bin"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "sitolo-api",
+ "sitolo-application",
+ "sitolo-auth",
+ "sitolo-authz",
  "sitolo-config",
  "sitolo-observability",
+ "sitolo-persistence",
  "sitolo-security",
+ "sitolo-tenancy",
  "thiserror",
  "tokio",
  "tracing",
@@ -264,10 +276,14 @@ dependencies = [
  "sha2",
  "sitolo-audit",
  "sitolo-auth",
+ "sitolo-authz",
+ "sitolo-events",
  "sitolo-observability",
  "sitolo-persistence",
  "sitolo-security",
+ "sitolo-tenancy",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -285,6 +301,7 @@ name = "sitolo-auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "serde",
  "sha2",
  "sitolo-observability",
  "sitolo-security",
@@ -294,6 +311,12 @@ dependencies = [
 [[package]]
 name = "sitolo-authz"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "sitolo-auth",
+ "sitolo-security",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-config"
@@ -307,6 +330,13 @@ dependencies = [
 [[package]]
 name = "sitolo-domain"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "sitolo-auth",
+ "sitolo-authz",
+ "sitolo-tenancy",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-events"
@@ -334,9 +364,12 @@ dependencies = [
  "sha2",
  "sitolo-audit",
  "sitolo-auth",
+ "sitolo-authz",
  "sitolo-config",
  "sitolo-security",
+ "sitolo-tenancy",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -355,6 +388,16 @@ version = "0.1.0"
 [[package]]
 name = "sitolo-tenancy"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "sitolo-application",
+ "sitolo-auth",
+ "sitolo-authz",
+ "sitolo-persistence",
+ "sitolo-security",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "sitolo-testkit"
