@@ -160,7 +160,7 @@ impl IdentityStores for IdentityDatabase {
         _password_version: Option<u32>,
         password_verifier: Option<String>,
     ) -> Result<UserSnapshot, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let record = UserRecord {
             id: id.clone(),
             security_version: SecurityVersion(1),
@@ -181,7 +181,7 @@ impl IdentityStores for IdentityDatabase {
     }
 
     async fn user_snapshot(&self, id: &UserId) -> Option<UserSnapshot> {
-        let state = self.state.lock().expect("state lock");
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let record = state.users.get(id)?;
         let mfa_active = state.mfa.active_authenticator(id).is_some();
         Some(UserSnapshot {
@@ -201,7 +201,7 @@ impl IdentityStores for IdentityDatabase {
         verifier: String,
         policy_version: u32,
     ) -> Result<(), sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let record = state
             .users
             .get_mut(id)
@@ -215,7 +215,7 @@ impl IdentityStores for IdentityDatabase {
         &self,
         id: &UserId,
     ) -> Result<SecurityVersion, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let record = state
             .users
             .get_mut(id)
@@ -225,7 +225,7 @@ impl IdentityStores for IdentityDatabase {
     }
 
     async fn suspend_user(&self, id: &UserId) -> Result<(), sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let record = state
             .users
             .get_mut(id)
@@ -245,7 +245,7 @@ impl IdentityStores for IdentityDatabase {
         now: SystemTime,
     ) -> Result<EstablishedSession, sitolo_auth::AuthError> {
         let (session, refresh_token, family_id, event) = {
-            let mut state = self.state.lock().expect("state lock");
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let user = state
                 .users
                 .get(&user_id)
@@ -322,7 +322,7 @@ impl IdentityStores for IdentityDatabase {
     }
 
     async fn session_snapshot(&self, id: &SessionId) -> Option<SessionSnapshot> {
-        let state = self.state.lock().expect("state lock");
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = state.sessions.get(id)?;
         let user = state.users.get(&session.user_id)?;
         Some(SessionSnapshot {
@@ -336,7 +336,7 @@ impl IdentityStores for IdentityDatabase {
         id: &SessionId,
         now: SystemTime,
     ) -> Result<SessionSnapshot, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let user = state
             .users
             .get(
@@ -366,7 +366,7 @@ impl IdentityStores for IdentityDatabase {
         id: &SessionId,
         trigger: RevocationTrigger,
     ) -> Result<(), sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = state
             .sessions
             .get_mut(id)
@@ -382,7 +382,7 @@ impl IdentityStores for IdentityDatabase {
         user_id: Option<&UserId>,
         device_id: Option<&DeviceId>,
     ) -> Result<u32, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut count = 0u32;
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
@@ -411,7 +411,7 @@ impl IdentityStores for IdentityDatabase {
         id: &SessionId,
         to: Assurance,
     ) -> Result<(), sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = state
             .sessions
             .get_mut(id)
@@ -425,7 +425,7 @@ impl IdentityStores for IdentityDatabase {
         raw: &str,
         now: SystemTime,
     ) -> Result<RefreshRotation, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let key = sitolo_auth::hash_raw(raw);
         let existing = state
             .refresh
@@ -460,7 +460,7 @@ impl IdentityStores for IdentityDatabase {
         &self,
         input: DeviceRegistrationInput,
     ) -> Result<Device, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8))).expect("device id");
         let device = Device::begin_registration(
             device_id,
@@ -478,7 +478,7 @@ impl IdentityStores for IdentityDatabase {
         device_id: &DeviceId,
         _now: SystemTime,
     ) -> Result<Device, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let device = state
             .devices
             .get_mut(device_id)
@@ -490,7 +490,7 @@ impl IdentityStores for IdentityDatabase {
     }
 
     async fn device_snapshot(&self, id: &DeviceId) -> Option<Device> {
-        let state = self.state.lock().expect("state lock");
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.devices.get(id).cloned()
     }
 
@@ -499,7 +499,7 @@ impl IdentityStores for IdentityDatabase {
         id: &DeviceId,
         now: SystemTime,
     ) -> Result<DeviceRevocationEffect, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         {
             let device = state
                 .devices
@@ -527,7 +527,7 @@ impl IdentityStores for IdentityDatabase {
         old: &DeviceId,
         now: SystemTime,
     ) -> Result<Device, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let old_device = state
             .devices
             .get_mut(old)
@@ -554,7 +554,7 @@ impl IdentityStores for IdentityDatabase {
         secret_reference: Option<SealedRef>,
         now: SystemTime,
     ) -> Result<MfaEnrollmentResult, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let auth_id =
             MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8))).expect("mfa id");
         let security_version = state
@@ -595,7 +595,7 @@ impl IdentityStores for IdentityDatabase {
         authenticator_id: &MfaAuthenticatorId,
         now: SystemTime,
     ) -> Result<Vec<String>, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.mfa.complete_enrollment(authenticator_id, now)?;
         let auth = state.mfa.authenticator(authenticator_id).expect("auth");
         let user_id = auth.user_id.clone();
@@ -620,12 +620,12 @@ impl IdentityStores for IdentityDatabase {
         authenticator_id: &MfaAuthenticatorId,
         step: u64,
     ) -> Result<(), sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.mfa.record_totp_success(authenticator_id, step)
     }
 
     async fn active_authenticator(&self, user_id: &UserId) -> Option<MfaAuthenticator> {
-        let state = self.state.lock().expect("state lock");
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.mfa.active_authenticator(user_id).cloned()
     }
 
@@ -635,7 +635,7 @@ impl IdentityStores for IdentityDatabase {
         raw: &str,
         now: SystemTime,
     ) -> Result<RecoveryCodeId, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.mfa.consume_recovery_code(user_id, raw, now)
     }
 
@@ -645,7 +645,7 @@ impl IdentityStores for IdentityDatabase {
         _actor: &UserId,
         now: SystemTime,
     ) -> Result<Vec<MfaAuthenticatorId>, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let revoked = state.mfa.reset_all(target, now);
         Ok(revoked)
     }
@@ -657,7 +657,7 @@ impl IdentityStores for IdentityDatabase {
         now: SystemTime,
         ttl: Duration,
     ) -> Result<PasswordResetResult, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(user) = state.users.get(user_id) else {
             return Ok(PasswordResetResult { user_id: None });
         };
@@ -682,7 +682,7 @@ impl IdentityStores for IdentityDatabase {
         new_policy_version: u32,
         now: SystemTime,
     ) -> Result<UserId, sitolo_auth::AuthError> {
-        let mut state = self.state.lock().expect("state lock");
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let token_hash = sitolo_auth::PasswordResetArtifact::hash_token(raw_token);
         let user_id = state
             .resets

@@ -63,32 +63,42 @@ pub struct InMemoryProtectedStore {
     next: Mutex<u64>,
 }
 
+impl InMemoryProtectedStore {
+    /// Acquires the items lock, recovering from mutex poisoning.
+    ///
+    /// A panic in one caller while holding this lock must not cascade into
+    /// permanent unavailability for every subsequent caller (fail-closed
+    /// security decisions still occur upstream via typed `Result`s; a
+    /// poisoned in-memory cache is not itself a security invariant).
+    fn items_lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
+        self.items.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Acquires the id-counter lock, recovering from mutex poisoning.
+    fn next_lock(&self) -> std::sync::MutexGuard<'_, u64> {
+        self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 impl SecretAtRest for InMemoryProtectedStore {
     fn seal(&self, material: &[u8]) -> Result<SealedRef, SecretAtRestError> {
-        let mut id = self.next.lock().expect("sealed id lock");
+        let mut id = self.next_lock();
         *id = id.wrapping_add(1);
         let reference = SealedRef::new(format!("sealed_{id:08}"));
-        self.items
-            .lock()
-            .expect("sealed store lock")
+        self.items_lock()
             .insert(reference.0.clone(), material.to_vec());
         Ok(reference)
     }
 
     fn open(&self, reference: &SealedRef) -> Result<Vec<u8>, SecretAtRestError> {
-        self.items
-            .lock()
-            .expect("sealed store lock")
+        self.items_lock()
             .get(&reference.0)
             .cloned()
             .ok_or(SecretAtRestError::NotFound)
     }
 
     fn destroy(&self, reference: &SealedRef) {
-        self.items
-            .lock()
-            .expect("sealed store lock")
-            .remove(&reference.0);
+        self.items_lock().remove(&reference.0);
     }
 }
 

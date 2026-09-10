@@ -65,7 +65,7 @@ impl IdentityService {
     }
 
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
-        let mut limiter = self.limiter.lock().expect("limiter lock");
+        let mut limiter = self.limiter.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let rule = self
             .policy
             .abuse_rules

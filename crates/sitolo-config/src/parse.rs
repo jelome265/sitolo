@@ -100,7 +100,13 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
             b.allow_local_secret_provider = value.parse().map_err(|_| UnknownKey(key.into()))?
         }
         "RUNTIME__CONFIG_SCHEMA_VERSION" => b.config_schema_version = number(key, value)?,
-        _ => unreachable!("catalogue and parser key sets must remain aligned"),
+        // Defense in depth: `ACCEPTED_KEYS` is checked above, so this arm is
+        // not expected to be reached. It is intentionally a structured
+        // error rather than `unreachable!()` so that a future maintenance
+        // drift between the key catalogue and this match (e.g. a new key
+        // added to one but not the other) fails closed as a normal
+        // configuration error at startup instead of an unhandled panic.
+        _ => return bad(),
     };
     Ok(())
 }
