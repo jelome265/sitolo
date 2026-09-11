@@ -61,6 +61,7 @@ impl IdentityPolicy {
 
 pub struct IdentityService {
     db: Arc<IdentityDatabase>,
+    hasher: Arc<dyn PasswordHasher>,
     #[allow(dead_code)]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
@@ -607,8 +608,8 @@ impl IdentityService {
     pub async fn complete_mfa_enrollment(
         &self,
         authenticator_id: &sitolo_auth::MfaAuthenticatorId,
+        now: SystemTime,
     ) -> Result<Vec<String>, sitolo_auth::AuthError> {
-        let now = SystemTime::now();
         let codes = self
             .db
             .complete_mfa_enrollment(authenticator_id, now)
@@ -943,14 +944,16 @@ mod tests {
                 reset_ttl: Duration::from_secs(600),
                 mfa_challenge_ttl: Duration::from_secs(300),
                 recovery_code_count: 8,
-                abuse_rules: vec![(
-                    AbuseClass::Login,
-                    RateLimitRule {
-                        max_attempts: 5,
-                        window: Duration::from_secs(60),
-                        lockout: Duration::from_secs(300),
-                    },
-                )],
+                abuse_rules: vec![
+                    (
+                        AbuseClass::Login,
+                        RateLimitRule {
+                            max_attempts: 5,
+                            window: Duration::from_secs(60),
+                            lockout: Duration::from_secs(300),
+                        },
+                    ),
+                ],
                 step_up_enrollment: Assurance::A2,
             },
             random,
