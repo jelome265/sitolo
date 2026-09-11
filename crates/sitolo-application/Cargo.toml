@@ -9,6 +9,7 @@ license.workspace = true
 async-trait.workspace = true
 sitolo-auth.workspace = true
 sitolo-audit.workspace = true
+sitolo-authz = { path = "../sitolo-authz" }
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-observability.workspace = true
 sitolo-persistence.workspace = true
