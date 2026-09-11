@@ -32,14 +32,12 @@ use sitolo_security::SealedRef;
 
 use crate::ports::IdentityStores;
 
-/// Session snapshot returned to the application layer.
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
     pub session: Session,
     pub user_security_version: SecurityVersion,
 }
 
-/// User snapshot returned to the application layer.
 #[derive(Debug, Clone)]
 pub struct UserSnapshot {
     pub id: UserId,
@@ -51,7 +49,6 @@ pub struct UserSnapshot {
     pub password_policy_version: u32,
 }
 
-/// The outcome of establishing a session (§52.1).
 #[derive(Debug, Clone)]
 pub struct EstablishedSession {
     pub session: Session,
@@ -59,7 +56,6 @@ pub struct EstablishedSession {
     pub family_id: RefreshFamilyId,
 }
 
-/// The outcome of a successful refresh rotation (§12.1).
 #[derive(Debug, Clone)]
 pub struct RefreshRotation {
     pub family_id: RefreshFamilyId,
@@ -68,27 +64,23 @@ pub struct RefreshRotation {
     pub successor_token: String,
 }
 
-/// The outcome of MFA enrollment completion (§18.1).
 #[derive(Debug, Clone)]
 pub struct MfaEnrollmentResult {
     pub authenticator_id: MfaAuthenticatorId,
     pub challenge_id: ChallengeId,
 }
 
-/// The outcome of a password reset request (§21).
 #[derive(Debug, Clone)]
 pub struct PasswordResetResult {
     pub user_id: Option<UserId>,
 }
 
-/// The outcome of device revocation (§27, §52.3).
 #[derive(Debug, Clone)]
 pub struct DeviceRevocationEffect {
     pub device: Device,
     pub revoked_sessions: Vec<SessionId>,
 }
 
-/// Input for device registration (§25).
 #[derive(Debug, Clone)]
 pub struct DeviceRegistrationInput {
     pub user_id: UserId,
@@ -97,7 +89,6 @@ pub struct DeviceRegistrationInput {
     pub now: SystemTime,
 }
 
-/// In-memory identity database.
 pub struct IdentityDatabase {
     state: Mutex<IdentityState>,
     session_policy: SessionPolicySet,
@@ -143,7 +134,6 @@ impl IdentityDatabase {
     }
 
     fn random_hex(len: usize) -> String {
-        // Deterministic for tests; production wires OS CSPRNG.
         let mut out = vec![0u8; len];
         for (i, byte) in out.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_add(42);
@@ -163,7 +153,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let record = UserRecord {
             id: id.clone(),
             security_version: SecurityVersion(1),
@@ -187,7 +177,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let record = state.users.get(id)?;
         let mfa_active = state.mfa.active_authenticator(id).is_some();
         Some(UserSnapshot {
@@ -210,7 +200,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let record = state
             .users
             .get_mut(id)
@@ -227,7 +217,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let record = state
             .users
             .get_mut(id)
@@ -240,7 +230,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let record = state
             .users
             .get_mut(id)
@@ -263,7 +253,7 @@ impl IdentityStores for IdentityDatabase {
             let mut state = self
                 .state
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(|_| std::process::abort());
             let user = state
                 .users
                 .get(&user_id)
@@ -273,8 +263,8 @@ impl IdentityStores for IdentityDatabase {
             }
             let security_version = user.security_version;
             let lifetime = self.session_policy.for_class(class);
-            let session_id =
-                SessionId::new(format!("sess-{}", Self::random_hex(8))).expect("session id");
+            let session_id = SessionId::new(format!("sess-{}", Self::random_hex(8)))
+                .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
             let session = Session::create(
                 session_id.clone(),
                 user_id.clone(),
@@ -286,11 +276,11 @@ impl IdentityStores for IdentityDatabase {
                 lifetime,
                 now,
             );
-            let family_id =
-                RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8))).expect("family id");
+            let family_id = RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8)))
+                .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
             let refresh_token = Self::random_hex(32);
-            let credential_id =
-                RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id");
+            let credential_id = RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8)))
+                .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
             state.refresh.create_family(RefreshFamily {
                 id: family_id.clone(),
                 user_id: user_id.clone(),
@@ -314,7 +304,7 @@ impl IdentityStores for IdentityDatabase {
             state.event_counter += 1;
             let event = AuthenticationEvent {
                 event_id: AuditEventId::new(format!("evt-{:08}", state.event_counter))
-                    .expect("event id"),
+                    .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?,
                 event_name: AuthEventName::SessionCreated,
                 occurred_at: now,
                 request_id: None,
@@ -343,7 +333,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let session = state.sessions.get(id)?;
         let user = state.users.get(&session.user_id)?;
         Some(SessionSnapshot {
@@ -360,7 +350,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let user = state
             .users
             .get(
@@ -393,7 +383,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let session = state
             .sessions
             .get_mut(id)
@@ -409,14 +399,19 @@ impl IdentityStores for IdentityDatabase {
         user_id: Option<&UserId>,
         device_id: Option<&DeviceId>,
     ) -> Result<u32, sitolo_auth::AuthError> {
+        if matches!(scope, RevocationScope::AuthenticatorFamily) {
+            return Err(sitolo_auth::AuthError::InvalidTransition);
+        }
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let mut count = 0u32;
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                return Err(sitolo_auth::AuthError::InvalidTransition);
+            };
             let matches = match scope {
                 RevocationScope::CurrentSession => {
                     (user_id == Some(&session.user_id))
@@ -426,7 +421,7 @@ impl IdentityStores for IdentityDatabase {
                     device_id.is_some_and(|did| session.device_id.as_ref() == Some(did))
                 }
                 RevocationScope::AllUserSessions => user_id == Some(&session.user_id),
-                RevocationScope::AuthenticatorFamily => true,
+                RevocationScope::AuthenticatorFamily => unreachable!("handled before lock acquisition"),
             };
             if matches {
                 session.revoke(trigger);
@@ -444,7 +439,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let session = state
             .sessions
             .get_mut(id)
@@ -461,7 +456,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let key = sitolo_auth::hash_raw(raw);
         let existing = state
             .refresh
@@ -469,8 +464,8 @@ impl IdentityStores for IdentityDatabase {
             .ok_or(sitolo_auth::AuthError::RefreshTokenInvalid)?
             .clone();
         let successor_token = Self::random_hex(32);
-        let successor_id =
-            RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id");
+        let successor_id = RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8)))
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
         let successor = RefreshCredential {
             id: successor_id.clone(),
             family_id: existing.family_id.clone(),
@@ -499,8 +494,9 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8))).expect("device id");
+            .unwrap_or_else(|_| std::process::abort());
+        let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8)))
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
         let device = Device::begin_registration(
             device_id,
             input.user_id,
@@ -520,7 +516,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let device = state
             .devices
             .get_mut(device_id)
@@ -535,7 +531,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         state.devices.get(id).cloned()
     }
 
@@ -547,7 +543,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         {
             let device = state
                 .devices
@@ -558,14 +554,21 @@ impl IdentityStores for IdentityDatabase {
         let mut revoked_sessions = Vec::new();
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                return Err(sitolo_auth::AuthError::InvalidTransition);
+            };
             if session.device_id.as_ref() == Some(id) {
                 session.revoke(RevocationTrigger::DeviceRevocation);
                 revoked_sessions.push(sid);
             }
         }
+        let device = state
+            .devices
+            .get(id)
+            .ok_or(sitolo_auth::AuthError::DeviceNotRegistered)?
+            .clone();
         Ok(DeviceRevocationEffect {
-            device: state.devices.get(id).expect("device exists").clone(),
+            device,
             revoked_sessions,
         })
     }
@@ -578,13 +581,14 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let old_device = state
             .devices
             .get_mut(old)
             .ok_or(sitolo_auth::AuthError::DeviceNotRegistered)?;
         old_device.retire_for_replacement(now)?;
-        let new_id = DeviceId::new(format!("dev-{}", Self::random_hex(8))).expect("device id");
+        let new_id = DeviceId::new(format!("dev-{}", Self::random_hex(8)))
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
         let new_device = Device::begin_registration(
             new_id,
             old_device.registered_by.clone(),
@@ -608,9 +612,9 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let auth_id =
-            MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8))).expect("mfa id");
+            .unwrap_or_else(|_| std::process::abort());
+        let auth_id = MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8)))
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
         let security_version = state
             .users
             .get(&user_id)
@@ -624,11 +628,10 @@ impl IdentityStores for IdentityDatabase {
             now,
             security_version,
         )?;
-        let challenge_id =
-            ChallengeId::new(format!("chal-{}", Self::random_hex(8))).expect("challenge id");
-        // For the reference implementation, bind the challenge to a dummy session;
-        // production implementations require a real session context.
-        let dummy_session = SessionId::new("enrollment-session").expect("session id");
+        let challenge_id = ChallengeId::new(format!("chal-{}", Self::random_hex(8)))
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
+        let dummy_session = SessionId::new("enrollment-session")
+            .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?;
         state.mfa.issue_challenge(
             challenge_id.clone(),
             ChallengePurpose::MfaEnrollment,
@@ -652,15 +655,20 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         state.mfa.complete_enrollment(authenticator_id, now)?;
-        let auth = state.mfa.authenticator(authenticator_id).expect("auth");
-        let user_id = auth.user_id.clone();
+        let user_id = state
+            .mfa
+            .authenticator(authenticator_id)
+            .ok_or(sitolo_auth::AuthError::InvalidTransition)?
+            .user_id
+            .clone();
         let mut codes = Vec::new();
         for i in 0..8 {
             let code = format!("ABCD-{:04}", i);
             let record = RecoveryCodeRecord {
-                id: RecoveryCodeId::new(format!("rec-{}", Self::random_hex(8))).expect("rec id"),
+                id: RecoveryCodeId::new(format!("rec-{}", Self::random_hex(8)))
+                    .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?,
                 user_id: user_id.clone(),
                 code_hash: RecoveryCodeRecord::hash_code(&code),
                 created_at: now,
@@ -680,7 +688,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         state.mfa.record_totp_success(authenticator_id, step)
     }
 
@@ -688,7 +696,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         state.mfa.active_authenticator(user_id).cloned()
     }
 
@@ -701,7 +709,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         state.mfa.consume_recovery_code(user_id, raw, now)
     }
 
@@ -714,7 +722,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let revoked = state.mfa.reset_all(target, now);
         Ok(revoked)
     }
@@ -729,12 +737,13 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let Some(user) = state.users.get(user_id) else {
             return Ok(PasswordResetResult { user_id: None });
         };
         let artifact = sitolo_auth::PasswordResetArtifact::issue(
-            ResetArtifactId::new(format!("reset-{}", Self::random_hex(8))).expect("reset id"),
+            ResetArtifactId::new(format!("reset-{}", Self::random_hex(8)))
+                .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?,
             user_id.clone(),
             raw_token,
             now,
@@ -757,7 +766,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let token_hash = sitolo_auth::PasswordResetArtifact::hash_token(raw_token);
         let user_id = state
             .resets
@@ -773,15 +782,20 @@ impl IdentityStores for IdentityDatabase {
         state
             .resets
             .get_mut(&token_hash)
-            .expect("reset artifact exists")
+            .ok_or(sitolo_auth::AuthError::RecoveryArtifactInvalid)?
             .claim(raw_token, now, security_version)?;
-        let user = state.users.get_mut(&user_id).expect("user");
+        let user = state
+            .users
+            .get_mut(&user_id)
+            .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
         user.password_verifier = Some(new_verifier);
         user.password_policy_version = new_policy_version;
         user.security_version = user.security_version.next();
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                return Err(sitolo_auth::AuthError::InvalidTransition);
+            };
             if session.user_id == user_id {
                 session.revoke(RevocationTrigger::PasswordReset);
             }
