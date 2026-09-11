@@ -8,6 +8,10 @@ license.workspace = true
 [[bin]]
 name = "sitolo-api"
 path = "src/main.rs"
+# Binaries are release artifacts, not API documentation: excluding the bin
+# target keeps `cargo doc` on the library and avoids the lib/bin output
+# filename collision (both would emit `sitolo_api/index.html`).
+doc = false
 
 [lib]
 name = "sitolo_api_bin"
