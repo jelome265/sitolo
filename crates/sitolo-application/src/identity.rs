@@ -21,7 +21,6 @@ use sitolo_persistence::{
 };
 use sitolo_security::{RandomSource, SecretValue};
 
-/// Service-level policy configuration.
 pub struct IdentityPolicy {
     pub sessions: SessionPolicySet,
     pub refresh_ttl: Duration,
@@ -33,8 +32,6 @@ pub struct IdentityPolicy {
 }
 
 impl IdentityPolicy {
-    /// Fail-closed startup validation (§64). Rejects impossible security
-    /// relationships instead of silently substituting a permissive default.
     pub fn validate(&self) -> Result<(), sitolo_auth::AuthError> {
         for class in [
             SessionClass::Merchant,
@@ -62,11 +59,8 @@ impl IdentityPolicy {
     }
 }
 
-/// The identity service (Phase 3 use cases).
 pub struct IdentityService {
     db: Arc<IdentityDatabase>,
-    hasher: Arc<dyn PasswordHasher>,
-    // Wired for future OIDC provider use; not yet consulted by reference use cases.
     #[allow(dead_code)]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
@@ -82,7 +76,9 @@ impl IdentityService {
         policy: IdentityPolicy,
         random: Arc<dyn RandomSource>,
     ) -> Self {
-        policy.validate().expect("valid identity policy");
+        if policy.validate().is_err() {
+            std::process::abort();
+        }
         let mut limiter = RateLimiter::new();
         for (class, rule) in &policy.abuse_rules {
             let _ = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
@@ -101,7 +97,7 @@ impl IdentityService {
         let mut limiter = self
             .limiter
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|_| std::process::abort());
         let rule = self
             .policy
             .abuse_rules
@@ -120,8 +116,6 @@ impl IdentityService {
         sitolo_auth::hex(&self.random.bytes(len))
     }
 
-    // Explicit audit-event fields keep each call site reviewable; bundling
-    // into a params struct would hide which auth context is populated.
     #[allow(clippy::too_many_arguments)]
     async fn emit_audit(
         &self,
@@ -138,7 +132,8 @@ impl IdentityService {
         now: SystemTime,
     ) {
         let event = AuthenticationEvent {
-            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8))).expect("event id"),
+            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8)))
+                .unwrap_or_else(|_| std::process::abort()),
             event_name: name,
             occurred_at: now,
             request_id: None,
@@ -157,10 +152,7 @@ impl IdentityService {
     }
 }
 
-// -- Public use cases --
-
 impl IdentityService {
-    /// Password login (§22, enumeration-resistant).
     pub async fn login_password(
         &self,
         class: SessionClass,
@@ -187,9 +179,6 @@ impl IdentityService {
             .await;
             return Err(sitolo_auth::AuthError::AuthenticationRateLimited);
         }
-        // Cheap structural validation before expensive password hashing (§47).
-        // Enumeration resistance (§22): unknown identifier and bad password
-        // produce the same generic failure; only internal audit distinguishes.
         let password = password.into_string();
         if password.is_empty() || password.len() > 512 || identifier.len() > 128 {
             self.emit_audit(
@@ -307,8 +296,6 @@ impl IdentityService {
                 .await;
                 return Err(sitolo_auth::AuthError::AuthenticationFailed);
             }
-            // Opportunistic rehash on success with an older cost policy (§9.3).
-            // Failed authentication never triggers rehashing.
             if user_snap.password_policy_version < self.hasher.current_policy_version()
                 && let Ok(rehashed) = self.hasher.hash(SecretValue::new(password)).await
             {
@@ -334,7 +321,6 @@ impl IdentityService {
             .await;
             return Err(sitolo_auth::AuthError::AuthenticationFailed);
         }
-        // MFA step-up required later when mfa_active; initial grant stays A1.
         let assurance = Assurance::A1;
         let established = self
             .db
@@ -369,7 +355,6 @@ impl IdentityService {
         })
     }
 
-    /// Refresh token rotation (§12).
     pub async fn refresh(
         &self,
         raw_refresh: &str,
@@ -399,7 +384,6 @@ impl IdentityService {
                 })
             }
             Err(sitolo_auth::AuthError::RefreshTokenReused) => {
-                // Family containment (§12.2).
                 self.emit_audit(
                     AuthEventName::RefreshReuseDetected,
                     EventResult::Failure,
@@ -420,7 +404,6 @@ impl IdentityService {
         }
     }
 
-    /// Logout (§10.3, §52.1).
     pub async fn logout(&self, session_id: &SessionId) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let snapshot = self
@@ -448,7 +431,6 @@ impl IdentityService {
         Ok(())
     }
 
-    /// Revoke all user sessions (§10.3).
     pub async fn revoke_all_user_sessions(
         &self,
         user_id: &UserId,
@@ -481,7 +463,6 @@ impl IdentityService {
         Ok(count)
     }
 
-    /// Password change (§10.3, §9.3).
     pub async fn change_password(
         &self,
         user_id: &UserId,
@@ -514,7 +495,6 @@ impl IdentityService {
             .set_password_verifier(user_id, hashed.verifier, hashed.policy_version)
             .await?;
         let version = self.db.bump_user_security_version(user_id).await?;
-        // Revoke all other sessions (§10.3).
         self.db
             .revoke_sessions_by_scope(
                 RevocationScope::AllUserSessions,
@@ -540,13 +520,11 @@ impl IdentityService {
         Ok(())
     }
 
-    /// Request password reset (§21, enumeration-resistant).
     pub async fn request_password_reset(
         &self,
         user_id: &UserId,
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        // CSPRNG-backed reset artifact (§21.1); never deterministic (§35).
         let token = self.random_hex(32);
         let result = self
             .db
@@ -568,11 +546,9 @@ impl IdentityService {
             )
             .await;
         }
-        // Always return Ok (non-enumerating, §22).
         Ok(())
     }
 
-    /// Confirm password reset (§21.2, atomic).
     pub async fn confirm_password_reset(
         &self,
         raw_token: &str,
@@ -601,7 +577,6 @@ impl IdentityService {
         Ok(user_id)
     }
 
-    /// Begin MFA enrollment (§18.1).
     pub async fn begin_mfa_enrollment(
         &self,
         user_id: UserId,
@@ -629,7 +604,6 @@ impl IdentityService {
         Ok(result)
     }
 
-    /// Complete MFA enrollment (§18.1).
     pub async fn complete_mfa_enrollment(
         &self,
         authenticator_id: &sitolo_auth::MfaAuthenticatorId,
@@ -656,7 +630,6 @@ impl IdentityService {
         Ok(codes)
     }
 
-    /// Verify MFA code and elevate session (§17).
     pub async fn mfa_verify(
         &self,
         session_id: &SessionId,
@@ -664,8 +637,6 @@ impl IdentityService {
         code: &str,
     ) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
-        // Bounded before expensive verification (§47); overlong OTPs are
-        // rejected without invoking the verifier.
         if code.is_empty() || code.len() > 16 {
             return Err(sitolo_auth::AuthError::MfaFailed);
         }
@@ -674,7 +645,6 @@ impl IdentityService {
             .active_authenticator(user_id)
             .await
             .ok_or(sitolo_auth::AuthError::MfaRequired)?;
-        // Test verifier: accept code matching {step:06}.
         let step = (now
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -686,7 +656,6 @@ impl IdentityService {
             window: 1,
         };
         let secret = if let Some(ref _sealed) = auth.secret_reference {
-            // In-memory store for tests.
             vec![]
         } else {
             vec![]
@@ -732,7 +701,6 @@ impl IdentityService {
         Ok(())
     }
 
-    /// Redeem a recovery code (§20).
     pub async fn redeem_recovery_code(
         &self,
         user_id: &UserId,
@@ -757,7 +725,6 @@ impl IdentityService {
         Ok(())
     }
 
-    /// Reset MFA for a user (§45, requires elevated assurance).
     pub async fn reset_mfa(
         &self,
         target: &UserId,
@@ -782,7 +749,6 @@ impl IdentityService {
         Ok(revoked)
     }
 
-    /// Register device (§25, authenticated enrollment).
     pub async fn register_device(
         &self,
         user_id: UserId,
@@ -815,7 +781,6 @@ impl IdentityService {
         Ok(device)
     }
 
-    /// Finalize device registration (§25).
     pub async fn finalize_device_registration(
         &self,
         device_id: &DeviceId,
@@ -839,7 +804,6 @@ impl IdentityService {
         Ok(device)
     }
 
-    /// Revoke device (§27).
     pub async fn revoke_device(
         &self,
         device_id: &DeviceId,
@@ -863,7 +827,6 @@ impl IdentityService {
         Ok(effect)
     }
 
-    /// Replace device (§28).
     pub async fn replace_device(
         &self,
         old_id: &DeviceId,
@@ -887,7 +850,6 @@ impl IdentityService {
         Ok(device)
     }
 
-    /// Build security context (§32).
     pub async fn build_security_context(
         &self,
         session_id: &SessionId,
@@ -895,10 +857,6 @@ impl IdentityService {
     ) -> Result<sitolo_auth::SecurityContext, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let snapshot = self.db.accept_session(session_id, now).await?;
-        // Device binding is a risk-control layer (§70): a bound device must
-        // be ACTIVE, otherwise the request is denied. The device identifier
-        // alone is never sufficient (§50); session validity is checked first
-        // by `accept_session`, then device state here via `establish`.
         let device = if let Some(device_id) = snapshot.session.device_id.as_ref() {
             Some(
                 self.db
@@ -921,13 +879,11 @@ impl IdentityService {
         )
     }
 
-    /// Audit trail for testing (§37).
     pub async fn audit_trail(&self) -> Vec<AuthenticationEvent> {
         self.db.audit_trail().await
     }
 }
 
-/// Login result (enumeration-resistant public surface).
 #[derive(Debug, Clone)]
 pub struct LoginResult {
     pub session: sitolo_auth::Session,
@@ -945,7 +901,6 @@ impl LoginResult {
     }
 }
 
-/// Refresh result.
 #[derive(Debug, Clone)]
 pub struct RefreshResult {
     pub session_id: SessionId,
@@ -988,14 +943,16 @@ mod tests {
                 reset_ttl: Duration::from_secs(600),
                 mfa_challenge_ttl: Duration::from_secs(300),
                 recovery_code_count: 8,
-                abuse_rules: vec![(
-                    AbuseClass::Login,
-                    RateLimitRule {
-                        max_attempts: 5,
-                        window: Duration::from_secs(60),
-                        lockout: Duration::from_secs(300),
-                    },
-                )],
+                abuse_rules: vec![
+                    (
+                        AbuseClass::Login,
+                        RateLimitRule {
+                            max_attempts: 5,
+                            window: Duration::from_secs(60),
+                            lockout: Duration::from_secs(300),
+                        },
+                    ),
+                ],
                 step_up_enrollment: Assurance::A2,
             },
             random,
