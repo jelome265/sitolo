@@ -18,6 +18,9 @@
 //! proof of authority. Requested and trusted identifiers are distinct types
 //! (section 55) so authority confusion cannot be expressed accidentally.
 
+use std::collections::BTreeSet;
+
+use sitolo_authz::Permission;
 use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId,
 };
@@ -53,6 +56,10 @@ pub enum ScopeError {
     OrganizationNotActive,
     #[error("branch is not operating")]
     BranchNotActive,
+    #[error("membership lacks the required permission")]
+    PermissionDenied,
+    #[error("no scope grant covers the requested scope")]
+    ScopeDenied,
 }
 
 /// Binds a requested organization selector to the caller's membership
@@ -70,8 +77,14 @@ pub fn bind_organization(
 }
 
 /// The server-authoritative scope for one operation (section 54, reduced to
-/// the PR-001 vocabulary: identity, membership, organization, branch).
-/// Immutable after construction; downstream handlers cannot widen it.
+/// the identity/membership/organization/branch vocabulary plus the resolved
+/// permission set). Immutable after construction; downstream handlers cannot
+/// widen it.
+///
+/// `permissions` is populated only by the full authorization path
+/// (`TenancyService::authorize_operation`); the pure request-scope check
+/// below leaves it empty, which means *unresolved* — never read it as
+/// "no permissions" outside the authorizing path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveScope {
     pub organization_id: OrganizationId,
@@ -79,6 +92,7 @@ pub struct EffectiveScope {
     pub branch_id: Option<BranchId>,
     pub organization_version: u64,
     pub membership_version: u64,
+    pub permissions: BTreeSet<Permission>,
 }
 
 /// Resolves the effective scope from server-loaded records (sections 5.1,
@@ -131,6 +145,7 @@ pub fn resolve_effective_scope(
         branch_id,
         organization_version: organization.state_version,
         membership_version: membership.state_version,
+        permissions: BTreeSet::new(),
     })
 }
 

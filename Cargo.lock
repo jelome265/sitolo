@@ -371,6 +371,7 @@ version = "0.1.0"
 name = "sitolo-tenancy"
 version = "0.1.0"
 dependencies = [
+ "sitolo-authz",
  "sitolo-domain",
  "thiserror",
 ]
