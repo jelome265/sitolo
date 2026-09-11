@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - hardening/phase4-part5-enterprise-remediation
+  pull_request:
+    types: [synchronize]
 
 permissions:
   contents: write
@@ -40,8 +42,6 @@ jobs:
               if n:
                   p.write_text(s.replace(old, new), encoding='utf-8')
 
-          # Poisoned security/reference state must fail closed instead of restoring
-          # a potentially inconsistent MutexGuard.
           for path in [
               'crates/sitolo-persistence/src/memory.rs',
               'crates/sitolo-persistence/src/tenancy.rs',
@@ -193,14 +193,12 @@ jobs:
               '            event_id: match AuditEventId::new(format!("evt-{}", self.random_hex(8))) {\n                Ok(id) => id,\n                Err(_) => return,\n            },',
           )
 
-          # Add production panic-path linting at crate boundaries.
           lint = '#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]\n'
           for p in list(Path('crates').glob('*/src/lib.rs')) + list(Path('apps').glob('*/src/main.rs')):
               s = p.read_text(encoding='utf-8')
               if lint not in s:
                   p.write_text(lint + s, encoding='utf-8')
 
-          # Mark the old broad audit as historical and point remediation to the current authority.
           old_audit = Path('docs/enterprise_audit_and_review.md')
           audit = old_audit.read_text(encoding='utf-8')
           marker = '> **Historical artifact:** This audit predates the Phase 4 PR-001 → PR-005 implementation sequence. The current remediation authority is `docs/phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`; evaluate all findings against the repository SHA and current phase before implementation.\n\n'
@@ -208,7 +206,6 @@ jobs:
               audit = audit.replace('# Sitolo Codebase Enterprise Audit & Architecture Review\n', '# Sitolo Codebase Enterprise Audit & Architecture Review\n\n' + marker, 1)
               old_audit.write_text(audit, encoding='utf-8')
 
-          # Static guard: no production unwrap/expect/panic! may remain outside test modules.
           offenders = []
           for root in [Path('crates'), Path('apps')]:
               for p in root.glob('**/*.rs'):
@@ -221,7 +218,6 @@ jobs:
               print('\n'.join(offenders))
               raise SystemExit(f'production panic-path scan failed: {len(offenders)} offender(s)')
 
-          # Static guard: no poisoned Mutex recovery should survive in code handling security/reference state.
           poison = []
           for root in [Path('crates'), Path('apps')]:
               for p in root.glob('**/*.rs'):
@@ -240,7 +236,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/_apply_enterprise_hardening.yml
+          git rm .github/workflows/_apply_enterprise_hardening.yml .github/hardening-trigger.txt
           git add crates apps docs/enterprise_audit_and_review.md
           git diff --cached --check
           git diff --cached --quiet && { echo "No hardening changes produced"; exit 1; }
