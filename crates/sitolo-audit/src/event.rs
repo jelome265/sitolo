@@ -13,9 +13,6 @@ use thiserror::Error;
 
 use sitolo_auth::{Assurance, AuditEventId, AuthenticationMethod, ClientPlatform, SecurityVersion};
 
-/// Authentication audit event names (§37). The dotted lowercase names are
-/// consistent with the existing observability registry; the SCREAMING names
-/// in the specification map 1:1 to these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthEventName {
     LoginSuccess,
@@ -49,7 +46,6 @@ pub enum AuthEventName {
 }
 
 impl AuthEventName {
-    /// Stable dotted event name for the audit record and registry.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -85,20 +81,12 @@ impl AuthEventName {
     }
 }
 
-/// Audit event outcome (§37.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {
     Success,
     Failure,
 }
 
-/// Authentication audit record (§37.1).
-///
-/// Secret-bearing fields are structurally impossible: the record is
-/// constructed from pseudonymous references, bounded labels, and outcome
-/// classifications. The forbidden list in §37.1 (password, otp, mfa
-/// secret, refresh token, access token, authorization code, client secret,
-/// private key, recovery code) is not part of this shape.
 #[derive(Debug, Clone)]
 pub struct AuthenticationEvent {
     pub event_id: AuditEventId,
@@ -117,21 +105,18 @@ pub struct AuthenticationEvent {
     pub security_version: Option<SecurityVersion>,
 }
 
-/// Audit persistence failure (§43.4).
 #[derive(Debug, Error)]
 pub enum AuditError {
     #[error("audit record persistence failed")]
     PersistenceFailed,
 }
 
-/// Whether a record is mandatory or diagnostic (§43.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditRequirement {
     Mandatory,
     Diagnostic,
 }
 
-/// Audit recorder boundary (§37, §43.4).
 #[async_trait]
 pub trait AuditRecorder: Send + Sync {
     async fn record(
@@ -141,7 +126,6 @@ pub trait AuditRecorder: Send + Sync {
     ) -> Result<(), AuditError>;
 }
 
-/// In-memory audit sink for tests and local reference wiring.
 #[derive(Default)]
 pub struct InMemoryAuditSink {
     events: Mutex<Vec<AuthenticationEvent>>,
@@ -152,12 +136,11 @@ impl InMemoryAuditSink {
         Self::default()
     }
 
-    /// Returns a snapshot of all recorded events.
     pub fn events(&self) -> Vec<AuthenticationEvent> {
-        self.events
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        match self.events.lock() {
+            Ok(events) => events.clone(),
+            Err(_) => std::process::abort(),
+        }
     }
 }
 
@@ -168,10 +151,10 @@ impl AuditRecorder for InMemoryAuditSink {
         event: AuthenticationEvent,
         _requirement: AuditRequirement,
     ) -> Result<(), AuditError> {
-        self.events
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(event);
+        match self.events.lock() {
+            Ok(mut events) => events.push(event),
+            Err(_) => std::process::abort(),
+        }
         Ok(())
     }
 }
@@ -192,10 +175,6 @@ mod tests {
 
     #[test]
     fn record_shape_has_no_secret_fields() {
-        // The record shape is secret-free by construction. This test
-        // documents the invariant: no field in AuthenticationEvent can hold
-        // a password, otp, mfa secret, refresh token, access token,
-        // authorization code, client secret, private key, or recovery code.
         let event = AuthenticationEvent {
             event_id: AuditEventId::new("evt-1").unwrap(),
             event_name: AuthEventName::LoginSuccess,
