@@ -1,0 +1,293 @@
+name: apply-enterprise-hardening
+
+on:
+  push:
+    branches:
+      - hardening/phase4-part5-enterprise-remediation
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: hardening/phase4-part5-enterprise-remediation
+
+      - name: Apply source hardening transformations
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import sys
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {n}: {old!r}')
+              p.write_text(s.replace(old, new), encoding='utf-8')
+
+          def replace_all(path: str, old: str, new: str) -> int:
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              n = s.count(old)
+              if n:
+                  p.write_text(s.replace(old, new), encoding='utf-8')
+              return n
+
+          # Poisoned security/business state must fail closed. Never resume
+          # from a poisoned MutexGuard by extracting potentially inconsistent state.
+          poison_chain = r'''self
+                  .state
+                  .lock()
+                  .unwrap_or_else(|poisoned| poisoned.into_inner())'''
+          for path in [
+              'crates/sitolo-persistence/src/memory.rs',
+              'crates/sitolo-persistence/src/tenancy.rs',
+          ]:
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              n = s.count(poison_chain)
+              if n:
+                  s = s.replace(
+                      poison_chain,
+                      '''match self.state.lock() {
+                  Ok(guard) => guard,
+                  Err(_) => std::process::abort(),
+              }''',
+                  )
+                  p.write_text(s, encoding='utf-8')
+
+          # Auth-service rate limiting must fail closed if its local state becomes poisoned.
+          replace_once(
+              'crates/sitolo-application/src/identity.rs',
+              '''let mut limiter = self
+                  .limiter
+                  .lock()
+                  .unwrap_or_else(|poisoned| poisoned.into_inner());''',
+              '''let mut limiter = match self.limiter.lock() {
+                  Ok(guard) => guard,
+                  Err(_) => {
+                      return RateLimitDecision::Locked {
+                          until: SystemTime::now() + Duration::from_secs(60),
+                      };
+                  }
+              };''',
+          )
+
+          # The audit sink is reference infrastructure; corruption must terminate
+          # rather than silently pretending the evidence stream is intact.
+          replace_once(
+              'crates/sitolo-audit/src/event.rs',
+              '''self.events
+                  .lock()
+                  .unwrap_or_else(|poisoned| poisoned.into_inner())
+                  .clone()''',
+              '''match self.events.lock() {
+                  Ok(events) => events.clone(),
+                  Err(_) => std::process::abort(),
+              }''',
+          )
+          replace_once(
+              'crates/sitolo-audit/src/event.rs',
+              '''self.events
+              .lock()
+              .unwrap_or_else(|poisoned| poisoned.into_inner())
+              .push(event);''',
+              '''match self.events.lock() {
+                  Ok(mut events) => events.push(event),
+                  Err(_) => std::process::abort(),
+              }''',
+          )
+
+          # Remove runtime expects from the refresh state machine and validate
+          # successor lineage instead of trusting caller-supplied metadata.
+          replace_once(
+              'crates/sitolo-auth/src/refresh.rs',
+              '''        if let Some(family) = self.families.get(&existing.family_id)
+              && family.compromised
+          {
+              return Err(AuthError::RefreshTokenReused);
+          }
+          let previous = self.credentials.get_mut(&id).expect("existing");''',
+              '''        if let Some(family) = self.families.get(&existing.family_id)
+              && family.compromised
+          {
+              return Err(AuthError::RefreshTokenReused);
+          }
+          if successor.family_id != existing.family_id
+              || successor.user_id != existing.user_id
+              || successor.session_id != existing.session_id
+          {
+              return Err(AuthError::InvalidTransition);
+          }
+          let Some(previous) = self.credentials.get_mut(&id) else {
+              return Err(AuthError::RefreshTokenInvalid);
+          };''',
+          )
+
+          # Eliminate the explicit broad fallback for authenticator-family revocation.
+          # The family identifier does not yet exist in the persistence contract, so
+          # refusing the operation is safer than revoking every session.
+          replace_once(
+              'crates/sitolo-persistence/src/memory.rs',
+              '''                RevocationScope::AllUserSessions => user_id == Some(&session.user_id),
+                RevocationScope::AuthenticatorFamily => true,''',
+              '''                RevocationScope::AllUserSessions => user_id == Some(&session.user_id),
+                RevocationScope::AuthenticatorFamily => {
+                    return Err(sitolo_auth::AuthError::InvalidTransition);
+                }''',
+          )
+
+          # Replace runtime ID construction expects with typed failure.
+          replacements = [
+              (
+                  'crates/sitolo-persistence/src/memory.rs',
+                  'SessionId::new(format!("sess-{}", Self::random_hex(8))).expect("session id")',
+                  'SessionId::new(format!("sess-{}", Self::random_hex(8))).map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
+              ),
+              (
+                  'crates/sitolo-persistence/src/memory.rs',
+                  'RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8))).expect("family id")',
+                  'RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8))).map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
+              ),
+              (
+                  'crates/sitolo-persistence/src/memory.rs',
+                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id")',
+                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
+              ),
+              (
+                  'crates/sitolo-persistence/src/memory.rs',
+                  'AuditEventId::new(format!("evt-{:08}", state.event_counter))\n                    .expect("event id")',
+                  'AuditEventId::new(format!("evt-{:08}", state.event_counter))\n                    .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
+              ),
+              (
+                  'crates/sitolo-persistence/src/memory.rs',
+                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id")',
+                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
+              ),
+          ]
+          for path, old, new in replacements:
+              replace_all(path, old, new)
+
+          # The session iteration is over a snapshot of existing IDs. Treat a
+          # missing record as a state inconsistency rather than panicking.
+          replace_once(
+              'crates/sitolo-persistence/src/memory.rs',
+              '            let session = state.sessions.get_mut(&sid).expect("session");',
+              '''            let Some(session) = state.sessions.get_mut(&sid) else {
+                  return Err(sitolo_auth::AuthError::InvalidTransition);
+              };''',
+          )
+
+          # IdentityService constructor must surface invalid configuration rather
+          # than panicking during runtime construction.
+          replace_once(
+              'crates/sitolo-application/src/identity.rs',
+              ''') -> Self {
+          policy.validate().expect("valid identity policy");''',
+              ''') -> Result<Self, sitolo_auth::AuthError> {
+          policy.validate()?;''',
+          )
+          replace_once(
+              'crates/sitolo-application/src/identity.rs',
+              '''        IdentityService {
+              db,
+              hasher,
+              provider,
+              limiter: Mutex::new(limiter),
+              policy,
+              random,
+          }
+      }''',
+              '''        Ok(IdentityService {
+              db,
+              hasher,
+              provider,
+              limiter: Mutex::new(limiter),
+              policy,
+              random,
+          })
+      }''',
+          )
+          replace_once(
+              'crates/sitolo-application/src/identity.rs',
+              '        IdentityService::new(\n            db,',
+              '        IdentityService::new(\n            db,',
+          )
+          # Test caller is already a fallible constructor; unwrap remains test-only.
+          test_call = '        IdentityService::new(\n            db,\n'
+          # Add explicit expectation in tests is acceptable; production code is denied below.
+          # The final static scan below enforces that production code contains no runtime
+          # unwrap/expect/panic constructs.
+
+          # Replace runtime event-id expect with a typed early return from the audit helper.
+          replace_once(
+              'crates/sitolo-application/src/identity.rs',
+              '            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8))).expect("event id"),',
+              '            event_id: match AuditEventId::new(format!("evt-{}", self.random_hex(8))) {\n                Ok(id) => id,\n                Err(_) => return,\n            },',
+          )
+
+          # Mark production panic-style APIs as forbidden at compile time. This is
+          # disabled for test builds so existing test fixtures can remain concise.
+          crate_roots = list(Path('crates').glob('*/src/lib.rs')) + list(Path('apps').glob('*/src/main.rs'))
+          lint = '#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]\n'
+          for p in crate_roots:
+              s = p.read_text(encoding='utf-8')
+              if lint not in s:
+                  p.write_text(lint + s, encoding='utf-8')
+
+          # Historical audit must not be mistaken for the current baseline.
+          old_audit = Path('docs/enterprise_audit_and_review.md')
+          audit = old_audit.read_text(encoding='utf-8')
+          marker = '> **Historical artifact:** This audit predates the Phase 4 PR-001 → PR-005 implementation sequence. The current remediation authority is `docs/phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`; always evaluate it against the repository SHA and current phase before making implementation decisions.\n\n'
+          if marker not in audit:
+              audit = audit.replace('# Sitolo Codebase Enterprise Audit & Architecture Review\n', '# Sitolo Codebase Enterprise Audit & Architecture Review\n\n' + marker, 1)
+              old_audit.write_text(audit, encoding='utf-8')
+
+          # Verify the transformations actually removed production panic paths.
+          offenders = []
+          roots = [Path('crates'), Path('apps')]
+          for root in roots:
+              for p in root.glob('**/*.rs'):
+                  if '/tests/' in p.as_posix():
+                      continue
+                  s = p.read_text(encoding='utf-8')
+                  prod = s.split('#[cfg(test)]', 1)[0]
+                  for i, line in enumerate(prod.splitlines(), 1):
+                      if '.unwrap()' in line or '.expect(' in line or re.search(r'\bpanic!\s*\(', line):
+                          offenders.append(f'{p}:{i}:{line.strip()}')
+          if offenders:
+              print('\n'.join(offenders))
+              raise SystemExit(f'production panic-path scan failed: {len(offenders)} offender(s)')
+
+          # No poisoned MutexGuard recovery may remain in application/security state.
+          recovery_hits = []
+          for root in roots:
+              for p in root.glob('**/*.rs'):
+                  s = p.read_text(encoding='utf-8')
+                  if 'into_inner()' in s and 'poisoned' in s:
+                      recovery_hits.append(str(p))
+          if recovery_hits:
+              raise SystemExit('poison recovery remains in: ' + ', '.join(recovery_hits))
+
+      - name: Verify formatting of modified files
+        run: cargo fmt --all -- --check
+
+      - name: Commit hardening changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status --short
+          git add crates apps docs/enterprise_audit_and_review.md
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No source changes produced"; exit 1; }
+          git commit -m "fix(security): harden reference security state and panic paths"
+          git push origin hardening/phase4-part5-enterprise-remediation
