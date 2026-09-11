@@ -943,16 +943,14 @@ mod tests {
                 reset_ttl: Duration::from_secs(600),
                 mfa_challenge_ttl: Duration::from_secs(300),
                 recovery_code_count: 8,
-                abuse_rules: vec![
-                    (
-                        AbuseClass::Login,
-                        RateLimitRule {
-                            max_attempts: 5,
-                            window: Duration::from_secs(60),
-                            lockout: Duration::from_secs(300),
-                        },
-                    ),
-                ],
+                abuse_rules: vec![(
+                    AbuseClass::Login,
+                    RateLimitRule {
+                        max_attempts: 5,
+                        window: Duration::from_secs(60),
+                        lockout: Duration::from_secs(300),
+                    },
+                )],
                 step_up_enrollment: Assurance::A2,
             },
             random,
