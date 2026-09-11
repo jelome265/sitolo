@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
 
-/// Abuse control classification (§23).
+/// Abuse control classification (§23; Phase 4 §38 IAM classes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AbuseClass {
     Login,
@@ -22,6 +22,8 @@ pub enum AbuseClass {
     SessionCreate,
     DeviceRegister,
     RecoveryRedeem,
+    InvitationCreate,
+    InvitationAccept,
 }
 
 impl AbuseClass {
@@ -38,6 +40,8 @@ impl AbuseClass {
             AbuseClass::SessionCreate => "session_create",
             AbuseClass::DeviceRegister => "device_register",
             AbuseClass::RecoveryRedeem => "recovery_redeem",
+            AbuseClass::InvitationCreate => "invitation_create",
+            AbuseClass::InvitationAccept => "invitation_accept",
         }
     }
 }

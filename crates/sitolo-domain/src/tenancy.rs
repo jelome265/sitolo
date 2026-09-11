@@ -68,6 +68,10 @@ tenant_id!(
     ScopeGrantId,
     "Opaque scope-grant identifier. Grant lifecycle lives in the authorization crate; the identifier itself is tenant-topology vocabulary."
 );
+tenant_id!(
+    InvitationId,
+    "Opaque invitation identifier. Invitation lifecycle lives in the authorization crate; the identifier itself is tenant-topology vocabulary."
+);
 
 /// Domain failures for tenant topology transitions.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -84,6 +88,10 @@ pub enum TenancyError {
     NotFound,
     #[error("tenant record already exists with different semantics")]
     Conflict,
+    #[error("invalid invitation parameters")]
+    InvalidInvitation,
+    #[error("invitation rate limited")]
+    RateLimited,
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {
