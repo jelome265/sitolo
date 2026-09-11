@@ -1,4 +1,4 @@
-use crate::{ceilings, defaults, AppConfig, LogLevel, KNOWN_SCHEMA_VERSIONS};
+use crate::{AppConfig, KNOWN_SCHEMA_VERSIONS, LogLevel, ceilings, defaults};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationLayer {
