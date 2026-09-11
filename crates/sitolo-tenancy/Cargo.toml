@@ -6,3 +6,5 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+sitolo-domain = { path = "../sitolo-domain" }
+thiserror.workspace = true
