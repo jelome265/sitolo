@@ -9,6 +9,37 @@ if [ ! -d .github/workflows ]; then
   exit 0
 fi
 
+# Portable search: rg when available, otherwise grep -E. Runners without rg
+# (e.g. GitHub-hosted ubuntu images) must enforce the same policy, never
+# report false violations for a missing search tool: `! rg -q ...` with rg
+# absent evaluates true and fabricates failures. grep -E (not bare grep)
+# preserves the ERE alternation/group semantics of every pattern below.
+if command -v rg >/dev/null 2>&1; then
+  HAVE_RG=1
+else
+  HAVE_RG=0
+fi
+
+# $1 = ERE pattern; prints numbered matches under .github/workflows.
+wf_search() {
+  if [ "$HAVE_RG" -eq 1 ]; then
+    rg -n "$1" .github/workflows -g '*.yml' -g '*.yaml'
+  else
+    grep -rnE "$1" .github/workflows --include='*.yml' --include='*.yaml'
+  fi
+}
+
+# $1 = ERE pattern; $2.. = files. Quiet predicate version of wf_search.
+wf_quiet() {
+  local pattern="$1"
+  shift
+  if [ "$HAVE_RG" -eq 1 ]; then
+    rg -q "$pattern" "$@"
+  else
+    grep -qE "$pattern" "$@"
+  fi
+}
+
 fail=0
 
 # Phase 1 requires trusted artifact and promotion controls. PostgreSQL harness
@@ -22,33 +53,33 @@ done
 
 # Third-party actions must be pinned to an immutable 40-character commit SHA.
 # Mutable references (v tags, branches) are rejected (Phase 1 spec, section 27).
-if rg -n 'uses: [A-Za-z0-9._/-]+@(v[0-9]+|stable|latest|nightly|master|main|beta|alpha|v[0-9]+\.[0-9]+)' .github/workflows -g '*.yml' -g '*.yaml'; then
+if wf_search 'uses: [A-Za-z0-9._/-]+@(v[0-9]+|stable|latest|nightly|master|main|beta|alpha|v[0-9]+\.[0-9]+)'; then
   echo "POLICY VIOLATION: third-party actions must be pinned to full immutable commit SHAs."
   fail=1
 fi
 
-if [[ -f .github/workflows/artifact.yml ]] && ! rg -q 'attestations:\s*write' .github/workflows/artifact.yml; then
+if [[ -f .github/workflows/artifact.yml ]] && ! wf_quiet 'attestations:\s*write' .github/workflows/artifact.yml; then
   echo "POLICY VIOLATION in artifact.yml: provenance permissions are required."
   fail=1
 fi
-if [[ -f .github/workflows/artifact.yml ]] && ! rg -q 'id-token:\s*write' .github/workflows/artifact.yml; then
+if [[ -f .github/workflows/artifact.yml ]] && ! wf_quiet 'id-token:\s*write' .github/workflows/artifact.yml; then
   echo "POLICY VIOLATION in artifact.yml: provenance permissions are required."
   fail=1
 fi
-if [[ -f .github/workflows/release.yml ]] && { ! rg -q 'environment:\s*production' .github/workflows/release.yml || rg -q 'pull_request:' .github/workflows/release.yml; }; then
+if [[ -f .github/workflows/release.yml ]] && { ! wf_quiet 'environment:\s*production' .github/workflows/release.yml || wf_quiet 'pull_request:' .github/workflows/release.yml; }; then
   echo "POLICY VIOLATION in release.yml: promotion must be protected and cannot run for pull requests."
   fail=1
 fi
 
 # Elevated-trust events are trust-boundary changes and require explicit review.
-if rg -n 'pull_request_target|issue_comment|workflow_run|repository_dispatch' .github/workflows -g '*.yml' -g '*.yaml'; then
+if wf_search 'pull_request_target|issue_comment|workflow_run|repository_dispatch'; then
   echo "POLICY VIOLATION: elevated-trust workflow events require explicit justification and review."
   fail=1
 fi
 
 # No production secrets may be referenced without a ${{ secrets. }} form under
 # an explicitly allowed name; this is a lint-level signal, defense-in-depth only.
-if rg -n '(secret_password|secret_token|access_key|private_key|CREDENTIALS)' .github/workflows -g '*.yml' -g '*.yaml'; then
+if wf_search '(secret_password|secret_token|access_key|private_key|CREDENTIALS)'; then
   echo "POLICY NOTICE: review secret references in workflow files before merge."
 fi
 
