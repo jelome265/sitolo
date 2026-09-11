@@ -239,7 +239,9 @@ dependencies = [
 name = "sitolo-api"
 version = "0.1.0"
 dependencies = [
+ "sitolo-auth",
  "sitolo-observability",
+ "sitolo-security",
 ]
 
 [[package]]
@@ -261,7 +263,6 @@ name = "sitolo-application"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "sha2",
  "sitolo-audit",
  "sitolo-auth",
  "sitolo-observability",
