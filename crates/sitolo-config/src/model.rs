@@ -6,12 +6,7 @@ use std::time::Duration;
 
 use sitolo_security::{SecretClass, SecretRef};
 
-/// Hard ceilings that no override may bypass (Phase 2 §6, §38).
-///
-/// These are architecture policy, not tuning suggestions. An operator value
-/// above a ceiling is an invalid configuration, never new policy.
 pub mod ceilings {
-    /// 25 MiB maximum request-body size ceiling (Phase 2 §6 example).
     pub const MAX_REQUEST_BODY_CEILING_BYTES: u64 = 26_214_400;
     pub const REQUEST_HEADER_TIMEOUT_CEILING_MS: u64 = 30_000;
     pub const KEEPALIVE_TIMEOUT_CEILING_MS: u64 = 300_000;
@@ -20,16 +15,10 @@ pub mod ceilings {
     pub const OTEL_MAX_QUEUE_CEILING: u32 = 1_048_576;
     pub const DB_POOL_MIN_CEILING: u32 = 256;
     pub const DB_POOL_MAX_CEILING: u32 = 512;
-    /// Bounded string lengths protect against pathological configuration sizes
-    /// (Phase 2 §47: bounded validation failure, never a parser blowup).
     pub const MAX_BOUNDED_STRING_BYTES: usize = 512;
-    /// Schema version handled by this build.
     pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 }
 
-/// Deployment environment for a process.
-///
-/// Unknown values fail startup (Appendix A: `environment`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Environment {
     Development,
@@ -57,7 +46,6 @@ impl fmt::Display for Environment {
     }
 }
 
-/// Structured-log severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LogLevel {
     Trace,
@@ -78,9 +66,6 @@ impl LogLevel {
         }
     }
 
-    /// Most verbose level production is permitted to run at. Values more
-    /// verbose than this (trace/debug) are rejected in production
-    /// (Appendix A: `log_level` production ceiling).
     pub const PRODUCTION_CEILING: LogLevel = LogLevel::Info;
 }
 
@@ -90,15 +75,10 @@ impl fmt::Display for LogLevel {
     }
 }
 
-/// The validated, typed, effective configuration.
-///
-/// Constructed only through [`super::validate`]; never constructed directly.
-/// Contains secret *references*, never secret values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub environment: Environment,
     pub service_name: String,
-    /// Provenance field; immutable at runtime (Appendix A).
     pub service_version: String,
     pub bind_address: SocketAddr,
     pub max_request_body_bytes: u64,
@@ -108,27 +88,19 @@ pub struct AppConfig {
     pub db_port: u16,
     pub db_name: String,
     pub db_user: String,
-    /// Secret reference; a raw database password is prohibited (Appendix A).
     pub db_password_ref: SecretRef,
     pub db_pool_min: u32,
     pub db_pool_max: u32,
     pub db_acquire_timeout_ms: u64,
-    /// `None` disables OTLP export. TLS is required for remote endpoints.
     pub otel_endpoint: Option<String>,
     pub otel_export_timeout_ms: u64,
     pub otel_max_queue: u32,
-    /// Sampling ratio in `0.0..=1.0`.
     pub trace_sample_ratio: f64,
     pub log_level: LogLevel,
     pub allow_local_secret_provider: bool,
     pub config_schema_version: u32,
 }
 
-/// Validated, non-connecting PostgreSQL runtime intent.
-///
-/// This is deliberately component-based: it carries a secret *reference*, not
-/// a credential-bearing DSN. `sitolo-persistence` consumes this narrow view
-/// and resolves the secret only while constructing a future database capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseRuntimeConfig {
     pub host: String,
@@ -141,8 +113,6 @@ pub struct DatabaseRuntimeConfig {
     pub acquire_timeout: Duration,
 }
 
-/// Safe database target identity for diagnostics. It intentionally omits the
-/// password reference as well as the resolved credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseTarget {
     pub host: String,
@@ -152,17 +122,14 @@ pub struct DatabaseTarget {
 }
 
 impl AppConfig {
-    /// Matches a `db_password_ref` to the database secret class.
     pub fn db_secret_ref(&self) -> &SecretRef {
         &self.db_password_ref
     }
 
-    /// The classified secret reference for the database.
     pub fn database_secret_class(&self) -> SecretClass {
         SecretClass::Database
     }
 
-    /// Produces validated database connection intent without network I/O.
     pub fn database_runtime(&self) -> DatabaseRuntimeConfig {
         DatabaseRuntimeConfig {
             host: self.db_host.clone(),
@@ -176,7 +143,6 @@ impl AppConfig {
         }
     }
 
-    /// Returns only safe database identity fields for diagnostics/telemetry.
     pub fn database_target(&self) -> DatabaseTarget {
         DatabaseTarget {
             host: self.db_host.clone(),
@@ -187,8 +153,6 @@ impl AppConfig {
     }
 }
 
-/// Preset used by tests and local development. Still validated by
-/// [`super::validate`]; this is a *default layer*, never an authority.
 pub mod defaults {
     use std::net::SocketAddr;
 
@@ -196,12 +160,10 @@ pub mod defaults {
 
     use super::*;
 
-    /// Compiled safe defaults for the catalogue (Appendix A examples).
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// A mutable default layer; layers only ever firm up these values.
     #[derive(Clone)]
     pub struct Builder {
         pub environment: Environment,
@@ -225,7 +187,6 @@ pub mod defaults {
         pub log_level: LogLevel,
         pub allow_local_secret_provider: bool,
         pub config_schema_version: u32,
-        /// `None` until a secret reference is supplied from an upper layer.
         pub db_password_ref: Option<SecretRef>,
     }
 
@@ -235,7 +196,7 @@ pub mod defaults {
                 environment: Environment::Development,
                 service_name: "sitolo".to_string(),
                 service_version: "0.0.0+dev".to_string(),
-                bind_address: "0.0.0.0:8080".parse().expect("static default"),
+                bind_address: SocketAddr::from(([0, 0, 0, 0], 8080)),
                 max_request_body_bytes: 2_097_152,
                 request_header_timeout_ms: 5_000,
                 keepalive_timeout_ms: 30_000,
@@ -259,21 +220,16 @@ pub mod defaults {
     }
 
     impl Builder {
-        /// A development-oriented preset with a local secret reference, so the
-        /// catalogue has a complete, valid development profile.
         pub fn development() -> Self {
             Builder {
                 db_password_ref: Some(
                     SecretRef::new(SecretClass::Database, "development/sitolo/db")
-                        .expect("static development reference"),
+                        .unwrap_or_else(|_| std::process::abort()),
                 ),
                 ..Builder::default()
             }
         }
 
-        /// A staging preset: production posture (no local provider, no
-        /// development secret namespace), but database identity must still be
-        /// supplied explicitly. There are no implicit staging credentials.
         pub fn staging() -> Self {
             Builder {
                 environment: Environment::Staging,
@@ -288,11 +244,6 @@ pub mod defaults {
             }
         }
 
-        /// A production-safe baseline: no local provider, no development
-        /// secret namespace, and no implicit database identity. Database
-        /// host/name/user/reference must be supplied explicitly; validation
-        /// rejects the empty placeholders (F-002: production must never
-        /// inherit development-only defaults).
         pub fn production() -> Self {
             Builder {
                 environment: Environment::Production,
