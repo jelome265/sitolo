@@ -14,8 +14,6 @@ use sha2::{Digest, Sha256};
 use crate::error::AuthError;
 use crate::id::{RefreshCredentialId, RefreshFamilyId, SecurityVersion, SessionId, UserId};
 
-/// Hash a raw refresh credential into a fixed-size key. The raw value is
-/// never retained in memory beyond the caller's scope (§49).
 pub fn hash_raw(raw: &str) -> [u8; 32] {
     Sha256::digest(raw.as_bytes()).into()
 }
@@ -51,7 +49,6 @@ pub struct RefreshFamily {
     pub security_version: SecurityVersion,
 }
 
-/// The outcome of a successful rotation (§12.1).
 #[derive(Debug, Clone)]
 pub struct RotationOutcome {
     pub family_id: RefreshFamilyId,
@@ -61,7 +58,6 @@ pub struct RotationOutcome {
     pub previous_id: RefreshCredentialId,
 }
 
-/// The outcome of a detected replay (§12.2).
 #[derive(Debug, Clone)]
 pub struct ReplayOutcome {
     pub family_id: RefreshFamilyId,
@@ -69,9 +65,6 @@ pub struct ReplayOutcome {
     pub session_id: SessionId,
 }
 
-/// In-memory reference ledger. Production persistence replaces this with a
-/// transactional repository that enforces single-consumption via a UNIQUE
-/// constraint on the consumed token key (§12.3).
 #[derive(Debug, Default)]
 pub struct RefreshLedger {
     families: BTreeMap<RefreshFamilyId, RefreshFamily>,
@@ -89,16 +82,12 @@ impl RefreshLedger {
         self.families.insert(family.id.clone(), family);
     }
 
-    /// Issues a new credential inside an existing family.
     pub fn issue_credential(&mut self, credential: RefreshCredential) {
         self.by_hash
             .insert(credential.token_hash, credential.id.clone());
         self.credentials.insert(credential.id.clone(), credential);
     }
 
-    /// Rotates a credential: consumes the old, issues the successor. Reuse
-    /// of a consumed/revoked/expired credential compromises the family
-    /// (§12.2).
     pub fn rotate(
         &mut self,
         raw: &str,
@@ -113,7 +102,6 @@ impl RefreshLedger {
             return Err(AuthError::RefreshTokenInvalid);
         };
         if existing.state != RefreshState::Active {
-            // Replay containment (§12.2).
             let family_id = existing.family_id.clone();
             self.compromise_family(&family_id, now);
             return Err(AuthError::RefreshTokenReused);
@@ -121,14 +109,20 @@ impl RefreshLedger {
         if now >= existing.expires_at {
             return Err(AuthError::RefreshTokenInvalid);
         }
-        // The family may have been compromised by an earlier replay; refuse
-        // to issue a successor in that case (§12.2).
         if let Some(family) = self.families.get(&existing.family_id)
             && family.compromised
         {
             return Err(AuthError::RefreshTokenReused);
         }
-        let previous = self.credentials.get_mut(&id).expect("existing");
+        if successor.family_id != existing.family_id
+            || successor.user_id != existing.user_id
+            || successor.session_id != existing.session_id
+        {
+            return Err(AuthError::InvalidTransition);
+        }
+        let Some(previous) = self.credentials.get_mut(&id) else {
+            return Err(AuthError::RefreshTokenInvalid);
+        };
         previous.state = RefreshState::Consumed;
         let successor_id = successor.id.clone();
         previous.replaced_by = Some(successor_id.clone());
@@ -145,7 +139,6 @@ impl RefreshLedger {
         Ok(outcome)
     }
 
-    /// Compromises the entire family and revokes all its credentials (§12.2).
     pub fn compromise_family(&mut self, family_id: &RefreshFamilyId, _now: SystemTime) {
         if let Some(family) = self.families.get_mut(family_id) {
             family.compromised = true;
@@ -165,16 +158,11 @@ impl RefreshLedger {
         self.credentials.get(id)
     }
 
-    /// Looks up a credential by its token hash (§12.3). Production
-    /// implementations query the database directly; this is for the in-memory
-    /// reference.
     pub fn find_by_hash(&self, hash: [u8; 32]) -> Option<&RefreshCredential> {
         let id = self.by_hash.get(&hash)?;
         self.credentials.get(id)
     }
 
-    /// All session identifiers associated with a family (for revocation
-    /// cascades, §12.2).
     pub fn sessions_for_family(&self, family_id: &RefreshFamilyId) -> Vec<SessionId> {
         self.credentials
             .values()
@@ -266,13 +254,11 @@ mod tests {
         ledger
             .rotate("r1", successor(&family, &user, &session), now)
             .unwrap();
-        // Replay of the consumed credential must trigger containment.
         let err = ledger
             .rotate("r1", successor(&family, &user, &session), now)
             .unwrap_err();
         assert_eq!(err, AuthError::RefreshTokenReused);
         assert!(ledger.family(&family).unwrap().compromised);
-        // Even the valid successor is revoked after replay detection.
         let successor_id = RefreshCredentialId::new("cred-2").unwrap();
         assert_eq!(
             ledger.credential(&successor_id).unwrap().state,
