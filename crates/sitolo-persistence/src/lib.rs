@@ -8,6 +8,7 @@
 mod memory;
 mod ports;
 mod runtime;
+mod tenancy;
 
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
@@ -18,3 +19,4 @@ pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
 };
+pub use tenancy::{ProvisionedOrganization, TenancyDatabase, TenancyStores};
