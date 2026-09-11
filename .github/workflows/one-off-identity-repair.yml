@@ -1,0 +1,55 @@
+name: one-off identity repair
+
+on:
+  push:
+    branches:
+      - hardening/phase4-part5-enterprise-remediation
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message != 'fix(identity): restore password hasher dependency'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout remediation branch
+        uses: actions/checkout@3d3c42e5aac5ba805da76410c181273ba90b1
+        with:
+          ref: hardening/phase4-part5-enterprise-remediation
+          fetch-depth: 1
+
+      - name: Restore missing hasher dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/sitolo-application/src/identity.rs")
+          text = path.read_text(encoding="utf-8")
+          needle = "pub struct IdentityService {\n    db: Arc<IdentityDatabase>,\n"
+          replacement = needle + "    hasher: Arc<dyn PasswordHasher>,\n"
+          if text.count(needle) != 1:
+              raise SystemExit("expected exactly one IdentityService field anchor")
+          if "    hasher: Arc<dyn PasswordHasher>,\n" in text:
+              raise SystemExit("hasher field already present; refusing to modify source")
+          path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+          PY
+
+          git diff --check
+          git diff -- crates/sitolo-application/src/identity.rs
+
+      - name: Commit source fix and remove one-off workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/sitolo-application/src/identity.rs
+          git rm .github/workflows/one-off-identity-repair.yml
+          git commit -m "fix(identity): restore password hasher dependency"
+          git push origin HEAD:hardening/phase4-part5-enterprise-remediation
