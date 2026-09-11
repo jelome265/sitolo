@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - hardening/phase4-part5-enterprise-remediation
+  pull_request:
+    types: [opened]
 
 permissions:
   contents: write
@@ -16,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: hardening/phase4-part5-enterprise-remediation
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Apply source hardening transformations
         shell: python
@@ -24,6 +26,8 @@ jobs:
           from pathlib import Path
           import re
           import sys
+
+          BRANCH = '${{ github.head_ref || github.ref_name }}'
 
           def replace_once(path: str, old: str, new: str) -> None:
               p = Path(path)
@@ -41,6 +45,30 @@ jobs:
                   p.write_text(s.replace(old, new), encoding='utf-8')
               return n
 
+          def append_unwrap_to_named_call(test_source: str, name: str) -> str:
+              marker = name + '('
+              start = test_source.find(marker)
+              if start < 0:
+                  return test_source
+              open_idx = start + len(name)
+              depth = 0
+              close_idx = None
+              for i in range(open_idx, len(test_source)):
+                  ch = test_source[i]
+                  if ch == '(':
+                      depth += 1
+                  elif ch == ')':
+                      depth -= 1
+                      if depth == 0:
+                          close_idx = i
+                          break
+              if close_idx is None:
+                  raise SystemExit(f'could not balance call: {name}')
+              suffix = test_source[close_idx + 1:]
+              if suffix.lstrip().startswith('.unwrap()'):
+                  return test_source
+              return test_source[:close_idx + 1] + '.unwrap()' + test_source[close_idx + 1:]
+
           # Poisoned security/business state must fail closed. Never resume
           # from a poisoned MutexGuard by extracting potentially inconsistent state.
           poison_chain = r'''self
@@ -53,8 +81,7 @@ jobs:
           ]:
               p = Path(path)
               s = p.read_text(encoding='utf-8')
-              n = s.count(poison_chain)
-              if n:
+              if poison_chain in s:
                   s = s.replace(
                       poison_chain,
                       '''match self.state.lock() {
@@ -167,11 +194,6 @@ jobs:
                   'AuditEventId::new(format!("evt-{:08}", state.event_counter))\n                    .expect("event id")',
                   'AuditEventId::new(format!("evt-{:08}", state.event_counter))\n                    .map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
               ),
-              (
-                  'crates/sitolo-persistence/src/memory.rs',
-                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id")',
-                  'RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).map_err(|_| sitolo_auth::AuthError::InvalidIdentifier)?',
-              ),
           ]
           for path, old, new in replacements:
               replace_all(path, old, new)
@@ -216,16 +238,6 @@ jobs:
           })
       }''',
           )
-          replace_once(
-              'crates/sitolo-application/src/identity.rs',
-              '        IdentityService::new(\n            db,',
-              '        IdentityService::new(\n            db,',
-          )
-          # Test caller is already a fallible constructor; unwrap remains test-only.
-          test_call = '        IdentityService::new(\n            db,\n'
-          # Add explicit expectation in tests is acceptable; production code is denied below.
-          # The final static scan below enforces that production code contains no runtime
-          # unwrap/expect/panic constructs.
 
           # Replace runtime event-id expect with a typed early return from the audit helper.
           replace_once(
@@ -233,6 +245,15 @@ jobs:
               '            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8))).expect("event id"),',
               '            event_id: match AuditEventId::new(format!("evt-{}", self.random_hex(8))) {\n                Ok(id) => id,\n                Err(_) => return,\n            },',
           )
+
+          # The only constructor invocation currently lives in test code. Make the
+          # new fallible constructor explicit there without affecting production code.
+          identity_path = Path('crates/sitolo-application/src/identity.rs')
+          identity_source = identity_path.read_text(encoding='utf-8')
+          if '#[cfg(test)]' in identity_source:
+              prefix, tests = identity_source.split('#[cfg(test)]', 1)
+              patched_tests = append_unwrap_to_named_call(tests, 'IdentityService::new')
+              identity_path.write_text(prefix + '#[cfg(test)]' + patched_tests, encoding='utf-8')
 
           # Mark production panic-style APIs as forbidden at compile time. This is
           # disabled for test builds so existing test fixtures can remain concise.
@@ -290,4 +311,4 @@ jobs:
           git diff --cached --check
           git diff --cached --quiet && { echo "No source changes produced"; exit 1; }
           git commit -m "fix(security): harden reference security state and panic paths"
-          git push origin hardening/phase4-part5-enterprise-remediation
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
