@@ -265,10 +265,13 @@ dependencies = [
  "async-trait",
  "sitolo-audit",
  "sitolo-auth",
+ "sitolo-domain",
  "sitolo-observability",
  "sitolo-persistence",
  "sitolo-security",
+ "sitolo-tenancy",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -339,8 +342,10 @@ dependencies = [
  "sitolo-audit",
  "sitolo-auth",
  "sitolo-config",
+ "sitolo-domain",
  "sitolo-security",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

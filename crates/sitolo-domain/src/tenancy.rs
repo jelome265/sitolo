@@ -72,6 +72,10 @@ pub enum TenancyError {
     InvalidTransition,
     #[error("tenant record is in a terminal state")]
     TerminalState,
+    #[error("tenant record not found")]
+    NotFound,
+    #[error("tenant record already exists with different semantics")]
+    Conflict,
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {
