@@ -4,7 +4,7 @@
 //! a stateful workflow with distinct enrollment, challenge, verification,
 //! replay, and recovery semantics. TOTP protocol machinery is delegated to a
 //! maintained adapter; this module owns the lifecycle, replay guard, and
-/// assurance mapping.
+//! assurance mapping.
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
 
@@ -33,7 +33,6 @@ pub enum MfaError {
     ChallengeSessionMismatch,
 }
 
-/// MFA factor kind (§17.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MfaKind {
     Totp,
@@ -41,7 +40,6 @@ pub enum MfaKind {
     ProviderManaged,
 }
 
-/// MFA authenticator state machine (§17.2, A.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MfaAuthenticatorState {
     EnrollmentStarted,
@@ -51,7 +49,6 @@ pub enum MfaAuthenticatorState {
     Revoked,
 }
 
-/// An MFA authenticator record (§17).
 #[derive(Debug, Clone)]
 pub struct MfaAuthenticator {
     pub id: MfaAuthenticatorId,
@@ -62,13 +59,10 @@ pub struct MfaAuthenticator {
     pub verified_at: Option<SystemTime>,
     pub revoked_at: Option<SystemTime>,
     pub security_version: SecurityVersion,
-    /// Reference to sealed TOTP secret (§18, §34.2). None for non-TOTP kinds.
     pub secret_reference: Option<SealedRef>,
-    /// Last accepted TOTP step for replay guard (§18).
     pub last_accepted_step: Option<u64>,
 }
 
-/// Challenge purpose (§7.1, §19.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChallengePurpose {
     MfaEnrollment,
@@ -77,7 +71,6 @@ pub enum ChallengePurpose {
     StepUp,
 }
 
-/// A single-use challenge (§7.1, §19.1).
 #[derive(Debug, Clone)]
 pub struct Challenge {
     pub id: ChallengeId,
@@ -90,8 +83,6 @@ pub struct Challenge {
 }
 
 impl Challenge {
-    /// Atomically consumes the challenge (§7.1, §19.1). A second consumption
-    /// returns `ChallengeConsumed`; expired challenges return `ChallengeExpired`.
     pub fn consume(&mut self, now: SystemTime, session_id: &SessionId) -> Result<(), AuthError> {
         if now >= self.expires_at {
             return Err(AuthError::MfaEnrollmentExpired);
@@ -107,7 +98,6 @@ impl Challenge {
     }
 }
 
-/// TOTP verification policy (§18).
 #[derive(Debug, Clone, Copy)]
 pub struct TotpPolicy {
     pub period_secs: u64,
@@ -115,14 +105,8 @@ pub struct TotpPolicy {
     pub window: u32,
 }
 
-/// TOTP verification port (§18, §6.1). Protocol machinery is delegated to a
-/// maintained RFC 6238 implementation; this module owns the replay guard and
-/// attempt counter.
 #[async_trait]
 pub trait TotpVerifier: Send + Sync {
-    /// Verifies a TOTP code against the sealed secret. The `step` is the
-    /// current time step; the implementation must check the window
-    /// [step-window, step+window].
     async fn verify(
         &self,
         secret: &[u8],
@@ -132,9 +116,6 @@ pub trait TotpVerifier: Send + Sync {
     ) -> Result<bool, AuthError>;
 }
 
-/// Test-only TOTP verifier. Accepts codes of the form `{step:06}` zero-padded
-/// within the window. Clearly labeled as a test double; production adapters
-/// must use a maintained RFC 6238 implementation.
 pub struct TestTotpVerifier;
 
 #[async_trait]
@@ -157,7 +138,6 @@ impl TotpVerifier for TestTotpVerifier {
     }
 }
 
-/// Recovery code record (§20).
 #[derive(Debug, Clone)]
 pub struct RecoveryCodeRecord {
     pub id: RecoveryCodeId,
@@ -168,7 +148,6 @@ pub struct RecoveryCodeRecord {
 }
 
 impl RecoveryCodeRecord {
-    /// Normalizes a recovery code for comparison (§20).
     #[must_use]
     pub fn normalize(raw: &str) -> String {
         raw.trim()
@@ -176,15 +155,12 @@ impl RecoveryCodeRecord {
             .replace(|c: char| !c.is_ascii_alphanumeric(), "")
     }
 
-    /// Hashes a normalized recovery code (§20).
     #[must_use]
     pub fn hash_code(raw: &str) -> [u8; 32] {
         let normalized = Self::normalize(raw);
         Sha256::digest(normalized.as_bytes()).into()
     }
 
-    /// Atomically consumes the recovery code (§20). A second redemption
-    /// returns `RecoveryArtifactUsed`.
     pub fn consume(&mut self, raw: &str, now: SystemTime) -> Result<(), AuthError> {
         let presented = Self::hash_code(raw);
         if presented != self.code_hash {
@@ -198,9 +174,6 @@ impl RecoveryCodeRecord {
     }
 }
 
-/// In-memory reference state for MFA authenticators, challenges, and recovery
-/// codes. Production persistence replaces this with a transactional
-/// repository.
 #[derive(Debug, Default)]
 pub struct MfaState {
     authenticators: BTreeMap<MfaAuthenticatorId, MfaAuthenticator>,
@@ -216,8 +189,6 @@ impl MfaState {
         Self::default()
     }
 
-    /// Begins MFA enrollment (§18.1). Rejects if an active authenticator
-    /// exists (must reset first) or an enrollment is in progress.
     pub fn begin_enrollment(
         &mut self,
         id: MfaAuthenticatorId,
@@ -229,7 +200,9 @@ impl MfaState {
     ) -> Result<(), AuthError> {
         let existing = self.by_user.get(&user_id).cloned().unwrap_or_default();
         for auth_id in existing {
-            let auth = self.authenticators.get(&auth_id).expect("existing");
+            let Some(auth) = self.authenticators.get(&auth_id) else {
+                return Err(AuthError::InvalidTransition);
+            };
             if auth.state == MfaAuthenticatorState::Active {
                 return Err(AuthError::MfaEnrollmentConflict);
             }
@@ -258,7 +231,6 @@ impl MfaState {
         Ok(())
     }
 
-    /// Advances enrollment to verification-required (§17.2, A.3).
     pub fn require_verification(&mut self, id: &MfaAuthenticatorId) -> Result<(), AuthError> {
         let auth = self
             .authenticators
@@ -271,7 +243,6 @@ impl MfaState {
         Ok(())
     }
 
-    /// Completes enrollment after successful verification (§18.1).
     pub fn complete_enrollment(
         &mut self,
         id: &MfaAuthenticatorId,
@@ -289,7 +260,6 @@ impl MfaState {
         Ok(())
     }
 
-    /// Revokes an authenticator (§17.2).
     pub fn revoke(&mut self, id: &MfaAuthenticatorId, now: SystemTime) -> Result<(), AuthError> {
         let auth = self
             .authenticators
@@ -303,7 +273,6 @@ impl MfaState {
         Ok(())
     }
 
-    /// Returns the active authenticator for a user, if any.
     #[must_use]
     pub fn active_authenticator(&self, user_id: &UserId) -> Option<&MfaAuthenticator> {
         let ids = self.by_user.get(user_id)?;
@@ -316,8 +285,6 @@ impl MfaState {
         None
     }
 
-    /// Records a successful TOTP verification and updates the replay guard
-    /// (§18). Returns the updated authenticator.
     pub fn record_totp_success(
         &mut self,
         id: &MfaAuthenticatorId,
@@ -336,7 +303,6 @@ impl MfaState {
         Ok(())
     }
 
-    /// Issues a challenge (§7.1, §19.1).
     pub fn issue_challenge(
         &mut self,
         id: ChallengeId,
@@ -358,7 +324,6 @@ impl MfaState {
         self.challenges.insert(id, challenge);
     }
 
-    /// Consumes a challenge (§7.1, §19.1).
     pub fn consume_challenge(
         &mut self,
         id: &ChallengeId,
@@ -372,7 +337,6 @@ impl MfaState {
         challenge.consume(now, session_id)
     }
 
-    /// Adds a recovery code (§20).
     pub fn add_recovery_code(&mut self, record: RecoveryCodeRecord) {
         let id = record.id.clone();
         let user_id = record.user_id.clone();
@@ -380,7 +344,6 @@ impl MfaState {
         self.recovery_by_user.entry(user_id).or_default().push(id);
     }
 
-    /// Consumes a recovery code (§20).
     pub fn consume_recovery_code(
         &mut self,
         user_id: &UserId,
@@ -394,7 +357,9 @@ impl MfaState {
             .unwrap_or_default();
         let hash = RecoveryCodeRecord::hash_code(raw);
         for id in ids {
-            let record = self.recovery_codes.get_mut(&id).expect("existing");
+            let Some(record) = self.recovery_codes.get_mut(&id) else {
+                return Err(AuthError::InvalidTransition);
+            };
             if hash == record.code_hash {
                 if record.consumed_at.is_some() {
                     return Err(AuthError::RecoveryArtifactUsed);
@@ -406,8 +371,6 @@ impl MfaState {
         Err(AuthError::RecoveryArtifactInvalid)
     }
 
-    /// Resets all MFA state for a user (§17.2). Revokes all authenticators
-    /// and recovery codes; returns the list of revoked authenticator IDs.
     pub fn reset_all(&mut self, user_id: &UserId, now: SystemTime) -> Vec<MfaAuthenticatorId> {
         let ids = self.by_user.remove(user_id).unwrap_or_default();
         let mut revoked = Vec::new();
