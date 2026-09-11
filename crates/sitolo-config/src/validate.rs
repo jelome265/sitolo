@@ -1,4 +1,5 @@
-use crate::{AppConfig, KNOWN_SCHEMA_VERSIONS, LogLevel, ceilings, defaults};
+use crate::{ceilings, defaults, AppConfig, LogLevel, KNOWN_SCHEMA_VERSIONS};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationLayer {
     Syntax,
@@ -7,16 +8,19 @@ pub enum ValidationLayer {
     Environment,
     CrossField,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigProblem {
     pub layer: ValidationLayer,
     pub field: &'static str,
     pub reason: &'static str,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigValidationError {
     pub problems: Vec<ConfigProblem>,
 }
+
 impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -26,11 +30,9 @@ impl std::fmt::Display for ConfigValidationError {
         )
     }
 }
+
 impl std::error::Error for ConfigValidationError {}
 
-/// Reports whether `endpoint` is loopback-local. Accepts `scheme://authority`
-/// and bare `host[:port]` shapes; the host is loopback only for `localhost`,
-/// `127.*`, or `::1` (brackets optional).
 fn is_loopback_endpoint(endpoint: &str) -> bool {
     let without_scheme = endpoint
         .split_once("://")
@@ -39,7 +41,6 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
     let hostport = authority
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
-    // Bracketed IPv6 literal, optionally with a port: `[::1]` / `[::1]:4317`.
     if let Some(inner) = hostport.strip_prefix('[') {
         return inner.split(']').next().is_some_and(|host| host == "::1");
     }
@@ -53,8 +54,6 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host.starts_with("127.")
 }
 
-/// Whether `endpoint` may use plaintext transport. Loopback collectors may be
-/// plaintext outside production; everything else must be `https://`.
 fn endpoint_allows_plaintext(endpoint: &str, production: bool) -> bool {
     is_loopback_endpoint(endpoint) && !production
 }
@@ -68,8 +67,6 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             reason: r,
         })
     };
-    // F-005: service identity reaches logs/telemetry, so it carries the
-    // same control-character rejection as database identity fields.
     for (field, value) in [
         ("service_name", b.service_name.as_str()),
         ("service_version", b.service_version.as_str()),
@@ -195,9 +192,6 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "too verbose in production",
         );
     }
-    // F-004: transport security is explicit. A missing scheme does not imply
-    // a local endpoint: bare `host:port` values are remote unless loopback.
-    // Plaintext HTTP to loopback is allowed outside production only.
     if let Some(endpoint) = &b.otel_endpoint
         && !endpoint_allows_plaintext(endpoint, b.environment.is_production())
         && !endpoint.starts_with("https://")
@@ -208,8 +202,6 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "remote endpoint requires TLS",
         );
     }
-    // F-003: secret-reference provenance. Production must never resolve a
-    // development-namespace reference, even when the provider would serve it.
     if b.environment.is_production()
         && let Some(reference) = &b.db_password_ref
         && reference.path().starts_with("development/")
@@ -237,6 +229,15 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
     if !p.is_empty() {
         return Err(ConfigValidationError { problems: p });
     }
+    let Some(db_password_ref) = b.db_password_ref else {
+        return Err(ConfigValidationError {
+            problems: vec![ConfigProblem {
+                layer: ValidationLayer::Security,
+                field: "db_password_ref",
+                reason: "required secret reference absent",
+            }],
+        });
+    };
     Ok(AppConfig {
         environment: b.environment,
         service_name: b.service_name,
@@ -249,7 +250,7 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         db_port: b.db_port,
         db_name: b.db_name,
         db_user: b.db_user,
-        db_password_ref: b.db_password_ref.expect("validated"),
+        db_password_ref,
         db_pool_min: b.db_pool_min,
         db_pool_max: b.db_pool_max,
         db_acquire_timeout_ms: b.db_acquire_timeout_ms,
