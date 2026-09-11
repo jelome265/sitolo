@@ -308,6 +308,9 @@ dependencies = [
 [[package]]
 name = "sitolo-domain"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-events"
@@ -356,6 +359,10 @@ version = "0.1.0"
 [[package]]
 name = "sitolo-tenancy"
 version = "0.1.0"
+dependencies = [
+ "sitolo-domain",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-testkit"
