@@ -71,12 +71,16 @@ impl InMemoryProtectedStore {
     /// security decisions still occur upstream via typed `Result`s; a
     /// poisoned in-memory cache is not itself a security invariant).
     fn items_lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
-        self.items.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.items
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Acquires the id-counter lock, recovering from mutex poisoning.
     fn next_lock(&self) -> std::sync::MutexGuard<'_, u64> {
-        self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.next
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

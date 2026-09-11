@@ -65,7 +65,10 @@ impl DeterministicRandom {
     }
 
     fn stream_next(&self) -> [u8; 32] {
-        let mut counter = self.counter.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut counter = self
+            .counter
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *counter = counter.wrapping_add(1);
         let mut h = Sha256::new();
         h.update(self.seed);

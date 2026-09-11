@@ -154,7 +154,10 @@ impl InMemoryAuditSink {
 
     /// Returns a snapshot of all recorded events.
     pub fn events(&self) -> Vec<AuthenticationEvent> {
-        self.events.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 
@@ -165,7 +168,10 @@ impl AuditRecorder for InMemoryAuditSink {
         event: AuthenticationEvent,
         _requirement: AuditRequirement,
     ) -> Result<(), AuditError> {
-        self.events.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(event);
+        self.events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(event);
         Ok(())
     }
 }
