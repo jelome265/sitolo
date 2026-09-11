@@ -12,11 +12,13 @@
 //! (Phase 6) once roles exist. Public invitation acceptance and other
 //! caller-authenticated flows arrive with the API layer (PR-006).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use sitolo_authz::{Permission, Role, RoleAssignment, resolve_permissions};
 use sitolo_domain::tenancy::{
-    Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenancyError,
-    TenantUserId,
+    Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, RoleAssignmentId,
+    TenancyError, TenantUserId,
 };
 use sitolo_persistence::{ProvisionedOrganization, TenancyDatabase, TenancyStores};
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
@@ -134,6 +136,71 @@ impl TenancyService {
         id: &MembershipId,
     ) -> Result<Membership, TenancyError> {
         self.db.expire_membership(organization_id, id).await
+    }
+
+    /// Grants an organization-wide role to a live membership. Who may grant
+    /// which role is an actor-authority question answered by Phase 6 once
+    /// issuer scope is available (sections 8.1.8, 8.1.9, 11.2); this method
+    /// enforces target-state and duplicate-grant correctness only.
+    pub async fn assign_role(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        assignment_id: RoleAssignmentId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError> {
+        self.db
+            .assign_role(organization_id, membership_id, assignment_id, role)
+            .await
+    }
+
+    /// Ends an effective grant. History is preserved; re-granting creates a
+    /// new record (section 8.1.10).
+    pub async fn revoke_role(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError> {
+        self.db
+            .revoke_role(organization_id, membership_id, role)
+            .await
+    }
+
+    /// Full grant history for a membership, all states.
+    pub async fn member_roles(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<RoleAssignment> {
+        self.db
+            .role_assignments_for(organization_id, membership_id)
+            .await
+    }
+
+    /// Resolves the membership's effective organization-wide permissions:
+    /// the union over `Effective` grants, gated on an `Active` membership.
+    /// Unknown or non-active memberships resolve to the empty set — deny by
+    /// default with no existence disclosure. Scope narrowing (branch and
+    /// below) arrives with scope grants in PR-004.
+    pub async fn member_permissions(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> BTreeSet<Permission> {
+        let membership = self
+            .db
+            .membership_snapshot(organization_id, membership_id)
+            .await
+            .filter(|membership| membership.has_authority());
+        let Some(membership) = membership else {
+            return BTreeSet::new();
+        };
+        let assignments = self
+            .db
+            .role_assignments_for(&membership.organization_id, &membership.id)
+            .await;
+        resolve_permissions(&assignments)
     }
 
     /// Organization lifecycle transitions (section 6).
@@ -355,6 +422,92 @@ mod tests {
                 )
                 .await,
             Err(ScopeError::BranchDenied)
+        );
+    }
+
+    #[tokio::test]
+    async fn role_grants_resolve_to_least_privilege_permissions() {
+        let service = service();
+        let bundle = provisioned(&service).await;
+        let org = &bundle.organization.id;
+
+        // Owner holds the full catalog.
+        service
+            .assign_role(
+                org.clone(),
+                bundle.owner_membership.id.clone(),
+                RoleAssignmentId::new("ra-owner").unwrap(),
+                Role::Owner,
+            )
+            .await
+            .unwrap();
+        let owner_permissions = service
+            .member_permissions(org, &bundle.owner_membership.id)
+            .await;
+        assert_eq!(owner_permissions.len(), Permission::all().len());
+
+        // A cashier resolves to exactly sale capabilities.
+        let cashier = service
+            .invite_member(
+                MembershipId::new("m-cashier").unwrap(),
+                org.clone(),
+                user("cashier"),
+            )
+            .await
+            .unwrap();
+        service.mark_member_pending(org, &cashier.id).await.unwrap();
+        service.accept_member(org, &cashier.id).await.unwrap();
+        service
+            .assign_role(
+                org.clone(),
+                cashier.id.clone(),
+                RoleAssignmentId::new("ra-cashier").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service.member_permissions(org, &cashier.id).await,
+            BTreeSet::from([Permission::SaleCreate, Permission::SaleView])
+        );
+
+        // Revocation drains authority without deleting history.
+        service
+            .revoke_role(org, &cashier.id, Role::Cashier)
+            .await
+            .unwrap();
+        assert!(
+            service
+                .member_permissions(org, &cashier.id)
+                .await
+                .is_empty()
+        );
+        assert_eq!(service.member_roles(org, &cashier.id).await.len(), 1);
+
+        // Suspended memberships resolve to nothing while suspended.
+        service
+            .assign_role(
+                org.clone(),
+                cashier.id.clone(),
+                RoleAssignmentId::new("ra-cashier-2").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        service.suspend_member(org, &cashier.id).await.unwrap();
+        assert!(
+            service
+                .member_permissions(org, &cashier.id)
+                .await
+                .is_empty()
+        );
+
+        // Unknown memberships resolve to nothing without disclosure.
+        assert!(
+            service
+                .member_permissions(org, &MembershipId::new("m-ghost").unwrap())
+                .await
+                .is_empty()
         );
     }
 }

@@ -265,6 +265,7 @@ dependencies = [
  "async-trait",
  "sitolo-audit",
  "sitolo-auth",
+ "sitolo-authz",
  "sitolo-domain",
  "sitolo-observability",
  "sitolo-persistence",
@@ -298,6 +299,10 @@ dependencies = [
 [[package]]
 name = "sitolo-authz"
 version = "0.1.0"
+dependencies = [
+ "sitolo-domain",
+ "thiserror",
+]
 
 [[package]]
 name = "sitolo-config"
@@ -341,6 +346,7 @@ dependencies = [
  "sha2",
  "sitolo-audit",
  "sitolo-auth",
+ "sitolo-authz",
  "sitolo-config",
  "sitolo-domain",
  "sitolo-security",

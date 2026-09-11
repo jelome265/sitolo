@@ -60,6 +60,10 @@ tenant_id!(
     TenantUserId,
     "Reference to the identity-subsystem user behind a membership (Phase 4 section 3.1: `User != Membership`). Correlates to the authenticated subject established by Phase 3; carries no authority by itself."
 );
+tenant_id!(
+    RoleAssignmentId,
+    "Opaque role-assignment identifier. Assignment lifecycle lives in the authorization crate; the identifier itself is tenant-topology vocabulary."
+);
 
 /// Domain failures for tenant topology transitions.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

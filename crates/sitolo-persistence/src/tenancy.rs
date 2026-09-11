@@ -18,9 +18,10 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use sitolo_authz::{Role, RoleAssignment, RoleAssignmentState};
 use sitolo_domain::tenancy::{
-    Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenancyError,
-    TenantUserId,
+    Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, RoleAssignmentId,
+    TenancyError, TenantUserId,
 };
 
 /// The atomic result of provisioning an organization (Phase 4 section 7.1):
@@ -163,6 +164,32 @@ pub trait TenancyStores: Send + Sync {
         branch_id: BranchId,
         branch_name: &str,
     ) -> Result<ProvisionedOrganization, TenancyError>;
+
+    // --- role assignments (organization-wide grants; PR-004 narrows scope) ---
+    //
+    // Grants are organization-wide until scope grants arrive: assignment
+    // records carry the owning organization and membership bindings, and
+    // every method enforces them. Authority flows only from `Effective`
+    // assignments held by `Active` memberships; resolution lives in the
+    // authorization crate and the application service.
+    async fn assign_role(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        assignment_id: RoleAssignmentId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError>;
+    async fn revoke_role(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError>;
+    async fn role_assignments_for(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<RoleAssignment>;
 }
 
 struct TenancyState {
@@ -173,6 +200,8 @@ struct TenancyState {
     /// previous record reached a terminal state, enforcing at most one
     /// non-terminal membership per pair (Phase 4 section 8.1.3).
     by_org_user: BTreeMap<(OrganizationId, TenantUserId), MembershipId>,
+    assignments: BTreeMap<RoleAssignmentId, RoleAssignment>,
+    by_membership: BTreeMap<MembershipId, Vec<RoleAssignmentId>>,
 }
 
 /// In-memory tenant topology database.
@@ -188,6 +217,8 @@ impl TenancyDatabase {
                 branches: BTreeMap::new(),
                 memberships: BTreeMap::new(),
                 by_org_user: BTreeMap::new(),
+                assignments: BTreeMap::new(),
+                by_membership: BTreeMap::new(),
             }),
         }
     }
@@ -570,6 +601,127 @@ impl TenancyStores for TenancyDatabase {
             default_branch: branch,
         })
     }
+
+    async fn assign_role(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        assignment_id: RoleAssignmentId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError> {
+        let mut state = self.lock();
+        // The grant target must be a live membership of this organization.
+        // Terminal memberships cannot receive authority.
+        let membership = state
+            .memberships
+            .get(&membership_id)
+            .filter(|membership| membership.organization_id == organization_id)
+            .ok_or(TenancyError::NotFound)?;
+        if membership.state.is_terminal() {
+            return Err(TenancyError::InvalidTransition);
+        }
+        // Record-level idempotency on the assignment id.
+        if let Some(existing) = state.assignments.get(&assignment_id) {
+            if existing.organization_id == organization_id
+                && existing.membership_id == membership_id
+                && existing.role == role
+            {
+                return Ok(existing.clone());
+            }
+            return Err(TenancyError::Conflict);
+        }
+        // One effective grant per (membership, role): a retry mints the same
+        // assignment id and hits the path above; a genuinely new grant for an
+        // already-held role conflicts instead of duplicating authority.
+        let duplicate = state
+            .by_membership
+            .get(&membership_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.assignments.get(id))
+            .any(|assignment| {
+                assignment.role == role && assignment.state == RoleAssignmentState::Effective
+            });
+        if duplicate {
+            return Err(TenancyError::Conflict);
+        }
+        // Drive the section-19 machine to Effective: validation here is the
+        // membership/catalog checks above. Approval-gated grants will pause
+        // at ApprovalRequired once Phase 6 classifies high-risk transitions.
+        let mut assignment = RoleAssignment::request(
+            assignment_id.clone(),
+            organization_id,
+            membership_id.clone(),
+            role,
+        );
+        assignment.begin_validation()?;
+        assignment.mark_effective()?;
+        state
+            .assignments
+            .insert(assignment_id.clone(), assignment.clone());
+        state
+            .by_membership
+            .entry(membership_id)
+            .or_default()
+            .push(assignment_id);
+        Ok(assignment)
+    }
+
+    async fn revoke_role(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: Role,
+    ) -> Result<RoleAssignment, TenancyError> {
+        let mut state = self.lock();
+        // Scope the membership first: foreign grants behave as absent.
+        state
+            .memberships
+            .get(membership_id)
+            .filter(|membership| membership.organization_id == *organization_id)
+            .ok_or(TenancyError::NotFound)?;
+        let target = state
+            .by_membership
+            .get(membership_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.assignments.get(id))
+            .find(|assignment| {
+                assignment.role == role && assignment.state == RoleAssignmentState::Effective
+            })
+            .map(|assignment| assignment.id.clone())
+            .ok_or(TenancyError::NotFound)?;
+        let assignment = state
+            .assignments
+            .get_mut(&target)
+            .expect("indexed assignment exists");
+        assignment.revoke()?;
+        Ok(assignment.clone())
+    }
+
+    async fn role_assignments_for(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<RoleAssignment> {
+        let state = self.lock();
+        // Read path: a binding mismatch yields history for nobody — an empty
+        // set, never a cross-tenant record.
+        let bound = state
+            .memberships
+            .get(membership_id)
+            .is_some_and(|membership| membership.organization_id == *organization_id);
+        if !bound {
+            return Vec::new();
+        }
+        state
+            .by_membership
+            .get(membership_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.assignments.get(id).cloned())
+            .collect()
+    }
 }
 
 /// Scope-enforcing branch access: the binding mismatch behaves as absence.
@@ -903,6 +1055,145 @@ mod tests {
             db.membership_for_user(&org_id("o1"), &user("owner"))
                 .await
                 .is_none()
+        );
+    }
+
+    async fn active_member(
+        db: &TenancyDatabase,
+        org: &str,
+        member: &str,
+        user_id: &str,
+    ) -> Membership {
+        let membership = db
+            .invite_membership(
+                MembershipId::new(member).unwrap(),
+                org_id(org),
+                user(user_id),
+            )
+            .await
+            .unwrap();
+        db.advance_membership(&org_id(org), &membership.id)
+            .await
+            .unwrap();
+        db.activate_membership(&org_id(org), &membership.id)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn role_grant_lifecycle_preserves_history() {
+        use sitolo_authz::RoleAssignmentState;
+
+        let db = TenancyDatabase::new();
+        active_org(&db, "o1").await;
+        let membership = active_member(&db, "o1", "m1", "u1").await;
+
+        let grant = db
+            .assign_role(
+                org_id("o1"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-1").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        assert_eq!(grant.state, RoleAssignmentState::Effective);
+
+        // Same assignment id with the same payload is a safe retry.
+        let retry = db
+            .assign_role(
+                org_id("o1"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-1").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        assert_eq!(grant, retry);
+
+        // A second live grant of the same role conflicts rather than
+        // duplicating authority.
+        assert_eq!(
+            db.assign_role(
+                org_id("o1"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-2").unwrap(),
+                Role::Cashier,
+            )
+            .await,
+            Err(TenancyError::Conflict)
+        );
+
+        let revoked = db
+            .revoke_role(&org_id("o1"), &membership.id, Role::Cashier)
+            .await
+            .unwrap();
+        assert_eq!(revoked.state, RoleAssignmentState::Revoked);
+        // Revoking again finds no effective grant.
+        assert_eq!(
+            db.revoke_role(&org_id("o1"), &membership.id, Role::Cashier)
+                .await,
+            Err(TenancyError::NotFound)
+        );
+
+        // Re-granting creates a new record; the revoked one stays revoked.
+        let second = db
+            .assign_role(
+                org_id("o1"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-3").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        assert_ne!(second.id, revoked.id);
+        let history = db.role_assignments_for(&org_id("o1"), &membership.id).await;
+        assert_eq!(history.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn role_grants_enforce_membership_scope() {
+        let db = TenancyDatabase::new();
+        active_org(&db, "o1").await;
+        active_org(&db, "o2").await;
+        let membership = active_member(&db, "o1", "m1", "u1").await;
+
+        // A grant naming a foreign organization is denied as absent.
+        assert_eq!(
+            db.assign_role(
+                org_id("o2"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-x").unwrap(),
+                Role::Cashier,
+            )
+            .await,
+            Err(TenancyError::NotFound)
+        );
+        // Reads across the boundary expose nothing.
+        assert!(
+            db.role_assignments_for(&org_id("o2"), &membership.id)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            db.revoke_role(&org_id("o2"), &membership.id, Role::Cashier)
+                .await,
+            Err(TenancyError::NotFound)
+        );
+
+        // Terminal memberships cannot receive authority.
+        db.revoke_membership(&org_id("o1"), &membership.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.assign_role(
+                org_id("o1"),
+                membership.id.clone(),
+                RoleAssignmentId::new("ra-y").unwrap(),
+                Role::Cashier,
+            )
+            .await,
+            Err(TenancyError::InvalidTransition)
         );
     }
 }

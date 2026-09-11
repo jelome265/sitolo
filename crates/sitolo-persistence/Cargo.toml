@@ -10,6 +10,7 @@ async-trait.workspace = true
 sha2.workspace = true
 sitolo-auth.workspace = true
 sitolo-audit.workspace = true
+sitolo-authz = { path = "../sitolo-authz" }
 sitolo-config.workspace = true
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-security.workspace = true
