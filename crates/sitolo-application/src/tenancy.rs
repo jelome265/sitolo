@@ -15,10 +15,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use sitolo_authz::{Permission, Role, RoleAssignment, resolve_permissions};
+use sitolo_authz::{
+    Permission, Role, RoleAssignment, Scope, ScopeGrant, authorize_scope, resolve_permissions,
+};
 use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, RoleAssignmentId,
-    TenancyError, TenantUserId,
+    ScopeGrantId, TenancyError, TenantUserId,
 };
 use sitolo_persistence::{ProvisionedOrganization, TenancyDatabase, TenancyStores};
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
@@ -178,6 +180,42 @@ impl TenancyService {
             .await
     }
 
+    /// Narrows a membership's authority to an explicit scope. Structural
+    /// validity (scope inside the organization, branch existence) is enforced
+    /// by the repository; issuer authority (the widening rule, section 11.2)
+    /// is enforced by Phase 6 once actor scope exists.
+    pub async fn grant_scope(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        grant_id: ScopeGrantId,
+        scope: Scope,
+    ) -> Result<ScopeGrant, TenancyError> {
+        self.db
+            .grant_scope(organization_id, membership_id, grant_id, scope)
+            .await
+    }
+
+    /// Lifts one narrowing entry. Remaining active grants still apply.
+    pub async fn revoke_scope_grant(
+        &self,
+        organization_id: &OrganizationId,
+        grant_id: &ScopeGrantId,
+    ) -> Result<ScopeGrant, TenancyError> {
+        self.db.revoke_scope_grant(organization_id, grant_id).await
+    }
+
+    /// Active and revoked narrowing entries for a membership.
+    pub async fn member_grants(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<ScopeGrant> {
+        self.db
+            .scope_grants_for(organization_id, membership_id)
+            .await
+    }
+
     /// Resolves the membership's effective organization-wide permissions:
     /// the union over `Effective` grants, gated on an `Active` membership.
     /// Unknown or non-active memberships resolve to the empty set — deny by
@@ -241,6 +279,14 @@ impl TenancyService {
 
     /// Branch lifecycle transitions (section 14.1). All scope-carrying: a
     /// branch is only addressable through its owning organization.
+    pub async fn activate_branch(
+        &self,
+        organization_id: &OrganizationId,
+        id: &BranchId,
+    ) -> Result<Branch, TenancyError> {
+        self.db.activate_branch(organization_id, id).await
+    }
+
     pub async fn suspend_branch(
         &self,
         organization_id: &OrganizationId,
@@ -302,6 +348,61 @@ impl TenancyService {
             None => None,
         };
         resolve_effective_scope(&membership, &organization, branch.as_ref())
+    }
+
+    /// Authorizes one tenancy-resource operation: the section-11.3
+    /// intersection of role permissions and membership scope, over an
+    /// operating organization, an active membership, and an operating branch
+    /// where branch-scoped.
+    ///
+    /// ```text
+    /// operating records -> EffectiveScope
+    ///         +
+    /// required permission in resolved role permissions
+    ///         +
+    /// requested scope covered by active grants (or none narrow)
+    ///         =
+    /// EffectiveScope with populated permissions
+    /// ```
+    ///
+    /// Approvals, separation of duties, property/state authorization, and
+    /// entitlement checks are Phase 6 concerns and are not evaluated here.
+    pub async fn authorize_operation(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        branch_id: Option<&BranchId>,
+        permission: Permission,
+    ) -> Result<EffectiveScope, ScopeError> {
+        let mut scope = self
+            .effective_scope(organization_id, membership_id, branch_id)
+            .await?;
+        let assignments = self
+            .db
+            .role_assignments_for(&scope.organization_id, &scope.membership_id)
+            .await;
+        let permissions = resolve_permissions(&assignments);
+        if !permissions.contains(&permission) {
+            return Err(ScopeError::PermissionDenied);
+        }
+        let requested = match &scope.branch_id {
+            Some(branch) => Scope::Branch {
+                organization_id: scope.organization_id.clone(),
+                branch_id: branch.clone(),
+            },
+            None => Scope::Organization {
+                organization_id: scope.organization_id.clone(),
+            },
+        };
+        let grants = self
+            .db
+            .scope_grants_for(&scope.organization_id, &scope.membership_id)
+            .await;
+        if !authorize_scope(&grants, &requested) {
+            return Err(ScopeError::ScopeDenied);
+        }
+        scope.permissions = permissions;
+        Ok(scope)
     }
 }
 
@@ -509,5 +610,128 @@ mod tests {
                 .await
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn authorize_operation_intersects_permission_and_scope() {
+        use sitolo_domain::tenancy::ScopeGrantId;
+
+        let service = service();
+        let bundle = provisioned(&service).await;
+        let org = &bundle.organization.id;
+        let owner = &bundle.owner_membership.id;
+        let main_branch = &bundle.default_branch.id;
+
+        service
+            .assign_role(
+                org.clone(),
+                owner.clone(),
+                RoleAssignmentId::new("ra-owner").unwrap(),
+                Role::Owner,
+            )
+            .await
+            .unwrap();
+        let second_branch = service
+            .create_branch(BranchId::new("b2").unwrap(), org.clone(), "Second Branch")
+            .await
+            .unwrap();
+        service
+            .activate_branch(org, &second_branch.id)
+            .await
+            .unwrap();
+
+        // No grants narrow: organization-wide and branch operations allowed.
+        let access = service
+            .authorize_operation(org, owner, None, Permission::SaleCreate)
+            .await
+            .unwrap();
+        assert!(access.permissions.contains(&Permission::SaleCreate));
+        service
+            .authorize_operation(org, owner, Some(main_branch), Permission::SaleCreate)
+            .await
+            .unwrap();
+
+        // Narrow the owner to the main branch.
+        service
+            .grant_scope(
+                org.clone(),
+                owner.clone(),
+                ScopeGrantId::new("g-main").unwrap(),
+                Scope::Branch {
+                    organization_id: org.clone(),
+                    branch_id: main_branch.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            service
+                .authorize_operation(org, owner, None, Permission::SaleCreate)
+                .await
+                .is_err_and(|err| err == ScopeError::ScopeDenied)
+        );
+        service
+            .authorize_operation(org, owner, Some(main_branch), Permission::SaleCreate)
+            .await
+            .unwrap();
+        assert!(
+            service
+                .authorize_operation(org, owner, Some(&second_branch.id), Permission::SaleCreate)
+                .await
+                .is_err_and(|err| err == ScopeError::ScopeDenied)
+        );
+
+        // A cashier holds the scope but lacks the permission.
+        let cashier = service
+            .invite_member(
+                MembershipId::new("m-cashier").unwrap(),
+                org.clone(),
+                user("cashier"),
+            )
+            .await
+            .unwrap();
+        service.mark_member_pending(org, &cashier.id).await.unwrap();
+        service.accept_member(org, &cashier.id).await.unwrap();
+        service
+            .assign_role(
+                org.clone(),
+                cashier.id.clone(),
+                RoleAssignmentId::new("ra-cashier").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        service
+            .grant_scope(
+                org.clone(),
+                cashier.id.clone(),
+                ScopeGrantId::new("g-cashier").unwrap(),
+                Scope::Branch {
+                    organization_id: org.clone(),
+                    branch_id: main_branch.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            service
+                .authorize_operation(org, &cashier.id, Some(main_branch), Permission::SaleVoid)
+                .await
+                .is_err_and(|err| err == ScopeError::PermissionDenied)
+        );
+        service
+            .authorize_operation(org, &cashier.id, Some(main_branch), Permission::SaleCreate)
+            .await
+            .unwrap();
+
+        // Lifting the narrowing restores organization-wide authority.
+        service
+            .revoke_scope_grant(org, &ScopeGrantId::new("g-main").unwrap())
+            .await
+            .unwrap();
+        service
+            .authorize_operation(org, owner, None, Permission::SaleCreate)
+            .await
+            .unwrap();
     }
 }

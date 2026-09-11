@@ -18,10 +18,10 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use sitolo_authz::{Role, RoleAssignment, RoleAssignmentState};
+use sitolo_authz::{Role, RoleAssignment, RoleAssignmentState, Scope, ScopeGrant};
 use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, RoleAssignmentId,
-    TenancyError, TenantUserId,
+    ScopeGrantId, TenancyError, TenantUserId,
 };
 
 /// The atomic result of provisioning an organization (Phase 4 section 7.1):
@@ -190,6 +190,31 @@ pub trait TenancyStores: Send + Sync {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
     ) -> Vec<RoleAssignment>;
+
+    // --- scope grants (narrowing; PR-004) ---
+    //
+    // Grants narrow organization-wide role authority to explicit scopes.
+    // Structural rules enforced here: the grant scope must sit inside the
+    // granting organization (section 25.2), and branch scopes must name an
+    // existing branch of that organization. Issuer authority (the widening
+    // rule, section 11.2) is enforced by Phase 6 once actor scope exists.
+    async fn grant_scope(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        grant_id: ScopeGrantId,
+        scope: Scope,
+    ) -> Result<ScopeGrant, TenancyError>;
+    async fn revoke_scope_grant(
+        &self,
+        organization_id: &OrganizationId,
+        grant_id: &ScopeGrantId,
+    ) -> Result<ScopeGrant, TenancyError>;
+    async fn scope_grants_for(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<ScopeGrant>;
 }
 
 struct TenancyState {
@@ -202,6 +227,8 @@ struct TenancyState {
     by_org_user: BTreeMap<(OrganizationId, TenantUserId), MembershipId>,
     assignments: BTreeMap<RoleAssignmentId, RoleAssignment>,
     by_membership: BTreeMap<MembershipId, Vec<RoleAssignmentId>>,
+    grants: BTreeMap<ScopeGrantId, ScopeGrant>,
+    grants_by_membership: BTreeMap<MembershipId, Vec<ScopeGrantId>>,
 }
 
 /// In-memory tenant topology database.
@@ -219,6 +246,8 @@ impl TenancyDatabase {
                 by_org_user: BTreeMap::new(),
                 assignments: BTreeMap::new(),
                 by_membership: BTreeMap::new(),
+                grants: BTreeMap::new(),
+                grants_by_membership: BTreeMap::new(),
             }),
         }
     }
@@ -720,6 +749,113 @@ impl TenancyStores for TenancyDatabase {
             .into_iter()
             .flatten()
             .filter_map(|id| state.assignments.get(id).cloned())
+            .collect()
+    }
+
+    async fn grant_scope(
+        &self,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        grant_id: ScopeGrantId,
+        scope: Scope,
+    ) -> Result<ScopeGrant, TenancyError> {
+        // The grant scope must sit inside the granting organization
+        // (section 25.2 cross-tenant consistency).
+        if scope.organization_id() != &organization_id {
+            return Err(TenancyError::InvalidTransition);
+        }
+        let mut state = self.lock();
+        // Branch scopes must name an existing branch of this organization.
+        if let Scope::Branch { branch_id, .. } = &scope {
+            let branch = state
+                .branches
+                .get(branch_id)
+                .filter(|branch| branch.organization_id == organization_id);
+            if branch.is_none() {
+                return Err(TenancyError::NotFound);
+            }
+        }
+        // The grant target must be a live membership of this organization.
+        let membership = state
+            .memberships
+            .get(&membership_id)
+            .filter(|membership| membership.organization_id == organization_id)
+            .ok_or(TenancyError::NotFound)?;
+        if membership.state.is_terminal() {
+            return Err(TenancyError::InvalidTransition);
+        }
+        // Record-level idempotency on the grant id.
+        if let Some(existing) = state.grants.get(&grant_id) {
+            if existing.organization_id == organization_id
+                && existing.membership_id == membership_id
+                && existing.scope == scope
+            {
+                return Ok(existing.clone());
+            }
+            return Err(TenancyError::Conflict);
+        }
+        // One active narrowing per (membership, scope): a retry reuses the
+        // grant id above; a genuinely new narrowing of an already-narrowed
+        // scope conflicts instead of stacking duplicates.
+        let duplicate = state
+            .grants_by_membership
+            .get(&membership_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.grants.get(id))
+            .any(|grant| grant.scope == scope && grant.state.narrows());
+        if duplicate {
+            return Err(TenancyError::Conflict);
+        }
+        let grant = ScopeGrant::grant(
+            grant_id.clone(),
+            organization_id,
+            membership_id.clone(),
+            scope,
+        );
+        state.grants.insert(grant_id.clone(), grant.clone());
+        state
+            .grants_by_membership
+            .entry(membership_id)
+            .or_default()
+            .push(grant_id);
+        Ok(grant)
+    }
+
+    async fn revoke_scope_grant(
+        &self,
+        organization_id: &OrganizationId,
+        grant_id: &ScopeGrantId,
+    ) -> Result<ScopeGrant, TenancyError> {
+        let mut state = self.lock();
+        let grant = state
+            .grants
+            .get_mut(grant_id)
+            .filter(|grant| grant.organization_id == *organization_id)
+            .ok_or(TenancyError::NotFound)?;
+        grant.revoke()?;
+        Ok(grant.clone())
+    }
+
+    async fn scope_grants_for(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Vec<ScopeGrant> {
+        let state = self.lock();
+        let bound = state
+            .memberships
+            .get(membership_id)
+            .is_some_and(|membership| membership.organization_id == *organization_id);
+        if !bound {
+            return Vec::new();
+        }
+        state
+            .grants_by_membership
+            .get(membership_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.grants.get(id).cloned())
             .collect()
     }
 }

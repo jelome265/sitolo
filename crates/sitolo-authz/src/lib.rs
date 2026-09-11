@@ -8,8 +8,10 @@
 #![forbid(unsafe_code)]
 
 mod roles;
+mod scopes;
 
 pub use roles::{
     AssignmentError, Permission, ROLE_DEFINITION_VERSION, Role, RoleAssignment,
     RoleAssignmentState, resolve_permissions,
 };
+pub use scopes::{GrantError, Scope, ScopeGrant, ScopeGrantState, authorize_scope};
