@@ -6,4 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+sitolo-auth = { path = "../sitolo-auth" }
 sitolo-observability = { path = "../sitolo-observability" }
+sitolo-security = { path = "../sitolo-security" }
