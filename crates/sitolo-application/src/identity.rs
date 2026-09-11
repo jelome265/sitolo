@@ -608,8 +608,8 @@ impl IdentityService {
     pub async fn complete_mfa_enrollment(
         &self,
         authenticator_id: &sitolo_auth::MfaAuthenticatorId,
-        now: SystemTime,
     ) -> Result<Vec<String>, sitolo_auth::AuthError> {
+        let now = SystemTime::now();
         let codes = self
             .db
             .complete_mfa_enrollment(authenticator_id, now)
