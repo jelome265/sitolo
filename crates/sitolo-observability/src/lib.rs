@@ -87,7 +87,10 @@ mod tests {
         struct Sink(Arc<Mutex<Vec<u8>>>);
         impl Write for Sink {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend_from_slice(buf);
+                self.0
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .extend_from_slice(buf);
                 Ok(buf.len())
             }
             fn flush(&mut self) -> std::io::Result<()> {
@@ -112,8 +115,13 @@ mod tests {
             assert!(emit_registered("service.starting", &request_id, &operation));
             assert!(!emit_registered("no.such.event", &request_id, &operation));
         });
-        let output = String::from_utf8(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone())
-            .expect("captured JSON is UTF-8");
+        let output = String::from_utf8(
+            sink.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
+        )
+        .expect("captured JSON is UTF-8");
         // Schema version comes from the registry definition, and the
         // bounded operation is the only operation text emitted.
         let expected_version = event("service.starting")
