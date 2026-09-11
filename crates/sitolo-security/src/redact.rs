@@ -198,7 +198,7 @@ fn eol_end(bytes: &[u8], start: usize) -> usize {
 /// Both explicit structured fields and accidental debug formatting are covered
 /// (Phase 3 specification, §40: the difference is architectural, not
 /// stylistic). `name=value`, `name: value`, and `"name":"value"` shapes have
-/// their value replaced with [`REDACTED`]; `Bearer ...` credentials are
+/// their value replaced with `REDACTED`; `Bearer ...` credentials are
 /// likewise replaced.
 pub fn sanitize_authentication_text(input: &str) -> String {
     let bytes = input.as_bytes();
