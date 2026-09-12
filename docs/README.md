@@ -9,6 +9,7 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | [`agent.md`](../agent.md) | Repository-wide engineering governance contract for AI coding agents and contributors |
 | [`ADR-001-025.md`](ADR-001-025.md) | Architecture decision records |
 | [`implementation_plan.md`](implementation_plan.md) | Implementation program overview and sequencing |
+| [`enterprise_audit_and_review.md`](enterprise_audit_and_review.md) | Canonical enterprise architecture, security, reliability, and readiness audit |
 | [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Verified corrections and errata for the design corpus (2026-09-05) |
 
 ## Design corpus
