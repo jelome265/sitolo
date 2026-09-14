@@ -6,6 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+sitolo-application = { path = "../sitolo-application" }
 sitolo-auth = { path = "../sitolo-auth" }
+sitolo-domain = { path = "../sitolo-domain" }
 sitolo-observability = { path = "../sitolo-observability" }
+sitolo-persistence = { path = "../sitolo-persistence" }
 sitolo-security = { path = "../sitolo-security" }
+sitolo-tenancy = { path = "../sitolo-tenancy" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

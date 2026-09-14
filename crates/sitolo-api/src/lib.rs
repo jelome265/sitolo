@@ -7,6 +7,8 @@
 
 mod auth;
 mod error;
+pub mod tenancy;
+
 pub use auth::{
     bounds, establish_context, extract_bearer, map_auth_error, validate_login_input,
     validate_otp_input,

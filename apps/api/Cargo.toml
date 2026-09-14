@@ -18,9 +18,13 @@ name = "sitolo_api_bin"
 path = "src/lib.rs"
 
 [dependencies]
+sitolo-api = { path = "../../crates/sitolo-api" }
+sitolo-application = { path = "../../crates/sitolo-application" }
 sitolo-config.workspace = true
 sitolo-observability.workspace = true
+sitolo-persistence = { path = "../../crates/sitolo-persistence" }
 sitolo-security.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
