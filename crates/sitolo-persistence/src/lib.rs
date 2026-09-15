@@ -7,6 +7,7 @@
 
 mod memory;
 mod ports;
+mod rls;
 mod runtime;
 mod tenancy;
 
@@ -15,6 +16,7 @@ pub use memory::{
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
 };
 pub use ports::IdentityStores;
+pub use rls::{RlsContext, RlsTenancyDatabase, policy as rls_policy};
 pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
