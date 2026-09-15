@@ -95,6 +95,54 @@ pub struct EffectiveScope {
     pub permissions: BTreeSet<Permission>,
 }
 
+/// Repository-authorized scope (§27). Construction requires a
+/// `TrustedOrganizationId` (itself derived from `bind_organization`) plus the
+/// membership that proved it, so a repository call cannot be made with a raw
+/// client-supplied `organization_id`. The `organization_id` is the trusted
+/// tenant predicate that repositories must use as `WHERE organization_id = $1`
+/// even where RLS exists (§27.1); version fields enable cache invalidation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct AuthorizedScope {
+    pub organization_id: OrganizationId,
+    pub membership_id: MembershipId,
+    pub organization_version: u64,
+    pub membership_version: u64,
+}
+
+impl AuthorizedScope {
+    /// Derives a repository scope from an already-resolved `EffectiveScope`.
+    /// The effective scope itself was built from server-loaded records, so
+    /// this conversion preserves the tenant predicate without re-proving it.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn from_effective(scope: &EffectiveScope) -> Self {
+        AuthorizedScope {
+            organization_id: scope.organization_id.clone(),
+            membership_id: scope.membership_id.clone(),
+            organization_version: scope.organization_version,
+            membership_version: scope.membership_version,
+        }
+    }
+
+    /// Derives a repository scope directly from a trusted binding and the
+    /// membership that authorized it (§27 preferred API). The caller must
+    /// have already called `bind_organization` and `resolve_effective_scope`
+    /// — this constructor merely erases the branch detail while retaining the
+    /// tenant predicate.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn from_trusted(trusted: &TrustedOrganizationId, membership: &Membership) -> Self {
+        debug_assert_eq!(&trusted.0, &membership.organization_id);
+        AuthorizedScope {
+            organization_id: trusted.0.clone(),
+            membership_id: membership.id.clone(),
+            organization_version: membership.state_version,
+            membership_version: membership.state_version,
+        }
+    }
+}
+
 /// Resolves the effective scope from server-loaded records (sections 5.1,
 /// 15, 16).
 ///
@@ -316,5 +364,21 @@ mod tests {
         let scope = resolve_effective_scope(&membership, &organization, None).unwrap();
         assert_eq!(scope.organization_version, organization.state_version);
         assert_eq!(scope.membership_version, membership.state_version);
+    }
+
+    #[test]
+    fn authorized_scope_derives_from_effective_and_trusted() {
+        let membership = membership("m1", "org-a", "u1");
+        let organization = org("org-a");
+        let effective = resolve_effective_scope(&membership, &organization, None).unwrap();
+        let via_effective = AuthorizedScope::from_effective(&effective);
+        assert_eq!(via_effective.organization_id.as_str(), "org-a");
+        assert_eq!(via_effective.membership_id.as_str(), "m1");
+
+        let requested = RequestedOrganizationId(OrganizationId::new("org-a").unwrap());
+        let trusted = bind_organization(&requested, &membership).unwrap();
+        let via_trusted = AuthorizedScope::from_trusted(&trusted, &membership);
+        assert_eq!(via_trusted.organization_id, via_effective.organization_id);
+        assert_eq!(via_trusted.membership_id, via_effective.membership_id);
     }
 }

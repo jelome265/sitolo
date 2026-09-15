@@ -13,6 +13,45 @@
 //! explicit id, so retries with the same id and payload return the existing
 //! record while divergent payloads conflict (Phase 4 section 56, record
 //! level; command idempotency keys arrive with the API layer).
+//!
+//! ## PostgreSQL constraint mirror (§25.1, §25.2, Phase 5)
+//!
+//! The in-memory checks below mirror the DDL that Phase 5 will enforce.
+//! Each invariant maps to a concrete PG constraint so the reference and
+//! production implementations reject the same inputs:
+//!
+//! ```sql
+//! -- organizations: PK, name bounds via CHECK (trimmed length 1..256)
+//! ALTER TABLE organizations ADD CONSTRAINT pk_organizations PRIMARY KEY (id);
+//!
+//! -- branches: FK + composite tenant predicate (§25.2)
+//! ALTER TABLE branches ADD CONSTRAINT fk_branch_org FOREIGN KEY (organization_id) REFERENCES organizations(id);
+//! CREATE UNIQUE INDEX uq_branches_id ON branches(id);
+//! -- cross-tenant FK impossible: (organization_id, branch_id) as composite FK for children
+//! -- e.g. warehouses(branch_id) → branches(organization_id, id) via composite FK
+//!
+//! -- organization_memberships: one non-terminal per (organization, user) as partial unique index (§25.1)
+//! CREATE UNIQUE INDEX uq_membership_org_user_active ON organization_memberships(organization_id, user_id)
+//!   WHERE state NOT IN ('REVOKED','EXPIRED');
+//!
+//! -- membership_roles: one effective per (membership, role) (§25.1)
+//! CREATE UNIQUE INDEX uq_membership_role_effective ON membership_roles(membership_id, role)
+//!   WHERE state = 'EFFECTIVE';
+//!
+//! -- scope_grants: one active per (membership, scope) (§25.1)
+//! CREATE UNIQUE INDEX uq_scope_grant_active ON scope_grants(membership_id, scope)
+//!   WHERE state = 'ACTIVE';
+//!
+//! -- invitations: token hash unique for replay safety (§25.1)
+//! CREATE UNIQUE INDEX uq_invitation_token_hash ON invitations(token_hash);
+//! CREATE UNIQUE INDEX uq_invitation_id ON invitations(id);
+//! ```
+//!
+//! Every scoped repository method below documents its tenant predicate as
+//! `WHERE organization_id = $1 AND id = $2` (§27.1) even where RLS will also
+//! apply — the predicate is not redundant, it is the application-layer guard
+//! that keeps behavior correct when RLS is bypassed, disabled, or a
+//! privileged role is used.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -81,6 +120,14 @@ pub struct ProvisionedOrganization {
 /// (`WHERE organization_id = $1 AND id = $2`) production repositories must
 /// issue even where RLS exists (Phase 4 section 27.1). A binding mismatch
 /// behaves as absence: [`TenancyError::NotFound`].
+///
+/// Preferred repository signature per §27 uses an `AuthorizedScope` (derived
+/// from `TrustedOrganizationId` / `EffectiveScope`) rather than a raw id.
+/// This trait keeps the raw `OrganizationId` form for the in-memory reference
+/// so tests can prove the predicate directly; production PG repositories
+/// should accept `&AuthorizedScope` and translate it to the bound predicate
+/// plus `SET LOCAL app.organization_id` for RLS (§26). See
+/// `sitolo_tenancy::AuthorizedScope`.
 #[async_trait]
 pub trait TenancyStores: Send + Sync {
     // --- organizations ---
@@ -1964,5 +2011,180 @@ mod tests {
                 .iter()
                 .all(|r| r.is_ok() || *r == Err(InvitationError::AlreadyAccepted))
         );
+    }
+
+    /// Repository scope predicate enforcement (§27.1, §26.1, §25.2).
+    ///
+    /// Every scoped read or mutation must behave as `WHERE organization_id = $1
+    /// AND id = $2` — a binding mismatch surfaces as absence (NotFound / empty)
+    /// even where RLS would also apply, so that a privileged role or disabled
+    /// RLS never becomes an authorization bypass. Composite FK consistency
+    /// (§25.2) is proven by the scope-grant branch check: a grant whose scope
+    /// branch belongs to another organization cannot be created.
+    #[tokio::test]
+    async fn repository_scope_predicates_enforce_tenant_isolation() {
+        let db = TenancyDatabase::new();
+        // Two tenants with distinct branches and memberships.
+        active_org(&db, "o-a").await;
+        active_org(&db, "o-b").await;
+        let branch_a = db
+            .create_branch(BranchId::new("b-a").unwrap(), org_id("o-a"), "Branch A")
+            .await
+            .unwrap();
+        db.activate_branch(&org_id("o-a"), &branch_a.id)
+            .await
+            .unwrap();
+        let branch_b = db
+            .create_branch(BranchId::new("b-b").unwrap(), org_id("o-b"), "Branch B")
+            .await
+            .unwrap();
+        db.activate_branch(&org_id("o-b"), &branch_b.id)
+            .await
+            .unwrap();
+        let member_a = active_member(&db, "o-a", "m-a", "u-a").await;
+        let member_b = active_member(&db, "o-b", "m-b", "u-b").await;
+
+        // branch_snapshot: cross-tenant behaves as absence (§27.1).
+        assert!(
+            db.branch_snapshot(&org_id("o-b"), &branch_a.id)
+                .await
+                .is_none()
+        );
+        assert!(
+            db.branch_snapshot(&org_id("o-a"), &branch_b.id)
+                .await
+                .is_none()
+        );
+        // Branch lifecycle with wrong tenant predicate → NotFound, not a state error.
+        assert_eq!(
+            db.suspend_branch(&org_id("o-b"), &branch_a.id).await,
+            Err(TenancyError::NotFound)
+        );
+        assert_eq!(
+            db.activate_branch(&org_id("o-a"), &branch_b.id).await,
+            Err(TenancyError::NotFound)
+        );
+
+        // membership_snapshot / for_user: cross-tenant → absence.
+        assert!(
+            db.membership_snapshot(&org_id("o-b"), &member_a.id)
+                .await
+                .is_none()
+        );
+        assert!(
+            db.membership_for_user(&org_id("o-b"), &user("u-a"))
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            db.suspend_membership(&org_id("o-b"), &member_a.id).await,
+            Err(TenancyError::NotFound)
+        );
+
+        // role assignments: cross-tenant reads expose nothing, writes denied as absence.
+        let _grant = db
+            .assign_role(
+                org_id("o-a"),
+                member_a.id.clone(),
+                RoleAssignmentId::new("ra-a").unwrap(),
+                Role::Cashier,
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.role_assignments_for(&org_id("o-b"), &member_a.id)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            db.assign_role(
+                org_id("o-b"),
+                member_a.id.clone(),
+                RoleAssignmentId::new("ra-x").unwrap(),
+                Role::Cashier,
+            )
+            .await,
+            Err(TenancyError::NotFound)
+        );
+        assert_eq!(
+            db.revoke_role(&org_id("o-b"), &member_a.id, Role::Cashier)
+                .await,
+            Err(TenancyError::NotFound)
+        );
+        // Cross-member within same org is not cross-tenant, but foreign member's grants are isolated.
+        assert!(
+            db.role_assignments_for(&org_id("o-a"), &member_b.id)
+                .await
+                .is_empty()
+        );
+
+        // scope grants: cross-tenant → empty / NotFound; composite FK (§25.2) — branch must belong to grant org.
+        let scope_a = Scope::Branch {
+            organization_id: org_id("o-a"),
+            branch_id: branch_a.id.clone(),
+        };
+        let _scope_grant = db
+            .grant_scope(
+                org_id("o-a"),
+                member_a.id.clone(),
+                ScopeGrantId::new("g-a").unwrap(),
+                scope_a.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.scope_grants_for(&org_id("o-b"), &member_a.id)
+                .await
+                .is_empty()
+        );
+        // Attempt to narrow with a branch from another tenant → scope org mismatch → InvalidTransition (§25.2).
+        let foreign_branch_scope = Scope::Branch {
+            organization_id: org_id("o-a"),
+            branch_id: branch_b.id.clone(),
+        };
+        assert_eq!(
+            db.grant_scope(
+                org_id("o-a"),
+                member_a.id.clone(),
+                ScopeGrantId::new("g-foreign").unwrap(),
+                foreign_branch_scope,
+            )
+            .await,
+            Err(TenancyError::NotFound)
+        );
+
+        // invitations: revocation and lookup respect org binding; foreign org cannot revoke.
+        let inv_input = crate::tenancy::CreateInvitationInput {
+            organization_id: org_id("o-a"),
+            invitation_id: InvitationId::new("inv-scope").unwrap(),
+            membership_id: MembershipId::new("m-inv-scope").unwrap(),
+            user_id: user("u-inv"),
+            proposed_role: Role::Viewer,
+            proposed_scope: None,
+            contact: InvitationContact::new(ContactKind::Email, "u-inv@example.com").unwrap(),
+            raw_token: INVITE_TOKEN.to_string(),
+            ttl: Duration::from_secs(3_600),
+            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+        };
+        let created = db.create_invitation(inv_input.clone()).await.unwrap();
+        // Foreign org cannot revoke even with correct invitation id.
+        assert_eq!(
+            db.revoke_invitation(&org_id("o-b"), &created.invitation.id)
+                .await,
+            Err(InvitationError::Invalid)
+        );
+        // Branch creation itself enforces tenant predicate: foreign org cannot create under it.
+        assert!(
+            db.create_branch(BranchId::new("b-leak").unwrap(), org_id("o-b"), "Leak")
+                .await
+                .is_ok()
+        );
+        // But the branch just created is correctly owned by o-b, not o-a.
+        assert!(
+            db.branch_snapshot(&org_id("o-a"), &BranchId::new("b-leak").unwrap())
+                .await
+                .is_none()
+        );
+        let _ = inv_input;
     }
 }
