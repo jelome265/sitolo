@@ -462,6 +462,24 @@ mod tests {
         let raw = r#"{"organization_id":"o1","organization_name":"M","owner_membership_id":"m1","owner_user_id":"u1","default_branch_id":"b1","default_branch_name":"B","extra":"field"}"#;
         let parsed: Result<CreateOrganizationRequest, _> = serde_json::from_str(raw);
         assert!(parsed.is_err(), "unknown field must be rejected (§10.1)");
+
+        let raw_branch = r#"{"branch_id":"b1","name":"Main","extra":"field"}"#;
+        let parsed_branch: Result<CreateBranchRequest, _> = serde_json::from_str(raw_branch);
+        assert!(
+            parsed_branch.is_err(),
+            "branch unknown field must be rejected (§10.1)"
+        );
+    }
+
+    #[test]
+    fn dto_rejects_missing_required_fields() {
+        let raw = r#"{"organization_id":"o1"}"#;
+        let parsed: Result<CreateOrganizationRequest, _> = serde_json::from_str(raw);
+        assert!(parsed.is_err());
+
+        let raw_branch = r#"{"branch_id":"b1"}"#;
+        let parsed_branch: Result<CreateBranchRequest, _> = serde_json::from_str(raw_branch);
+        assert!(parsed_branch.is_err());
     }
 
     #[tokio::test]
@@ -482,6 +500,90 @@ mod tests {
         assert_eq!(
             handle_provision_organization(&service, bad).await,
             Err(AppError::Validation)
+        );
+    }
+
+    #[tokio::test]
+    async fn handlers_execute_successfully_and_map_errors() {
+        use sitolo_application::TenancyService;
+        use sitolo_persistence::TenancyDatabase;
+        use std::sync::Arc;
+
+        let service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new());
+
+        // Provision organization
+        let req = CreateOrganizationRequest {
+            organization_id: "org-100".into(),
+            organization_name: "Test Org".into(),
+            owner_membership_id: "mem-100".into(),
+            owner_user_id: "user-100".into(),
+            default_branch_id: "br-100".into(),
+            default_branch_name: "Default Branch".into(),
+        };
+        let provisioned = handle_provision_organization(&service, req).await.unwrap();
+        assert_eq!(provisioned.organization.id, "org-100");
+        assert_eq!(provisioned.organization.state, "ACTIVE");
+
+        // Create branch under provisioned org
+        let branch_req = CreateBranchRequest {
+            branch_id: "br-101".into(),
+            name: "Second Branch".into(),
+        };
+        let branch_res = handle_create_branch(&service, "org-100", branch_req)
+            .await
+            .unwrap();
+        assert_eq!(branch_res.id, "br-101");
+        assert_eq!(branch_res.organization_id, "org-100");
+
+        // Suspend & Resume organization
+        let suspended = handle_suspend_organization(&service, "org-100")
+            .await
+            .unwrap();
+        assert_eq!(suspended.state, "SUSPENDED");
+        let resumed = handle_resume_organization(&service, "org-100")
+            .await
+            .unwrap();
+        assert_eq!(resumed.state, "ACTIVE");
+
+        // Activate branch
+        let activated_branch = handle_activate_branch(&service, "org-100", "br-101")
+            .await
+            .unwrap();
+        assert_eq!(activated_branch.state, "ACTIVE");
+
+        // Suspend & Resume branch
+        let suspended_branch = handle_suspend_branch(&service, "org-100", "br-101")
+            .await
+            .unwrap();
+        assert_eq!(suspended_branch.state, "SUSPENDED");
+        let resumed_branch = handle_resume_branch(&service, "org-100", "br-101")
+            .await
+            .unwrap();
+        assert_eq!(resumed_branch.state, "ACTIVE");
+
+        // Non-existent organization operations return 404 NotFound
+        assert_eq!(
+            handle_suspend_organization(&service, "org-999").await,
+            Err(AppError::NotFound)
+        );
+        assert_eq!(
+            handle_activate_branch(&service, "org-100", "br-999").await,
+            Err(AppError::NotFound)
+        );
+
+        // Invalid lifecycle transition maps to 409 Conflict
+        let closed_org = handle_begin_close_organization(&service, "org-100")
+            .await
+            .unwrap();
+        assert_eq!(closed_org.state, "CLOSING");
+        let final_closed = handle_close_organization(&service, "org-100")
+            .await
+            .unwrap();
+        assert_eq!(final_closed.state, "CLOSED");
+
+        assert_eq!(
+            handle_suspend_organization(&service, "org-100").await,
+            Err(AppError::Conflict)
         );
     }
 }
