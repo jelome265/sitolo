@@ -124,12 +124,12 @@ pub async fn dispatch_request(
     if method == "POST" {
         let segments: Vec<&str> = path.split('/').collect();
         if segments.len() >= 3 && segments[1] == "v1" && segments[2] == "organizations" {
+            if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
+                return format_error_response(&AppError::Validation);
+            }
             let svc = state.tenancy_service();
             if segments.len() == 3 {
                 // POST /v1/organizations
-                if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
-                    return format_error_response(&AppError::Validation);
-                }
                 let req: Result<CreateOrganizationRequest, _> = serde_json::from_str(body);
                 match req {
                     Ok(parsed) => match handle_provision_organization(svc, parsed).await {
@@ -145,9 +145,6 @@ pub async fn dispatch_request(
                 }
             } else if segments.len() == 5 && segments[4] == "branches" {
                 // POST /v1/organizations/{org_id}/branches
-                if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
-                    return format_error_response(&AppError::Validation);
-                }
                 let org_id = segments[3];
                 let req: Result<CreateBranchRequest, _> = serde_json::from_str(body);
                 match req {
