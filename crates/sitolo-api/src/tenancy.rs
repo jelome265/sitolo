@@ -408,19 +408,101 @@ mod tests {
 
     #[test]
     fn identifier_validation_rejects_hostile_shapes() {
-        assert!(validate_identifier("").is_err());
-        assert!(validate_identifier("has space").is_err());
-        assert!(validate_identifier("inject\r\n").is_err());
-        assert!(validate_identifier(&"x".repeat(129)).is_err());
+        assert!(
+            validate_identifier("").is_err(),
+            "empty identifier must be rejected"
+        );
+        assert!(
+            validate_identifier("has space").is_err(),
+            "whitespace in identifier must be rejected"
+        );
+        assert!(
+            validate_identifier("inject\r\n").is_err(),
+            "CR/LF injection must be rejected"
+        );
+        assert!(
+            validate_identifier(&"x".repeat(129)).is_err(),
+            "identifier length > 128 must be rejected"
+        );
+        assert!(
+            validate_identifier("invalid@char").is_err(),
+            "unsupported identifier char @ must be rejected"
+        );
         assert!(validate_identifier("org_01:branch-2").is_ok());
     }
 
     #[test]
     fn name_validation_rejects_empty_and_oversized() {
-        assert!(validate_name("").is_err());
-        assert!(validate_name("   ").is_err());
-        assert!(validate_name(&"n".repeat(257)).is_err());
+        assert!(validate_name("").is_err(), "empty name must be rejected");
+        assert!(
+            validate_name("   ").is_err(),
+            "whitespace-only name must be rejected"
+        );
+        assert!(
+            validate_name(&"n".repeat(257)).is_err(),
+            "name length > 256 must be rejected"
+        );
         assert!(validate_name("Main Branch").is_ok());
+    }
+
+    #[test]
+    fn branch_input_validation_verifies_all_fields() {
+        let valid_req = CreateBranchRequest {
+            branch_id: "br-001".into(),
+            name: "Downtown".into(),
+        };
+
+        // Invalid organization_id
+        assert_eq!(
+            validate_create_branch_input("invalid org id", &valid_req),
+            Err(AppError::Validation)
+        );
+
+        // Invalid branch_id
+        let bad_branch_id = CreateBranchRequest {
+            branch_id: "br 001".into(),
+            name: "Downtown".into(),
+        };
+        assert_eq!(
+            validate_create_branch_input("org-001", &bad_branch_id),
+            Err(AppError::Validation)
+        );
+
+        // Invalid branch name (whitespace only or oversized)
+        let bad_branch_name = CreateBranchRequest {
+            branch_id: "br-001".into(),
+            name: "   ".into(),
+        };
+        assert_eq!(
+            validate_create_branch_input("org-001", &bad_branch_name),
+            Err(AppError::Validation)
+        );
+
+        let oversized_branch_name = CreateBranchRequest {
+            branch_id: "br-001".into(),
+            name: "n".repeat(257),
+        };
+        assert_eq!(
+            validate_create_branch_input("org-001", &oversized_branch_name),
+            Err(AppError::Validation)
+        );
+    }
+
+    #[tokio::test]
+    async fn create_branch_handler_validates_before_service() {
+        use sitolo_application::TenancyService;
+        use sitolo_persistence::TenancyDatabase;
+        use std::sync::Arc;
+
+        let service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new());
+        let bad = CreateBranchRequest {
+            branch_id: "".into(),
+            name: "Branch".into(),
+        };
+        assert_eq!(
+            handle_create_branch(&service, "org-001", bad).await,
+            Err(AppError::Validation)
+        );
     }
 
     #[test]

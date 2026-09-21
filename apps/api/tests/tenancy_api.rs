@@ -1,8 +1,9 @@
 //! Tenancy HTTP API integration tests (§28 PR-006, Phase 4 contract §14).
 //!
 //! Tests route dispatch, transport validation, error mapping, body limits,
-//! unknown-field rejection, and cross-tenant boundary isolation.
+//! unknown-field rejection, DTO deserialization, and cross-tenant repository scope isolation.
 
+use sitolo_api::{BranchResponse, OrganizationResponse, ProvisionedOrganizationResponse};
 use sitolo_api_bin::bootstrap::StartupContext;
 use sitolo_api_bin::serve::dispatch_request;
 use std::sync::Arc;
@@ -46,10 +47,18 @@ async fn provision_organization_route_success_and_conflict() {
 
     let (status, resp_body) = dispatch_request("POST", "/v1/organizations", body, &state).await;
     assert_eq!(status, "201 Created");
-    assert!(resp_body.contains("\"organization\":{\"id\":\"org-prod-001\""));
-    assert!(resp_body.contains("\"state\":\"ACTIVE\""));
-    assert!(resp_body.contains("\"owner_membership_id\":\"mem-owner-001\""));
-    assert!(resp_body.contains("\"default_branch\":{\"id\":\"br-main-001\""));
+
+    // Deserialize into ProvisionedOrganizationResponse DTO to verify typed response contract
+    let prov_res: ProvisionedOrganizationResponse = serde_json::from_str(&resp_body)
+        .expect("must deserialize into ProvisionedOrganizationResponse");
+    assert_eq!(prov_res.organization.id, "org-prod-001");
+    assert_eq!(prov_res.organization.name, "SME Retail Store");
+    assert_eq!(prov_res.organization.state, "ACTIVE");
+    assert_eq!(prov_res.owner_membership_id, "mem-owner-001");
+    assert_eq!(prov_res.default_branch.id, "br-main-001");
+    assert_eq!(prov_res.default_branch.organization_id, "org-prod-001");
+    assert_eq!(prov_res.default_branch.name, "Main Store Branch");
+    assert_eq!(prov_res.default_branch.state, "ACTIVE");
 
     // Duplicate provisioning with conflicting default branch ID returns 409 Conflict
     let conflicting_body = r#"{
@@ -67,7 +76,7 @@ async fn provision_organization_route_success_and_conflict() {
 }
 
 #[tokio::test]
-async fn branch_creation_and_lifecycle_routes() {
+async fn branch_creation_and_full_lifecycle_routes() {
     let state = test_app_state().await;
 
     // First provision org
@@ -95,8 +104,13 @@ async fn branch_creation_and_lifecycle_routes() {
     )
     .await;
     assert_eq!(b_status, "201 Created");
-    assert!(b_resp.contains("\"id\":\"br-second-bt\""));
-    assert!(b_resp.contains("\"organization_id\":\"org-branch-test\""));
+
+    let branch_created: BranchResponse =
+        serde_json::from_str(&b_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_created.id, "br-second-bt");
+    assert_eq!(branch_created.organization_id, "org-branch-test");
+    assert_eq!(branch_created.name, "Downtown Branch");
+    assert_eq!(branch_created.state, "PROVISIONING");
 
     // Activate second branch
     let (act_status, act_resp) = dispatch_request(
@@ -107,7 +121,9 @@ async fn branch_creation_and_lifecycle_routes() {
     )
     .await;
     assert_eq!(act_status, "200 OK");
-    assert!(act_resp.contains("\"state\":\"ACTIVE\""));
+    let branch_act: BranchResponse =
+        serde_json::from_str(&act_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_act.state, "ACTIVE");
 
     // Suspend second branch
     let (sus_status, sus_resp) = dispatch_request(
@@ -118,7 +134,9 @@ async fn branch_creation_and_lifecycle_routes() {
     )
     .await;
     assert_eq!(sus_status, "200 OK");
-    assert!(sus_resp.contains("\"state\":\"SUSPENDED\""));
+    let branch_sus: BranchResponse =
+        serde_json::from_str(&sus_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_sus.state, "SUSPENDED");
 
     // Resume second branch
     let (res_status, res_resp) = dispatch_request(
@@ -129,11 +147,64 @@ async fn branch_creation_and_lifecycle_routes() {
     )
     .await;
     assert_eq!(res_status, "200 OK");
-    assert!(res_resp.contains("\"state\":\"ACTIVE\""));
+    let branch_res: BranchResponse =
+        serde_json::from_str(&res_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_res.state, "ACTIVE");
+
+    // Begin close second branch
+    let (bc_status, bc_resp) = dispatch_request(
+        "POST",
+        "/v1/organizations/org-branch-test/branches/br-second-bt/begin_close",
+        "",
+        &state,
+    )
+    .await;
+    assert_eq!(bc_status, "200 OK");
+    let branch_bc: BranchResponse =
+        serde_json::from_str(&bc_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_bc.state, "CLOSING");
+
+    // Close second branch
+    let (c_status, c_resp) = dispatch_request(
+        "POST",
+        "/v1/organizations/org-branch-test/branches/br-second-bt/close",
+        "",
+        &state,
+    )
+    .await;
+    assert_eq!(c_status, "200 OK");
+    let branch_c: BranchResponse =
+        serde_json::from_str(&c_resp).expect("must deserialize into BranchResponse");
+    assert_eq!(branch_c.state, "CLOSED");
+
+    // Invalid lifecycle transition on closed branch returns 409 Conflict
+    let (ill_act_status, _) = dispatch_request(
+        "POST",
+        "/v1/organizations/org-branch-test/branches/br-second-bt/activate",
+        "",
+        &state,
+    )
+    .await;
+    assert_eq!(
+        ill_act_status, "409 Conflict",
+        "activating a closed branch must return 409 Conflict"
+    );
+
+    let (ill_sus_status, _) = dispatch_request(
+        "POST",
+        "/v1/organizations/org-branch-test/branches/br-second-bt/suspend",
+        "",
+        &state,
+    )
+    .await;
+    assert_eq!(
+        ill_sus_status, "409 Conflict",
+        "suspending a closed branch must return 409 Conflict"
+    );
 }
 
 #[tokio::test]
-async fn organization_lifecycle_routes() {
+async fn organization_full_lifecycle_routes() {
     let state = test_app_state().await;
 
     let prov_body = r#"{
@@ -147,19 +218,36 @@ async fn organization_lifecycle_routes() {
     let (status, _) = dispatch_request("POST", "/v1/organizations", prov_body, &state).await;
     assert_eq!(status, "201 Created");
 
-    // Suspend org
+    // Calling activate on an already active org returns 409 Conflict
+    let (act_status, _) =
+        dispatch_request("POST", "/v1/organizations/org-lc-test/activate", "", &state).await;
+    assert_eq!(
+        act_status, "409 Conflict",
+        "activating an already ACTIVE org must return 409 Conflict"
+    );
+
+    // Calling activate on non-existent org returns 404 Not Found
+    let (act_missing_status, _) =
+        dispatch_request("POST", "/v1/organizations/org-missing/activate", "", &state).await;
+    assert_eq!(act_missing_status, "404 Not Found");
+
+    // Suspend org (ACTIVE -> SUSPENDED)
     let (s_status, s_resp) =
         dispatch_request("POST", "/v1/organizations/org-lc-test/suspend", "", &state).await;
     assert_eq!(s_status, "200 OK");
-    assert!(s_resp.contains("\"state\":\"SUSPENDED\""));
+    let org_sus: OrganizationResponse =
+        serde_json::from_str(&s_resp).expect("must deserialize into OrganizationResponse");
+    assert_eq!(org_sus.state, "SUSPENDED");
 
-    // Resume org
+    // Resume org (SUSPENDED -> ACTIVE)
     let (r_status, r_resp) =
         dispatch_request("POST", "/v1/organizations/org-lc-test/resume", "", &state).await;
     assert_eq!(r_status, "200 OK");
-    assert!(r_resp.contains("\"state\":\"ACTIVE\""));
+    let org_res: OrganizationResponse =
+        serde_json::from_str(&r_resp).expect("must deserialize into OrganizationResponse");
+    assert_eq!(org_res.state, "ACTIVE");
 
-    // Begin close org
+    // Begin close org (ACTIVE -> CLOSING)
     let (bc_status, bc_resp) = dispatch_request(
         "POST",
         "/v1/organizations/org-lc-test/begin_close",
@@ -168,13 +256,17 @@ async fn organization_lifecycle_routes() {
     )
     .await;
     assert_eq!(bc_status, "200 OK");
-    assert!(bc_resp.contains("\"state\":\"CLOSING\""));
+    let org_bc: OrganizationResponse =
+        serde_json::from_str(&bc_resp).expect("must deserialize into OrganizationResponse");
+    assert_eq!(org_bc.state, "CLOSING");
 
-    // Close org
+    // Close org (CLOSING -> CLOSED)
     let (c_status, c_resp) =
         dispatch_request("POST", "/v1/organizations/org-lc-test/close", "", &state).await;
     assert_eq!(c_status, "200 OK");
-    assert!(c_resp.contains("\"state\":\"CLOSED\""));
+    let org_c: OrganizationResponse =
+        serde_json::from_str(&c_resp).expect("must deserialize into OrganizationResponse");
+    assert_eq!(org_c.state, "CLOSED");
 
     // Illegal state transition on closed org returns 409 Conflict
     let (ill_status, _) =
@@ -256,11 +348,24 @@ async fn rejects_unknown_routes_and_actions() {
     assert_eq!(status_b, "404 Not Found");
 }
 
+/// Demonstrates and verifies server-side organization/branch repository ownership
+/// binding (scope enforcement: `WHERE organization_id = $1 AND id = $2`).
+///
+/// **What this test proves:**
+/// A client supplying Organization A in the URL path selector (`/v1/organizations/org-tenant-a/...`)
+/// and Branch B (`br-b1`, which belongs to Organization B) cannot mutate Branch B. The repository
+/// scope predicate rejects the cross-tenant mismatch as absent, returning a generic `404 Not Found`.
+/// This prevents cross-tenant existence disclosure or cross-tenant mutation.
+///
+/// **What this test DOES NOT claim:**
+/// This test verifies tenant repository scope enforcement at the transport/repository boundary. It
+/// does NOT simulate full authenticated-principal authorization (which belongs to authentication
+/// middleware introduced in later phases). No fake auth middleware is invented in Part 6.
 #[tokio::test]
-async fn cross_tenant_branch_isolation_denied() {
+async fn cross_tenant_branch_repository_ownership_isolation_denied() {
     let state = test_app_state().await;
 
-    // Provision Org A
+    // Provision Tenant A
     let org_a_body = r#"{
         "organization_id": "org-tenant-a",
         "organization_name": "Tenant A",
@@ -272,7 +377,7 @@ async fn cross_tenant_branch_isolation_denied() {
     let (status_a, _) = dispatch_request("POST", "/v1/organizations", org_a_body, &state).await;
     assert_eq!(status_a, "201 Created");
 
-    // Provision Org B
+    // Provision Tenant B
     let org_b_body = r#"{
         "organization_id": "org-tenant-b",
         "organization_name": "Tenant B",
@@ -284,7 +389,7 @@ async fn cross_tenant_branch_isolation_denied() {
     let (status_b, _) = dispatch_request("POST", "/v1/organizations", org_b_body, &state).await;
     assert_eq!(status_b, "201 Created");
 
-    // Org A attempts to activate Org B's branch -> 404 Not Found (denied without existence disclosure)
+    // Org A selector + Org B's branch -> 404 Not Found (denied without existence disclosure)
     let (cross_status, _) = dispatch_request(
         "POST",
         "/v1/organizations/org-tenant-a/branches/br-b1/activate",
@@ -292,9 +397,11 @@ async fn cross_tenant_branch_isolation_denied() {
         &state,
     )
     .await;
-    assert_eq!(cross_status, "404 Not Found");
+    assert_eq!(
+        cross_status, "404 Not Found",
+        "cross-tenant branch activation must be denied with 404"
+    );
 
-    // Org A attempts to suspend Org B's branch -> 404 Not Found
     let (cross_suspend, _) = dispatch_request(
         "POST",
         "/v1/organizations/org-tenant-a/branches/br-b1/suspend",
@@ -302,5 +409,20 @@ async fn cross_tenant_branch_isolation_denied() {
         &state,
     )
     .await;
-    assert_eq!(cross_suspend, "404 Not Found");
+    assert_eq!(
+        cross_suspend, "404 Not Found",
+        "cross-tenant branch suspension must be denied with 404"
+    );
+
+    let (cross_close, _) = dispatch_request(
+        "POST",
+        "/v1/organizations/org-tenant-a/branches/br-b1/close",
+        "",
+        &state,
+    )
+    .await;
+    assert_eq!(
+        cross_close, "404 Not Found",
+        "cross-tenant branch close must be denied with 404"
+    );
 }
