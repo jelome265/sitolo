@@ -8,7 +8,8 @@
 **Primary clients:** Mobile application + desktop application; web is a supporting acquisition/administration surface, not the primary operating product
 
 **Document status:** Enterprise business-model target; release scope is staged; all commercial assumptions remain hypotheses until validated
-**Commercial validation:** operationalized by [Commercial Validation Plan](commercial_validation_plan.md); no ICP, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
+**Commercial validation:** operationalized by [Commercial Validation Plan](commercial_validation_plan.md); no segment, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
+**Segment strategy:** formalized in [Universal Segment Strategy, Duka Economics & Market Coverage Doctrine](segment_strategy_and_duka_economics.md); product scope remains Duka-to-enterprise while commercial learning remains segment-aware.
 
 **Prepared:** 2026-09-03
 
@@ -209,19 +210,65 @@ Commercial implication:
 
 ---
 
+
 # 4. Core Commercial Thesis
 
-The commercial thesis is deliberately two-layered.
+Sitolo has **universal product-market scope** with **segmented commercial execution**.
 
 **Category:**
 
 > **Business Operating System for African SMEs.**
 
-**Initial commercial wedge:**
+**Long-term product scope:**
 
-> **Inventory-heavy small and growing retailers that need reliable sales, stock, cash, and payment reconciliation across mobile-first/offline workflows.**
+~~~text
+DUKA
+  ↓
+MICRO / SMALL RETAIL
+  ↓
+GROWING SME
+  ↓
+SPECIALIST SME
+  ↓
+MULTI-BRANCH
+  ↓
+ENTERPRISE
+~~~
 
-The category remains broad because the platform is designed for progressive expansion. The initial go-to-market must remain narrow enough to measure:
+This scope is intentional. Sitolo does not need to choose between Dukas and large shops.
+
+The commercial discipline is to avoid confusing broad product scope with broad unmeasured go-to-market activity.
+
+The operating model is:
+
+~~~text
+ONE PLATFORM
++
+BUSINESS-TYPE CONFIGURATION
++
+PLAN ENTITLEMENTS
++
+PROGRESSIVE DISCLOSURE
++
+SEGMENT-SPECIFIC GTM
++
+SEGMENT-SPECIFIC ECONOMICS
++
+SEGMENT-AWARE VALIDATION
+~~~
+
+A Duka, a growing retailer, a pharmacy, a wholesaler and an enterprise group can use the same underlying business operating system while receiving different:
+
+- default workflows;
+- pricing;
+- feature exposure;
+- user/device/branch limits;
+- support;
+- onboarding;
+- acquisition motion;
+- implementation services.
+
+The commercial learning sequence remains:
 
 ~~~text
 CUSTOMER PAIN
@@ -236,75 +283,54 @@ POSITIVE CONTRIBUTION
     ↓
 REPEATABLE ACQUISITION
     ↓
-EXPANSION
+EXPANSION WHERE APPLICABLE
 ~~~
 
-The merchant may enter through fast sales and stock visibility, but Sitolo's intended economic depth is:
+The crucial distinction is:
 
-~~~text
-FAST SALES
-+
-TRUSTED STOCK
-+
-PAYMENT CONTROL
-+
-RECONCILIATION
-+
-CASH CONTROL
-+
-MANAGEMENT VISIBILITY
-+
-BRANCH / USER GOVERNANCE
-~~~
+> **A narrow validation cohort is not a narrow product scope.**
 
-The flywheel is:
-
-~~~text
-LOW FRICTION
-    ↓
-ACTIVATION
-    ↓
-DAILY OPERATIONAL USE
-    ↓
-TRUSTED BUSINESS RECORD
-    ↓
-RETENTION
-    ↓
-EXPANSION
-    ↓
-RECURRING REVENUE
-    ↓
-BETTER PRODUCT
-    ↓
-LOWER FRICTION
-~~~
-
-No stage is considered proven merely because the next stage is technically possible. Customer evidence must demonstrate movement through the sequence.
+The previous inventory-heavy small-and-growing-retail concept remains a valid **current learning cohort** where useful, but it must not be represented as the permanent market boundary.
 
 ---
 
 # 5. The Category
 
-## 5.0 Category vs Commercial Beachhead
+## 5.0 Category vs Commercial Focus
 
-The category is intentionally broader than the initial customer-acquisition target.
+The category remains deliberately broad.
+
+The current validation program may concentrate on a defined segment or operating problem at any given time, but that concentration is an experiment-management mechanism rather than a permanent exclusion rule.
 
 ~~~text
-CATEGORY
+PRODUCT SCOPE
 Business Operating System for African SMEs
 
-INITIAL BEACHHEAD
-Inventory-heavy small and growing retail
+COMMERCIAL LEARNING
+Segment-specific cohorts
+
+GTM
+Segment-specific acquisition
+
+PACKAGING
+Complexity-specific entitlements
 
 EXPANSION
-Duka / pharmacy / agro-dealer / wholesale
-        ↓
-Multi-branch
-        ↓
-Enterprise
+Evidence-based progression
 ~~~
 
-This separation prevents the platform roadmap from forcing the sales motion to address every segment simultaneously.
+This model allows Sitolo to serve:
+
+- Dukas;
+- micro and small retailers;
+- growing SMEs;
+- pharmacies;
+- agro-dealers;
+- wholesalers;
+- multi-branch operators;
+- enterprise organizations.
+
+The platform should not become eight unrelated products.
 
 ## 5.1 Public category
 
@@ -327,9 +353,7 @@ Sitolo is not positioned as:
 - an insurer;
 - a generic e-commerce marketplace.
 
-Future connections to financial services can exist without changing the core category.
-
----
+Future financial and regulatory integrations can exist without changing the core category.
 
 # 6. Jobs-to-be-Done
 
@@ -623,6 +647,8 @@ This prevents product fragmentation and enables natural expansion.
 
 # 15. Duka Segment
 
+The Duka segment is a first-class part of Sitolo's addressable market and has a dedicated economic doctrine documented in [Universal Segment Strategy, Duka Economics & Market Coverage Doctrine](segment_strategy_and_duka_economics.md).
+
 Primary needs:
 
 - fast selling;
@@ -630,20 +656,25 @@ Primary needs:
 - stock visibility;
 - cash tracking;
 - mobile-money recording;
-- low learning curve.
+- low learning curve;
+- a simple understanding of what sold, what remains, what should have been collected, and what the business approximately earned from inventory sales.
 
 Commercial position:
 
-- low entry price;
-- low-touch acquisition;
-- high potential volume;
-- careful support economics.
+- low entry price hypothesis;
+- low-CAC acquisition;
+- self-service-first onboarding;
+- low-cost support;
+- high potential account volume;
+- careful contribution economics.
 
-Key risk:
+The Duka is not a reduced-security customer. Tenant isolation, authorization, auditability, financial correctness, data integrity and safe synchronization remain universal requirements.
 
-ARPU may be too low for high-touch support.
+Key economic risk:
 
----
+> ARPU may be too low for high-touch onboarding or support.
+
+Therefore the Duka model must be designed around low cost-to-serve rather than merely low price.
 
 # 16. Small Retail Segment
 
