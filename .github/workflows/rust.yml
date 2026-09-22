@@ -32,7 +32,7 @@ jobs:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: sitolo_test
         ports:
           - 5432:5432
@@ -48,4 +48,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Run canonical verification
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
+          RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
         run: ./scripts/ci/verify

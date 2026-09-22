@@ -14,7 +14,7 @@ This document serves as the authoritative, immutable evidence record for the man
 
 | Category | Issue Identified | Remediation Applied | Status |
 | :--- | :--- | :--- | :--- |
-| **Credential Hardcoding** | Reusable database passwords and URL string replacements in source | Eliminated URL replacements; added support for injected environment variables (`ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, `APP_RUNTIME_PASSWORD`) with structured `PgConnectOptions`. | **RESOLVED** |
+| **Credential Hardcoding** | Reusable database passwords and URL string replacements in source | Eliminated URL replacements; added support for injected environment variables (`ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, `APP_RUNTIME_PASSWORD`) with structured `PgConnectOptions`. Workflow YAML updated to use `POSTGRES_HOST_AUTH_METHOD: trust`. | **RESOLVED** |
 | **Deterministic Teardown** | Lack of isolated schema cleanup on test failure | Implemented RAII `SchemaGuard` with `DROP SCHEMA ... CASCADE` on Drop for test-isolated schemas (`test_schema_<uuid>`). | **RESOLVED** |
 | **Catalog Policy Metadata** | Simple substring check on policy text | Catalog verification asserts exact `pg_policy` metadata (`polcmd = '*'`), `polroles`, `USING`, and `WITH CHECK` expressions referencing `app.organization_id`. | **RESOLVED** |
 | **Privilege Allowlist** | Role attributes check without privilege allowlist or inheritance proof | Checked `pg_auth_members` for zero role inheritance, explicit CONNECT, USAGE, SELECT, INSERT, UPDATE, DELETE grants, and verified absence of administrative privileges. | **RESOLVED** |
