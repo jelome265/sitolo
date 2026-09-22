@@ -55,7 +55,8 @@ Start with these documents:
 
 - [Implementation plan](docs/implementation_plan.md) — phase sequencing and non-negotiable engineering rules.
 - [Business model](docs/business_model_design.md) — product scope, customers, value, and commercial constraints.
-- [Commercial validation plan](docs/commercial_validation_plan.md) — 12 concrete experiments, pricing tests, CAC economics, and PMF gates.
+- [Commercial validation plan](docs/commercial_validation_plan.md) — 12 concrete experiments, pricing tests, CAC economics, segment-aware PMF gates, and validation rules.
+- [Universal segment strategy](docs/segment_strategy_and_duka_economics.md) — Duka-to-enterprise market coverage, Duka economics, packaging, progressive complexity, acquisition, support, and segment-level commercial doctrine.
 - [System architecture](docs/system_architecture_design.md) — runtime, module, trust, and operational boundaries.
 - [Domain model](docs/domain_model.md) — business semantics and invariants.
 - [Security implementation specification](docs/security_implementation_spec.md) and [threat model](docs/threat_model.md) — security controls and threats.
@@ -79,20 +80,29 @@ The PostgreSQL integration-test harness remains explicitly deferred where stated
 
 ## Commercial direction
 
-Sitolo's category remains **Business Operating System for African SMEs**, while the initial commercial wedge is **inventory-heavy small and growing retail** where sales, stock, cash, payment, and reconciliation problems can be measured directly.
+Sitolo's category is **Business Operating System for African SMEs** and the product-market scope intentionally spans **Duka through enterprise**. Commercial experiments use segment-specific learning cohorts rather than permanently narrowing the product to one customer class.
 
 The commercial progression is:
 
 ~~~text
+DUKA / MICRO RETAIL
+        ↓
+GROWING SME
+        ↓
+MULTI-BRANCH / SPECIALIST
+        ↓
+ENTERPRISE
+
+Across every segment:
 SELL
 → STOCK
 → CASH / PAYMENTS
 → RECONCILIATION
 → CONTROL
-→ BRANCH / ENTERPRISE
+→ REPORT / DECIDE
 ~~~
 
-The repository intentionally separates enterprise-capable architecture from unvalidated commercial assumptions. Pricing, channels, retention, and PMF are measured through controlled experiments rather than treated as settled facts.
+The repository intentionally separates enterprise-capable architecture from unvalidated commercial assumptions. Pricing, channels, retention, PMF, Duka economics, and support economics are measured through segment-aware controlled experiments rather than treated as settled facts.
 
 ## Local verification
 
