@@ -55,6 +55,7 @@ Start with these documents:
 
 - [Implementation plan](docs/implementation_plan.md) — phase sequencing and non-negotiable engineering rules.
 - [Business model](docs/business_model_design.md) — product scope, customers, value, and commercial constraints.
+- [Commercial validation plan](docs/commercial_validation_plan.md) — 12 concrete experiments, pricing tests, CAC economics, and PMF gates.
 - [System architecture](docs/system_architecture_design.md) — runtime, module, trust, and operational boundaries.
 - [Domain model](docs/domain_model.md) — business semantics and invariants.
 - [Security implementation specification](docs/security_implementation_spec.md) and [threat model](docs/threat_model.md) — security controls and threats.
@@ -62,12 +63,36 @@ Start with these documents:
 
 ## Delivery status
 
-The repository currently has the Phase 1 engineering substrate and Phase 2 runtime foundation:
+The repository has progressed beyond the initial engineering substrate into the tenancy and authorization foundation.
 
-- pinned Rust workspace, locked dependency graph, CI/security policy, artifact identity, SBOM, provenance, and protected release-promotion verification;
-- typed configuration and secret boundaries, safe error mapping, structured telemetry contracts, and operational runbooks.
+Current main-branch status includes:
 
-The PostgreSQL integration-test harness is explicitly deferred. The next planned product foundations are identity, sessions, MFA, device identity, tenant/organization/branch scope, IAM, PostgreSQL schema/RLS, and authorization enforcement, as defined by the phase documents.
+- Phase 1 repository/Rust/CI/supply-chain foundation;
+- Phase 2 configuration, secrets, errors, telemetry, and runtime foundation;
+- Phase 3 identity/session/MFA/device-identity foundation;
+- Phase 4 organization/branch APIs and repository-scope enforcement;
+- the current Phase 4 RLS implementation contract.
+
+Commercially, the product remains **pre-validation**. The business model is an enterprise target model and its pricing, ICP, channel, retention, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial_validation_plan.md).
+
+The PostgreSQL integration-test harness remains explicitly deferred where stated by the phase documentation. Product implementation must continue to follow the applicable phase contracts and security architecture.
+
+## Commercial direction
+
+Sitolo's category remains **Business Operating System for African SMEs**, while the initial commercial wedge is **inventory-heavy small and growing retail** where sales, stock, cash, payment, and reconciliation problems can be measured directly.
+
+The commercial progression is:
+
+~~~text
+SELL
+→ STOCK
+→ CASH / PAYMENTS
+→ RECONCILIATION
+→ CONTROL
+→ BRANCH / ENTERPRISE
+~~~
+
+The repository intentionally separates enterprise-capable architecture from unvalidated commercial assumptions. Pricing, channels, retention, and PMF are measured through controlled experiments rather than treated as settled facts.
 
 ## Local verification
 
