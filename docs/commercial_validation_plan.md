@@ -7,19 +7,49 @@
 
 ---
 
+
 # 0. Executive Decision
 
-Sitolo's business model is strategically broad but its initial commercial motion must be narrow, measurable, and falsifiable.
+Sitolo has broad product-market scope with segmented commercial execution.
 
-The long-term category remains:
+The long-term category is:
 
 > **Business Operating System for African SMEs**
 
-The initial commercial wedge is:
+The addressable product scope is:
 
-> **Inventory-heavy small and growing retailers that need reliable sales, stock, cash, and payment reconciliation across mobile-first/offline workflows.**
+~~~text
+DUKA
+  ↓
+MICRO / SMALL RETAIL
+  ↓
+GROWING SME
+  ↓
+SPECIALIST SME
+  ↓
+MULTI-BRANCH
+  ↓
+ENTERPRISE
+~~~
 
-The validation program exists to determine whether that wedge can produce:
+The validation program must **not** turn one experimental cohort into a permanent product restriction.
+
+The correct distinction is:
+
+| Dimension | Commercial rule |
+|---|---|
+| Product scope | Duka through enterprise |
+| Validation cohort | Narrow enough to measure and falsify a hypothesis |
+| GTM motion | Different by segment |
+| Packaging | Different by operational complexity |
+| Support | Different by cost-to-serve |
+| Pricing | Experimental and segment-aware |
+| Product architecture | One shared platform |
+| Security/reliability | Universal baseline |
+
+The previous inventory-heavy small-and-growing-retail focus remains a valid current learning cohort for experiments where that population is the correct test population. It is not the permanent Sitolo ICP and must not be documented as a product exclusion.
+
+The validation program exists to determine, separately and honestly, whether each commercially material segment can produce:
 
 ~~~text
 REAL CUSTOMER PAIN
@@ -34,30 +64,26 @@ POSITIVE CONTRIBUTION
         ↓
 REPEATABLE ACQUISITION
         ↓
-PRODUCT-MARKET-FIT EVIDENCE
+EXPANSION WHERE APPLICABLE
 ~~~
 
-The program must not treat registrations, downloads, demo attendance, app opens, free accounts, unqualified leads, or optimistic interviews as proof of commercial success.
+A merchant account is commercially meaningful when it produces real business activity and repeatedly demonstrates value. Registrations, downloads, free accounts, demos, page views and optimistic interviews are not sufficient.
 
-The unit of commercial truth is a merchant account that repeatedly uses Sitolo for real business activity and produces measurable economic value.
+This plan therefore measures:
 
-The validation program therefore turns the existing 12 commercial experiments into a controlled system with:
+- operational pain;
+- activation;
+- retention;
+- payment;
+- reconciliation value;
+- pricing;
+- CAC;
+- support cost;
+- contribution;
+- expansion;
+- segment-specific PMF.
 
-- explicit hypotheses;
-- defined target populations;
-- sample-size minimums;
-- experimental cells;
-- instrumentation;
-- CAC accounting;
-- primary and secondary metrics;
-- pass / conditional / fail thresholds;
-- stop rules;
-- PMF gates;
-- evidence-retention requirements.
-
-The thresholds in this document are **internal validation gates and operating hypotheses, not industry benchmarks or forecasts**. They may be revised only through a documented commercial decision.
-
----
+The thresholds in this plan remain **internal validation gates and operating hypotheses, not industry benchmarks, forecasts, or universal standards**.
 
 # 1. Authority and Relationship to the Business Model
 
@@ -113,7 +139,7 @@ It is:
 
 MRA currently provides its own computer, mobile, and web EIS POS solutions free to taxpayers, while third-party POS systems require certification. EIS capability can create eligibility and convenience value, but EIS alone must not be treated as the core economic moat.
 
-Current public competitor pricing is a market signal rather than a Sitolo pricing prescription. Phindu currently advertises a 14-day trial and a general-retail starting price of MWK 65,000/month. MalondaPlus currently advertises MWK 75,000/month for Starter, MWK 130,000/month for Business, and MWK 180,000/month for Enterprise. These are public vendor prices and must not be presented as independent evidence of market share, willingness to pay, or superior product value.
+Current public competitor pricing is a market signal rather than a Sitolo pricing prescription. Phindu currently advertises a 14-day trial and a general-retail starting price of MWK 65,000/month. MalondaPlus currently advertises public monthly tiers of MWK 25,000, MWK 45,000, MWK 90,000, and MWK 130,000. GulaSync currently advertises MWK 20,000/month Starter, MWK 35,000/month Business, and MWK 75,000/month Enterprise. These are public vendor prices and must not be presented as independent evidence of market share, willingness to pay, or superior product value.
 
 Sitolo's validation program therefore concentrates on:
 
@@ -129,69 +155,139 @@ Sitolo's validation program therefore concentrates on:
 
 ---
 
-# 3. Initial Ideal Customer Profile
 
-## 3.1 Primary ICP
+# 3. Current Validation Cohorts and Universal Market Scope
 
-The primary commercial ICP for initial validation is:
+## 3.1 Product scope
+
+Sitolo remains commercially designed to serve:
+
+- duka / ultra-micro retail;
+- micro and small retail;
+- growing SMEs;
+- pharmacies;
+- agro-dealers;
+- wholesalers;
+- multi-branch operators;
+- enterprise organizations.
+
+Product breadth is intentionally separated from experiment breadth.
+
+## 3.2 Current primary validation cohort
+
+For experiments that require a concentrated cohort, the current primary learning cohort is:
 
 ~~~text
 Business type:
   General retail / inventory-heavy SME
 
-Operational scale:
-  approximately 1–5 locations
-  approximately 2–30 operational users/devices
+Typical scale:
+  1–5 locations
+  2–30 operational users/devices
 
 Operational characteristics:
-  meaningful daily sales volume
-  material stock management requirements
+  meaningful daily sales
+  material stock
+  purchasing activity
   cash and/or mobile-money payments
-  recurring inventory purchasing
-  owner/manager actively involved in control
+  owner/manager involvement
 
 Current systems:
   paper
   spreadsheets
   basic POS
-  disconnected mobile-money records
+  disconnected payment records
   mixed/manual workflows
 
 Pain:
   stock uncertainty
   cash variance
   payment mismatch
-  weak staff control
+  staff-control gaps
   difficult reporting
-  repetitive reconciliation
+  reconciliation effort
 ~~~
 
-This profile is deliberately narrower than the long-term category.
+This is a **current validation cohort**, not a permanent product boundary.
 
-## 3.2 Secondary validation cohorts
+## 3.3 Duka validation cohort
 
-Additional cohorts may be tested once the primary ICP produces baseline evidence:
+Dukas are explicitly in commercial scope.
 
-- duka / micro retail;
-- pharmacy;
-- agro-dealer;
-- wholesale;
-- multi-branch retail.
+A Duka cohort should be tested separately where price, support, onboarding, mobile-only operation, or daily value are materially different.
 
-Secondary cohorts must not contaminate the primary cohort analysis.
+Candidate Duka characteristics:
 
-Every cohort must preserve:
+- one location;
+- one or very few users;
+- one primary device;
+- small catalogue;
+- frequent small-value transactions;
+- cash and/or mobile money;
+- manual or memory-driven records;
+- high price sensitivity.
 
-- segment;
-- business size;
-- branch count;
-- acquisition source;
-- plan;
-- price;
-- onboarding path;
-- product usage depth.
+Candidate Duka questions:
 
----
+- Will the merchant pay a low recurring price?
+- Does Sitolo actually replace or augment manual records?
+- Does the daily business summary create a repeat habit?
+- Does mobile-only operation work?
+- Can acquisition be low-cost?
+- Can support remain low-cost?
+- Does the segment generate positive contribution?
+
+## 3.4 Growing-SME validation cohort
+
+Use a separate cohort when testing:
+
+- multiple users;
+- purchasing;
+- reconciliation;
+- desktop value;
+- deeper reporting;
+- branch expansion;
+- accountant/distributor channels.
+
+## 3.5 Enterprise validation cohort
+
+Use a separately qualified cohort for:
+
+- enterprise sales;
+- implementation;
+- procurement;
+- integrations;
+- security review;
+- SLA;
+- governance.
+
+Enterprise evidence must not dominate blended commercial metrics simply because individual contracts are larger.
+
+## 3.6 Specialist cohorts
+
+Pharmacy, agro-dealer, wholesale and other specialist segments can be tested when the specialized workflow is sufficiently implemented to produce meaningful evidence.
+
+## 3.7 Segment dimensions
+
+Every experiment must preserve:
+
+~~~text
+segment
+business_type
+size_band
+branch_count
+user_count
+device_count
+price
+plan
+channel
+onboarding_variant
+workflow_depth
+product_version
+~~~
+
+This allows Sitolo to answer segment-specific questions without contaminating evidence.
+
 
 # 4. Definitions
 
@@ -477,7 +573,21 @@ A controlled time-limited trial will produce better paid conversion and a health
 
 ## Population
 
-Qualified primary-ICP merchants who have not previously used Sitolo.
+Qualified merchants from a defined validation cohort who have not previously used Sitolo.
+
+The default experiment lane may use the current general-retail validation cohort, but Duka accounts must be analysed separately whenever pricing, support, onboarding, device requirements, or value proposition materially differ.
+
+The experiment must preserve:
+
+~~~text
+SEGMENT
+BUSINESS TYPE
+SIZE BAND
+CHANNEL
+DEVICE MIX
+PRICE
+PLAN
+~~~
 
 ## Minimum sample
 
@@ -562,15 +672,15 @@ ABANDON TRIAL
 
 ## Objective
 
-Determine the price region at which the primary ICP still converts while producing acceptable contribution.
+Determine the price region at which the primary validation cohort still converts while producing acceptable contribution.
 
 ## Hypothesis
 
-The primary ICP can support a price above the low-end adoption hypothesis when the product clearly includes operational control and reconciliation value.
+The primary validation cohort can support a price above the low-end adoption hypothesis when the product clearly includes operational control and reconciliation value.
 
 ## Test structure
 
-Use three transparent price cells for substantially equivalent core capability:
+The standard core-price experiment remains:
 
 ~~~text
 P1 = MWK 35,000/month
@@ -580,7 +690,51 @@ P3 = MWK 75,000/month
 
 These are test prices only, not approved final prices.
 
-They are intentionally designed to examine demand below, around, and above the public market anchor observed in current Malawi vendor pricing.
+They test demand for the growing-SME/core operating package. They must **not** be reused as a universal price for Dukas, Multi-Branch accounts, or Enterprise.
+
+### Duka price lane
+
+Duka requires a distinct low-price experiment because the unit economics and hardware assumptions are materially different.
+
+Initial Duka planning hypothesis:
+
+~~~text
+Duka reference price = MK7,500/month
+~~~
+
+This is not a final tariff.
+
+The Duka experiment must test a narrow set of low-price offers around the reference point and must measure:
+
+~~~text
+PAID CONVERSION
++
+DAY-30 / DAY-90 RETENTION
++
+CAC
++
+SUPPORT COST
++
+INFRASTRUCTURE COST
++
+CONTRIBUTION
+~~~
+
+A Duka price should never be selected solely because it maximizes conversion.
+
+### Tier architecture reference
+
+The current planning tier structure is:
+
+| Tier | Indicative price | Main device model |
+|---|---:|---|
+| Duka | MK7,500/month | Mobile only |
+| SME | MK25,000/month | Mobile + PC |
+| Growth | MK50,000/month | Mobile + PC |
+| Multi-Branch | From MK90,000/month | Mobile branches + PC HQ |
+| Enterprise | From MK200,000/month | Mobile operations + PC/Web control |
+
+All five values are planning hypotheses. The commercial program must validate them individually or through appropriately designed price/packaging experiments.
 
 ## Minimum sample
 
@@ -1560,7 +1714,7 @@ Interview evidence is qualitative and cannot replace paid behaviour.
 
 ## Gate 2 — Activation
 
-Primary ICP target:
+Primary Validation Cohort target:
 
 ~~~text
 ≥ 40% Day-7 activation
@@ -1712,7 +1866,7 @@ show a paid expansion event within 12 months
 
 # 24. PMF Candidate Definition
 
-Sitolo may use the internal label **PMF Candidate** only when all of the following hold for the primary ICP:
+Sitolo may use the internal label **PMF Candidate** only when all of the following hold for the primary validation cohort:
 
 ~~~text
 [ ] Gate 0 instrumentation complete
@@ -1732,29 +1886,76 @@ The designation remains provisional until the cohort is large and stable enough 
 
 ---
 
+
 # 25. PMF Is Segment-Specific
 
-Do not declare:
+Do not use one blended PMF label that hides divergent economics.
 
-> “Sitolo has PMF.”
+The existing PMF gate framework remains useful, but PMF evidence must be evaluated by segment.
 
-Prefer:
+## 25.1 Duka PMF Candidate
 
-> “Sitolo has PMF candidate evidence for [defined segment] under [defined market conditions].”
-
-Example:
+A Duka PMF candidate requires evidence across:
 
 ~~~text
-General retail
-1–5 branches
-Lilongwe + selected urban areas
-2–30 users/devices
-inventory + mobile money
+FAST ACTIVATION
++
+REPEATED REAL-BUSINESS USE
++
+ACCEPTABLE DAY-30 / DAY-90 RETENTION
++
+LOW CAC
++
+LOW SUPPORT COST
++
+POSITIVE CONTRIBUTION
++
+ACTUAL PAID BEHAVIOR
++
+NO CRITICAL TRUST / RELIABILITY BLOCKER
 ~~~
 
-This prevents strong performance in one cohort from hiding weak economics in another.
+Strong supporting evidence includes:
 
----
+- merchant referral;
+- continued daily/weekly business-record use;
+- growing share of transactions recorded in Sitolo;
+- successful offline continuity;
+- repeat reconciliation;
+- low correction rate caused by system defects.
+
+## 25.2 Growing-SME PMF Candidate
+
+Add:
+
+- sustained multi-user usage;
+- purchasing;
+- inventory depth;
+- reconciliation;
+- management reporting;
+- desktop value;
+- measurable expansion.
+
+## 25.3 Enterprise PMF Candidate
+
+Add:
+
+- repeatable qualified pipeline;
+- procurement acceptance;
+- security acceptance;
+- implementation contribution;
+- recurring contracted value;
+- acceptable sales cycle;
+- limited custom-work burden;
+- renewal/expansion evidence.
+
+## 25.4 No blended PMF hiding
+
+A strong enterprise cohort must not turn weak Duka economics into a company-wide "PMF" conclusion.
+
+Likewise, a large Duka population must not conceal an enterprise motion that is permanently loss-making.
+
+A company-level PMF statement should therefore be accompanied by segment-level evidence.
 
 # 26. Commercial Dashboard
 
@@ -2245,31 +2446,69 @@ acceptable delivery cost
 
 ---
 
+
 # 45. First-Year Commercial Success Definition
 
-The first-year objective is not maximum account count.
+The first-year objective is not maximum account count and is not to choose one permanent ICP.
 
-The objective is to establish:
+The objective is to establish that a single platform can support multiple complexity levels with healthy commercial economics.
+
+Required evidence:
 
 ~~~text
-1 clearly defined ICP
+1.
+A measurable core operational value proposition
+
 +
-1 repeatable core workflow
+
+2.
+At least one low-touch segment
+with acceptable contribution economics
+
 +
-1 credible pricing model
+
+3.
+At least one growing-SME segment
+with repeatable retention / expansion evidence
+
 +
-2 repeatable acquisition channels
+
+4.
+At least two repeatable acquisition channels
+for commercially material segments
+
 +
-healthy retention
+
+5.
+A viable enterprise motion
+without roadmap capture by custom work
+
 +
-positive contribution
+
+6.
+Segment-level CAC, retention,
+support, and contribution measurement
+
 +
-measurable expansion
+
+7.
+A credible pricing and packaging model
+
++
+
+8.
+Evidence that Duka → SME → enterprise
+can coexist on one platform through
+progressive complexity
 ~~~
 
-An intentionally smaller base of healthy merchants is more useful evidence than a large population of inactive/free accounts.
+A large inactive account base is not success.
 
----
+A large free-account population with negative contribution is not success.
+
+A high-ACV enterprise contract that requires permanent bespoke engineering is not proof of a scalable enterprise motion.
+
+Each segment must earn increased investment through evidence.
 
 # 46. Final Commercial Validation Contract
 
@@ -2314,7 +2553,401 @@ That evidence should precede aggressive regional expansion, speculative fintech,
 
 ---
 
-# 47. References and Current External Market Baseline
+
+
+# 47. Tier, Device and Subscriber Validation Framework
+
+The commercial validation program must validate the **tier architecture**, not merely one generic subscription price.
+
+## 47.1 Tier architecture hypothesis
+
+The current planning hypothesis is:
+
+| Tier | Indicative monthly price | Customer | Default device model | UI complexity |
+|---|---:|---|---|---|
+| Duka | MK7,500 | One-location ultra-micro merchant | Mobile only | Very simple |
+| SME | MK25,000 | Small established retailer | Mobile + PC | Simple mobile / moderate PC |
+| Growth | MK50,000 | Growing, more complex SME | Mobile + PC | Moderate mobile / detailed PC |
+| Multi-Branch | From MK90,000 | Two or more locations | Mobile branches + PC HQ | Simple branch / high-density HQ |
+| Enterprise | From MK200,000 | High-governance organization | Mobile + PC/Web | Role-specific / high-density control |
+
+The values remain commercial hypotheses.
+
+## 47.2 Device doctrine
+
+The underlying hypothesis is:
+
+~~~text
+MOBILE
+→ RUN / OPERATE
+
+PC
+→ CONTROL / MANAGE
+
+WEB
+→ ADMINISTER / SUPPORT
+~~~
+
+This is a workflow rule.
+
+It is not a rigid rule that every SME must have both devices or that every enterprise branch must have a PC.
+
+## 47.3 Duka device hypothesis
+
+~~~
+DUKA
+→ EXISTING ANDROID PHONE
+→ MOBILE OPERATIONS
+→ NO PC REQUIREMENT
+→ NO PRINTER REQUIREMENT
+→ NO SCANNER REQUIREMENT
+~~~
+
+The Duka test must measure whether existing-device onboarding reduces:
+
+- acquisition friction;
+- time-to-first-sale;
+- onboarding cost;
+- support.
+
+## 47.4 SME and Growth device hypothesis
+
+~~~
+MOBILE
+→ FRONTLINE
+
+PC
+→ BACK OFFICE
+~~~
+
+Test whether desktop availability improves:
+
+- retention;
+- reporting usage;
+- reconciliation;
+- purchasing;
+- expansion.
+
+Desktop should remain optional for low-complexity workflows.
+
+## 47.5 Multi-Branch device hypothesis
+
+~~~
+                    HQ
+                    |
+                   PC
+                    |
+       +------------+------------+
+       |            |            |
+    Branch A     Branch B     Branch C
+      Mobile       Mobile       Mobile
+~~~
+
+The primary test is whether centralized PC control plus mobile branch operation reduces total device requirements while preserving control.
+
+A branch PC may be justified by:
+
+- transaction volume;
+- peripherals;
+- staff workflow;
+- local operational requirements.
+
+Branch count alone is insufficient justification.
+
+## 47.6 Enterprise device hypothesis
+
+~~~
+PC / WEB
+=
+CONTROL PLANE
+
+MOBILE
+=
+DISTRIBUTED OPERATING PLANE
+~~~
+
+Enterprise testing must determine how much control-plane work belongs in PC/Web and how much branch activity remains better served by mobile.
+
+## 47.7 Device problem hypothesis
+
+The device constraint is real enough to measure explicitly.
+
+Afrobarometer's 2024/2025 Malawi survey reported 25% adult smartphone ownership and 10% household computer ownership. GSMA's August 2026 Malawi report separately estimated smartphone adoption at 33% and identified device affordability and the mobile-internet usage gap as major constraints.
+
+The studies use different methods, so their percentages must not be mechanically combined.
+
+The commercial conclusion to test is:
+
+> Requiring a PC at entry can materially reduce addressable adoption for the lower end of the market.
+
+## 47.8 Hardware policy
+
+Default:
+
+~~~text
+SOFTWARE FIRST
++
+BYOD FIRST
++
+OPTIONAL HARDWARE
+~~~
+
+Potential future accessories:
+
+- Android tablets;
+- receipt printers;
+- barcode scanners;
+- dedicated POS devices.
+
+Hardware partnerships remain optional.
+
+## 47.9 Device replacement
+
+A device test is incomplete unless replacement works:
+
+~~~text
+OLD DEVICE LOST
+      ↓
+NEW DEVICE
+      ↓
+AUTHENTICATE
+      ↓
+AUTHORIZE
+      ↓
+RESTORE PERMITTED STATE
+      ↓
+CONTINUE OPERATING
+~~~
+
+Business identity and data must not be tied irreversibly to one physical device.
+
+## 47.10 Subscriber planning scenario
+
+The following is a **portfolio planning scenario**, not a forecast:
+
+| Tier | Illustrative paying accounts | Share |
+|---|---:|---:|
+| Duka | 600 | 60% |
+| SME | 220 | 22% |
+| Growth | 100 | 10% |
+| Multi-Branch | 60 | 6% |
+| Enterprise | 20 | 2% |
+| **Total** | **1,000** | **100%** |
+
+Using the planning price hypotheses:
+
+~~~text
+Duka
+600 × MK7,500 = MK4.5M MRR
+
+SME
+220 × MK25,000 = MK5.5M MRR
+
+Growth
+100 × MK50,000 = MK5.0M MRR
+
+Multi-Branch
+60 × MK90,000 = MK5.4M MRR
+
+Enterprise
+20 × MK200,000 = MK4.0M MRR
+
+TOTAL = MK24.4M illustrative MRR
+~~~
+
+This scenario is useful because it demonstrates:
+
+> **A majority-Duka customer base can coexist with a diversified revenue portfolio.**
+
+It does not establish:
+
+- expected market share;
+- expected year-one subscribers;
+- actual conversion;
+- actual retention;
+- actual revenue.
+
+## 47.11 Subscriber target governance
+
+Hard subscriber targets must be stage-gated.
+
+~~~
+PRODUCT VALIDATION
+→
+PAID VALIDATION
+→
+SEGMENT CONTRIBUTION
+→
+CHANNEL REPEATABILITY
+→
+SCALE
+~~~
+
+Increasing account targets before proving unit economics is prohibited by this commercial doctrine.
+
+## 47.12 Segment-level subscriber reporting
+
+At minimum report:
+
+~~~text
+TOTAL ACCOUNTS
+TOTAL PAYING ACCOUNTS
+ACTIVE PAYING ACCOUNTS
+DUKA ACCOUNTS
+SME ACCOUNTS
+GROWTH ACCOUNTS
+MULTI-BRANCH ACCOUNTS
+ENTERPRISE ACCOUNTS
+NET NEW ACCOUNTS
+CHURNED ACCOUNTS
+UPGRADED ACCOUNTS
+DOWNGRADED ACCOUNTS
+~~~
+
+Also report per segment:
+
+~~~text
+ARPU
+CAC
+DAY-30 RETENTION
+DAY-90 RETENTION
+SUPPORT COST
+CONTRIBUTION
+~~~
+
+## 47.13 Tier transition metrics
+
+Track:
+
+~~~text
+DUKA → SME
+SME → GROWTH
+GROWTH → MULTI-BRANCH
+MULTI-BRANCH → ENTERPRISE
+~~~
+
+But also:
+
+~~~text
+DUKA → REMAINS DUKA
+SME → REMAINS SME
+GROWTH → REMAINS GROWTH
+~~~
+
+Remaining on a profitable tier is not failure.
+
+## 47.14 Device adoption metrics
+
+Track:
+
+~~~text
+MOBILE-ONLY ACTIVE RATE
+PC-ACTIVE RATE
+MOBILE + PC ACTIVE RATE
+AVERAGE DEVICES / ACCOUNT
+DEVICES / BRANCH
+PC-REQUIRED-TO-ACTIVATE RATE
+DEVICE-RELATED CHURN
+DEVICE-RELATED SUPPORT
+~~~
+
+The key metric is not device count.
+
+The key metric is whether device architecture improves business outcomes at acceptable cost.
+
+## 47.15 UI complexity metrics
+
+Track:
+
+- time to first sale;
+- time to complete common workflow;
+- task error rate;
+- support incidents related to navigation;
+- feature discovery;
+- number of screens visited for common tasks;
+- abandonment.
+
+The lower tier must not win merely by having fewer features.
+
+It must win by accomplishing its critical jobs with less friction.
+
+## 47.16 Tier economics gate
+
+A tier is not commercially scalable until:
+
+~~~text
+REVENUE
+− PAYMENT COST
+− INFRASTRUCTURE
+− SUPPORT
+− CAC / COMMISSION
+− ONBOARDING
+=
+POSITIVE OR STRATEGICALLY JUSTIFIED CONTRIBUTION
+~~~
+
+Any intentionally subsidized tier requires an explicit decision record showing:
+
+- why the subsidy exists;
+- what evidence is expected;
+- the maximum duration;
+- the conversion/retention mechanism;
+- the stop condition.
+
+## 47.17 Device and tier anti-patterns
+
+Prohibited:
+
+~~~text
+CHEAP PLAN
+→ BAD RELIABILITY
+
+CHEAP PLAN
+→ WEAK SECURITY
+
+DUKA
+→ FORCED PC
+
+MULTI-BRANCH
+→ FORCED PC AT EVERY BRANCH
+
+ENTERPRISE
+→ MOBILE DISABLED
+
+UPGRADE
+→ ACCOUNT RECREATION
+
+HARDWARE
+→ REQUIRED BEFORE FIRST VALUE
+~~~
+
+## 47.18 Final device doctrine
+
+The official commercial interpretation is:
+
+~~~text
+DUKA
+→ MOBILE FIRST / MOBILE ONLY BY DEFAULT
+
+SME
+→ MOBILE + PC
+
+GROWTH
+→ MOBILE + PC
+
+MULTI-BRANCH
+→ MOBILE BRANCHES + PC HQ
+
+ENTERPRISE
+→ MOBILE OPERATIONS + PC / WEB CONTROL
+~~~
+
+But the underlying rule remains:
+
+> **Use the device that best performs the job.**
+
+
+# 48. References and Current External Market Baseline
 
 1. **DataReportal — Digital 2026: Malawi**
    - late-2025 data used for the 2026 planning cycle;
@@ -2346,7 +2979,7 @@ Public competitor prices and claims are not treated as independent proof of dema
 
 ---
 
-# 48. Acceptance Criteria
+# 49. Acceptance Criteria
 
 This validation plan is implementation-ready when the commercial operating system can answer:
 

@@ -17,7 +17,8 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | Document | Purpose |
 |---|---|
 | [`business_model_design.md`](business_model_design.md) | Product and business model |
-| [`commercial_validation_plan.md`](commercial_validation_plan.md) | Executable commercial validation, pricing experiments, CAC measurement, and PMF gates |
+| [`commercial_validation_plan.md`](commercial_validation_plan.md) | Executable commercial validation, pricing experiments, CAC measurement, segment-aware PMF gates, and commercial decision rules |
+| [`segment_strategy_and_duka_economics.md`](segment_strategy_and_duka_economics.md) | Universal Duka-to-enterprise market scope, segment economics, packaging, GTM, support, and progressive-complexity doctrine |
 | [`system_architecture_design.md`](system_architecture_design.md) | System architecture invariants |
 | [`domain_model.md`](domain_model.md) | Domain model and semantics |
 | [`database_design.md`](database_design.md) | PostgreSQL schema and data design |

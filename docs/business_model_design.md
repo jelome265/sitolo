@@ -8,7 +8,8 @@
 **Primary clients:** Mobile application + desktop application; web is a supporting acquisition/administration surface, not the primary operating product
 
 **Document status:** Enterprise business-model target; release scope is staged; all commercial assumptions remain hypotheses until validated
-**Commercial validation:** operationalized by [Commercial Validation Plan](commercial_validation_plan.md); no ICP, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
+**Commercial validation:** operationalized by [Commercial Validation Plan](commercial_validation_plan.md); no segment, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
+**Segment strategy:** formalized in [Universal Segment Strategy, Duka Economics & Market Coverage Doctrine](segment_strategy_and_duka_economics.md); product scope remains Duka-to-enterprise while commercial learning remains segment-aware.
 
 **Prepared:** 2026-09-03
 
@@ -209,19 +210,65 @@ Commercial implication:
 
 ---
 
+
 # 4. Core Commercial Thesis
 
-The commercial thesis is deliberately two-layered.
+Sitolo has **universal product-market scope** with **segmented commercial execution**.
 
 **Category:**
 
 > **Business Operating System for African SMEs.**
 
-**Initial commercial wedge:**
+**Long-term product scope:**
 
-> **Inventory-heavy small and growing retailers that need reliable sales, stock, cash, and payment reconciliation across mobile-first/offline workflows.**
+~~~text
+DUKA
+  ↓
+MICRO / SMALL RETAIL
+  ↓
+GROWING SME
+  ↓
+SPECIALIST SME
+  ↓
+MULTI-BRANCH
+  ↓
+ENTERPRISE
+~~~
 
-The category remains broad because the platform is designed for progressive expansion. The initial go-to-market must remain narrow enough to measure:
+This scope is intentional. Sitolo does not need to choose between Dukas and large shops.
+
+The commercial discipline is to avoid confusing broad product scope with broad unmeasured go-to-market activity.
+
+The operating model is:
+
+~~~text
+ONE PLATFORM
++
+BUSINESS-TYPE CONFIGURATION
++
+PLAN ENTITLEMENTS
++
+PROGRESSIVE DISCLOSURE
++
+SEGMENT-SPECIFIC GTM
++
+SEGMENT-SPECIFIC ECONOMICS
++
+SEGMENT-AWARE VALIDATION
+~~~
+
+A Duka, a growing retailer, a pharmacy, a wholesaler and an enterprise group can use the same underlying business operating system while receiving different:
+
+- default workflows;
+- pricing;
+- feature exposure;
+- user/device/branch limits;
+- support;
+- onboarding;
+- acquisition motion;
+- implementation services.
+
+The commercial learning sequence remains:
 
 ~~~text
 CUSTOMER PAIN
@@ -236,75 +283,54 @@ POSITIVE CONTRIBUTION
     ↓
 REPEATABLE ACQUISITION
     ↓
-EXPANSION
+EXPANSION WHERE APPLICABLE
 ~~~
 
-The merchant may enter through fast sales and stock visibility, but Sitolo's intended economic depth is:
+The crucial distinction is:
 
-~~~text
-FAST SALES
-+
-TRUSTED STOCK
-+
-PAYMENT CONTROL
-+
-RECONCILIATION
-+
-CASH CONTROL
-+
-MANAGEMENT VISIBILITY
-+
-BRANCH / USER GOVERNANCE
-~~~
+> **A narrow validation cohort is not a narrow product scope.**
 
-The flywheel is:
-
-~~~text
-LOW FRICTION
-    ↓
-ACTIVATION
-    ↓
-DAILY OPERATIONAL USE
-    ↓
-TRUSTED BUSINESS RECORD
-    ↓
-RETENTION
-    ↓
-EXPANSION
-    ↓
-RECURRING REVENUE
-    ↓
-BETTER PRODUCT
-    ↓
-LOWER FRICTION
-~~~
-
-No stage is considered proven merely because the next stage is technically possible. Customer evidence must demonstrate movement through the sequence.
+The previous inventory-heavy small-and-growing-retail concept remains a valid **current learning cohort** where useful, but it must not be represented as the permanent market boundary.
 
 ---
 
 # 5. The Category
 
-## 5.0 Category vs Commercial Beachhead
+## 5.0 Category vs Commercial Focus
 
-The category is intentionally broader than the initial customer-acquisition target.
+The category remains deliberately broad.
+
+The current validation program may concentrate on a defined segment or operating problem at any given time, but that concentration is an experiment-management mechanism rather than a permanent exclusion rule.
 
 ~~~text
-CATEGORY
+PRODUCT SCOPE
 Business Operating System for African SMEs
 
-INITIAL BEACHHEAD
-Inventory-heavy small and growing retail
+COMMERCIAL LEARNING
+Segment-specific cohorts
+
+GTM
+Segment-specific acquisition
+
+PACKAGING
+Complexity-specific entitlements
 
 EXPANSION
-Duka / pharmacy / agro-dealer / wholesale
-        ↓
-Multi-branch
-        ↓
-Enterprise
+Evidence-based progression
 ~~~
 
-This separation prevents the platform roadmap from forcing the sales motion to address every segment simultaneously.
+This model allows Sitolo to serve:
+
+- Dukas;
+- micro and small retailers;
+- growing SMEs;
+- pharmacies;
+- agro-dealers;
+- wholesalers;
+- multi-branch operators;
+- enterprise organizations.
+
+The platform should not become eight unrelated products.
 
 ## 5.1 Public category
 
@@ -327,9 +353,7 @@ Sitolo is not positioned as:
 - an insurer;
 - a generic e-commerce marketplace.
 
-Future connections to financial services can exist without changing the core category.
-
----
+Future financial and regulatory integrations can exist without changing the core category.
 
 # 6. Jobs-to-be-Done
 
@@ -499,76 +523,212 @@ That exception has direct economic meaning.
 
 # 11. Product Surfaces
 
-## 11.1 Mobile application
+Sitolo has three client surfaces with deliberately different jobs.
 
-Primary operational surface.
+## 11.1 Mobile application — operating surface
+
+Primary for frontline and distributed work.
 
 Used for:
 
-- POS;
+- POS / sales;
 - quick stock checks;
-- payment capture;
+- receiving;
 - cash operations;
+- payment capture;
+- branch operations;
+- field work;
 - notifications;
-- lightweight reporting.
+- lightweight reporting;
+- offline continuity.
 
-## 11.2 Desktop application
+The mobile application is the default entry surface for the smallest merchant.
 
-Primary back-office control surface.
+## 11.2 Desktop application — control surface
+
+Tauri desktop is the rich management/control surface.
 
 Used for:
 
 - bulk catalogue management;
 - purchasing;
-- reconciliation;
-- reporting;
-- multi-branch management;
+- supplier administration;
+- deep reconciliation;
+- detailed reporting;
 - staff administration;
+- organization/branch management;
 - exports;
-- integrations.
+- integrations;
+- high-volume workflows where desktop hardware is useful.
 
-## 11.3 Website
+A desktop installation is not a prerequisite for Duka entry.
 
-Supporting surface only.
+## 11.3 Web/admin surface — administration surface
 
-Used for:
+Web is a supporting surface for:
 
 - discovery;
 - pricing;
 - documentation;
 - downloads;
 - enterprise sales;
-- status/help.
+- support;
+- system/administrative functions;
+- selected enterprise control-plane workflows.
+
+The public web surface is not the primary frontline operating product.
 
 ---
 
 # 12. Mobile vs Desktop Value Model
 
-```text
+The core device doctrine is workflow-based:
+
+~~~
 MOBILE
-“RUN THE BUSINESS”
+=
+RUN / OPERATE
 
-DESKTOP
-“CONTROL THE BUSINESS”
-```
+PC
+=
+CONTROL / MANAGE
 
-A merchant does not need both on day one.
+WEB
+=
+ADMINISTER / SUPPORT
+~~~
 
-The system should allow:
+This is stronger than assigning one device to an entire business class.
 
-```text
-MOBILE ONLY
+### Duka
+
+~~~
+Operational surface → Mobile
+Control surface → Mobile
+PC → not required
+~~~
+
+### SME
+
+~~~
+Operational surface → Mobile
+Control surface → PC
+~~~
+
+### Growth
+
+~~~
+Operational surface → Mobile
+Control surface → PC
+~~~
+
+### Multi-Branch
+
+~~~
+Branch operations → Mobile
+Central control → PC at HQ
+~~~
+
+Not every branch needs a PC.
+
+### Enterprise
+
+~~~
+Distributed operations → Mobile + selected desktop
+Control plane → PC / Web
+~~~
+
+Enterprise is therefore **control-plane first**, not simply "PC first".
+
+## 12.1 Why device strategy matters
+
+The smallest Sitolo customer must not need to buy:
+
+- a PC;
+- printer;
+- barcode scanner;
+- dedicated POS terminal;
+
+before receiving value.
+
+The target onboarding is:
+
+~~~
+EXISTING ANDROID PHONE
+        ↓
+CREATE BUSINESS
+        ↓
+ADD PRODUCTS
+        ↓
+MAKE FIRST SALE
+        ↓
+SEE BUSINESS SUMMARY
+~~~
+
+## 12.2 Device replacement
+
+Device loss must not mean business-data loss.
+
+The product must support:
+
+~~~
+OLD DEVICE LOST
       ↓
-MOBILE + DESKTOP
+NEW DEVICE
       ↓
-MULTI-DEVICE
+AUTHENTICATE
       ↓
-MULTI-BRANCH
-```
+AUTHORIZE
+      ↓
+RESTORE / SYNC PERMITTED STATE
+      ↓
+CONTINUE OPERATING
+~~~
 
-Commercial opportunity increases naturally as business complexity increases.
+Existing identity, device, tenant, authorization, audit and synchronization contracts remain authoritative.
 
----
+## 12.3 Optional hardware
+
+Hardware may expand capability later:
+
+- phones;
+- tablets;
+- receipt printers;
+- barcode scanners;
+- dedicated POS devices.
+
+Hardware should be optional at entry.
+
+Potential future partnerships include:
+
+- handset retailers;
+- telecom operators;
+- device distributors;
+- POS hardware providers;
+- wholesalers.
+
+A hardware bundle may become a future distribution mechanism, but Sitolo should not become hardware-dependent merely to simplify sales.
+
+## 12.4 Device and connectivity constraints
+
+Current Malawi evidence indicates that computer and smartphone ownership remains limited relative to basic mobile-phone access, while device affordability and the mobile-internet usage gap remain important constraints.
+
+This strengthens the case for:
+
+~~~
+MOBILE-FIRST ENTRY
++
+OPTIONAL PC
++
+OFFLINE CONTINUITY
++
+LOW DATA USE
++
+LOW-END DEVICE SUPPORT
+~~~
+
+and weakens any strategy that assumes every merchant starts with a PC.
+
 
 # 13. Business-Type Personalization
 
@@ -623,6 +783,8 @@ This prevents product fragmentation and enables natural expansion.
 
 # 15. Duka Segment
 
+The Duka segment is a first-class part of Sitolo's addressable market and has a dedicated economic doctrine documented in [Universal Segment Strategy, Duka Economics & Market Coverage Doctrine](segment_strategy_and_duka_economics.md).
+
 Primary needs:
 
 - fast selling;
@@ -630,20 +792,25 @@ Primary needs:
 - stock visibility;
 - cash tracking;
 - mobile-money recording;
-- low learning curve.
+- low learning curve;
+- a simple understanding of what sold, what remains, what should have been collected, and what the business approximately earned from inventory sales.
 
 Commercial position:
 
-- low entry price;
-- low-touch acquisition;
-- high potential volume;
-- careful support economics.
+- low entry price hypothesis;
+- low-CAC acquisition;
+- self-service-first onboarding;
+- low-cost support;
+- high potential account volume;
+- careful contribution economics.
 
-Key risk:
+The Duka is not a reduced-security customer. Tenant isolation, authorization, auditability, financial correctness, data integrity and safe synchronization remain universal requirements.
 
-ARPU may be too low for high-touch support.
+Key economic risk:
 
----
+> ARPU may be too low for high-touch onboarding or support.
+
+Therefore the Duka model must be designed around low cost-to-serve rather than merely low price.
 
 # 16. Small Retail Segment
 
@@ -903,41 +1070,396 @@ LOCKED ONLY TO EXTRACT MONEY
 
 # 29. Suggested Pricing Hypothesis
 
-The previous price table is a planning hypothesis, not an approved tariff.
+Sitolo should use five planning tiers.
 
-Current Malawi competitor pricing provides an external market anchor, but not a willingness-to-pay conclusion. As of the 2026-09 commercial review, Phindu publicly lists general retail from MWK 65,000/month, while MalondaPlus lists Starter at MWK 75,000/month, Business at MWK 130,000/month, and Enterprise at MWK 180,000/month. These are vendor-published prices and must not be presented as independent evidence of market share or customer willingness to pay.
+These prices are **commercial hypotheses only**. They are not approved tariffs and must be validated through observed payment, retention, support, CAC and contribution.
 
-Sitolo pricing must be validated through controlled offers rather than selected from competitor prices or internal intuition.
+| Tier | Indicative monthly price | Typical customer | Primary device model |
+|---|---:|---|---|
+| **Duka** | **MK7,500/mo** | Ultra-micro shop / one-location micro retailer | Mobile only |
+| **SME** | **MK25,000/mo** | Small established retailer | Mobile + PC |
+| **Growth** | **MK50,000/mo** | Growing / more complex SME | Mobile + PC |
+| **Multi-Branch** | **from MK90,000/mo** | 2+ locations requiring centralized control | Mobile branches + PC HQ |
+| **Enterprise** | **from MK200,000/mo** | High-governance / integration-heavy organization | Mobile operations + PC/Web control plane |
 
-Initial price-test cells are:
+The rationale is not "small business cheap, big business expensive".
 
-~~~text
-P1 = MWK 35,000/month
-P2 = MWK 55,000/month
-P3 = MWK 75,000/month
+It is:
+
+~~~
+MORE USERS
++
+MORE DEVICES
++
+MORE BRANCHES
++
+MORE CONTROL
++
+MORE INTEGRATION
++
+MORE SUPPORT
+=
+GREATER COMMERCIAL VALUE / COST
 ~~~
 
-These are experimental prices only.
+The Duka price is intentionally a low-entry hypothesis because the segment requires lower absolute software cost.
 
-Commercial pricing decisions must use:
+The Enterprise price is intentionally materially higher because enterprise service can include governance, implementation, integration and SLA economics.
 
-~~~text
-CONVERSION
-+
-RETENTION
-+
-SUPPORT COST
-+
-CONTRIBUTION
-+
-EXPANSION
+## 29.1 Tier doctrine
+
+### Duka — MK7,500/month hypothesis
+
+Designed for:
+
+- one location;
+- one owner;
+- very few users;
+- one primary Android device;
+- simple catalogue;
+- everyday sales and stock;
+- basic cash/payment records.
+
+UI:
+
+**Very simple.**
+
+Primary navigation candidate:
+
+~~~
+SELL
+STOCK
+MONEY
+TODAY
+MORE
 ~~~
 
-rather than conversion or headline revenue alone.
+Core value:
 
-The complete pricing experiment and follow-up decision rules are defined in [Commercial Validation Plan](commercial_validation_plan.md).
+- sales;
+- stock;
+- cash;
+- mobile-money recording;
+- estimated gross profit;
+- low-stock alerts;
+- basic credit;
+- daily summary;
+- offline continuity.
 
----
+PC is not required.
+
+### SME — MK25,000/month hypothesis
+
+Designed for:
+
+- several staff;
+- larger catalogue;
+- suppliers;
+- purchasing;
+- multiple operational devices.
+
+UI:
+
+- simple mobile frontline;
+- moderate desktop back-office.
+
+Mobile:
+
+- sell;
+- receive;
+- stock;
+- cash;
+- quick reports.
+
+PC:
+
+- catalogue;
+- purchasing;
+- suppliers;
+- reconciliation;
+- reporting;
+- staff administration.
+
+### Growth — MK50,000/month hypothesis
+
+Designed for:
+
+- higher transaction volume;
+- more staff;
+- more inventory complexity;
+- deeper reporting/control requirements.
+
+UI:
+
+- controlled mobile complexity;
+- detailed PC management.
+
+Adds, where applicable:
+
+- advanced inventory;
+- purchasing controls;
+- customer credit;
+- reconciliation;
+- expenses;
+- granular permissions;
+- approvals;
+- richer reports;
+- multiple devices.
+
+### Multi-Branch — from MK90,000/month hypothesis
+
+Designed for one organization operating two or more locations.
+
+UI:
+
+- simple branch mobile;
+- high-density HQ PC.
+
+Default topology:
+
+~~~
+                    HEAD OFFICE
+                        |
+                       PC
+                        |
+           +------------+------------+
+           |            |            |
+       BRANCH A      BRANCH B      BRANCH C
+        MOBILE        MOBILE        MOBILE
+~~~
+
+HQ:
+
+- branch administration;
+- central catalogue;
+- pricing;
+- procurement;
+- transfers;
+- consolidated reporting;
+- reconciliation;
+- staff controls;
+- approvals;
+- audit.
+
+Branches:
+
+- sales;
+- stock;
+- receiving;
+- cash;
+- payments;
+- offline operation.
+
+A branch does not automatically require a PC.
+
+### Enterprise — from MK200,000/month hypothesis
+
+Designed for complex organizations with material:
+
+- governance;
+- authorization;
+- integration;
+- audit;
+- support;
+- procurement/security requirements.
+
+UI:
+
+- role-specific frontline;
+- high-density PC/Web control plane.
+
+Default topology:
+
+~~~
+                  ENTERPRISE HQ
+                       |
+                 PC / WEB CONTROL
+                       |
+          +------------+------------+
+          |            |            |
+       Branch A     Branch B     Branch C
+        MOBILE       MOBILE       MOBILE
+~~~
+
+Enterprise control plane:
+
+- organization governance;
+- advanced IAM;
+- segregation of duties;
+- approvals;
+- consolidated reporting;
+- cross-branch reconciliation;
+- audit exports;
+- API/integration administration;
+- security administration;
+- implementation controls;
+- SLA/support management.
+
+Mobile remains important for branch and field operations.
+
+## 29.2 Tier feature matrix
+
+| Capability | Duka | SME | Growth | Multi-Branch | Enterprise |
+|---|---|---|---|---|---|
+| Sales/POS | Core | Core | Core | Core | Core |
+| Basic inventory | Core | Core | Core | Core | Core |
+| Purchasing | Basic | Full | Advanced | Centralized | Advanced |
+| Cash | Core | Core | Advanced | Consolidated | Consolidated |
+| Mobile money | Core | Core | Core | Core | Core |
+| Reconciliation | Basic | Core | Advanced | Cross-branch | Enterprise |
+| Reports | Daily/basic | Management | Advanced | Consolidated | Advanced/controlled |
+| Users | Very limited | Multi-user | Granular | Branch-scoped | Advanced IAM |
+| Devices | Very limited | Multiple | Multiple | Branch-specific | Managed |
+| Branches | 1 | 1 by default | Where needed | 2+ | Many |
+| Desktop | Not required | Yes | Yes | HQ/control | Control plane |
+| Approvals | Minimal | Basic | Advanced | Branch/org | Advanced |
+| Audit | Core | Core | Deep | Cross-branch | Enterprise |
+| Integrations | Minimal | Selected | More | Centralized | Extensive |
+| SLA | No | No | Optional | Priority | Contracted |
+| Implementation | Self-service | Guided | Assisted | Assisted | Full |
+
+The matrix is conceptual. Actual entitlements require implementation and validation.
+
+## 29.3 UI complexity doctrine
+
+~~~
+DUKA
+→ VERY SIMPLE
+
+SME
+→ SIMPLE MOBILE / MODERATE PC
+
+GROWTH
+→ MODERATE MOBILE / DETAILED PC
+
+MULTI-BRANCH
+→ SIMPLE BRANCH / HIGH-DENSITY HQ
+
+ENTERPRISE
+→ ROLE-SPECIFIC FRONTLINE / HIGH-DENSITY CONTROL
+~~~
+
+The principle is:
+
+> **UI complexity should grow for the people who need complexity, not for every user attached to the organization.**
+
+## 29.4 Device doctrine
+
+~~~
+DUKA
+→ MOBILE
+
+SME
+→ MOBILE + PC
+
+GROWTH
+→ MOBILE + PC
+
+MULTI-BRANCH
+→ MOBILE BRANCHES + PC HQ
+
+ENTERPRISE
+→ MOBILE OPERATIONS + PC / WEB CONTROL
+~~~
+
+The device is a workflow surface, not the product itself.
+
+## 29.5 Subscriber planning scenario
+
+A useful portfolio stress-test is **1,000 paying organizations**, not a forecast:
+
+| Tier | Illustrative accounts | Share |
+|---|---:|---:|
+| Duka | 600 | 60% |
+| SME | 220 | 22% |
+| Growth | 100 | 10% |
+| Multi-Branch | 60 | 6% |
+| Enterprise | 20 | 2% |
+| **Total** | **1,000** | **100%** |
+
+At the indicative prices:
+
+~~~text
+Duka
+600 × MK7,500 = MK4.5M MRR
+
+SME
+220 × MK25,000 = MK5.5M MRR
+
+Growth
+100 × MK50,000 = MK5.0M MRR
+
+Multi-Branch
+60 × MK90,000 = MK5.4M MRR
+
+Enterprise
+20 × MK200,000 = MK4.0M MRR
+~~~
+
+Illustrative aggregate:
+
+> **MK24.4M MRR**
+
+This does not forecast Sitolo's future revenue.
+
+It demonstrates that:
+
+> **Dukas can be the majority of accounts without being the majority of revenue.**
+
+## 29.6 Do not make subscriber count the objective
+
+Account count becomes meaningful only alongside:
+
+- paid conversion;
+- retention;
+- CAC;
+- support;
+- contribution;
+- referral;
+- infrastructure cost.
+
+A million inactive or unprofitable accounts is not a successful commercial model.
+
+## 29.7 Tier migration
+
+The intended path is:
+
+~~~
+DUKA
+  ↓
+SME
+  ↓
+GROWTH
+  ↓
+MULTI-BRANCH
+  ↓
+ENTERPRISE
+~~~
+
+but migration is optional.
+
+A Duka can remain a profitable Duka account indefinitely.
+
+The account does not need to be recreated.
+
+The organization remains continuous while entitlements change.
+
+## 29.8 Price and entitlement authority
+
+The client may hide unavailable features for usability.
+
+The server must enforce:
+
+- plan entitlements;
+- branch limits;
+- user limits;
+- device limits;
+- integration access;
+- report access;
+- enterprise controls.
+
+Existing authorization and tenant-isolation rules remain authoritative.
+
 
 # 30. Price Based on Complexity
 
@@ -2412,7 +2934,8 @@ Sitolo therefore needs to compete on an integrated business-control loop and mea
 
 Sources:
 - https://www.phindu.co/pricing
-- https://www.malonda.ictechmw.com/malondaplus/index.php
+- https://www.malondaplus.com/malondaplus/pricing.php
+- https://www.gulasync.com/pricing
 
 ---
 
