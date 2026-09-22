@@ -1,18 +1,6 @@
 -- Phase 4 Part 7 / PR-008 Test Fixture Schema & RLS Policies
 
--- 1. Create runtime role if not exists
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN
-        CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-    END IF;
-END
-$$;
-
--- Grant schema privileges on search_path schema
-GRANT USAGE ON SCHEMA public TO app_runtime;
-
--- 2. Organizations Table
+-- 1. Organizations Table
 CREATE TABLE IF NOT EXISTS organizations (
     id VARCHAR(128) PRIMARY KEY,
     name VARCHAR(256) NOT NULL,
@@ -21,7 +9,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Branches Table
+-- 2. Branches Table
 CREATE TABLE IF NOT EXISTS branches (
     id VARCHAR(128) PRIMARY KEY,
     organization_id VARCHAR(128) NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
@@ -32,7 +20,7 @@ CREATE TABLE IF NOT EXISTS branches (
     CONSTRAINT branches_id_org_unique UNIQUE (id, organization_id)
 );
 
--- 4. Tenant-Owned Representative Resources Table
+-- 3. Tenant-Owned Representative Resources Table
 CREATE TABLE IF NOT EXISTS tenant_resources (
     id VARCHAR(128) PRIMARY KEY,
     organization_id VARCHAR(128) NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
@@ -46,7 +34,7 @@ CREATE TABLE IF NOT EXISTS tenant_resources (
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 
--- 5. Enable and Force Row Level Security (RLS)
+-- 4. Enable and Force Row Level Security (RLS)
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
 
@@ -56,7 +44,7 @@ ALTER TABLE branches FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_resources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_resources FORCE ROW LEVEL SECURITY;
 
--- 6. Define RLS Policies for app_runtime
+-- 5. Define RLS Policies for app_runtime
 
 -- Organizations Policy
 DROP POLICY IF EXISTS organizations_isolation_policy ON organizations;

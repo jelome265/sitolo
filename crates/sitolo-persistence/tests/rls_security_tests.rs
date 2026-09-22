@@ -138,7 +138,7 @@ impl PgTestTenantRepository {
             "DELETE FROM tenant_resources
              WHERE id = $1 AND organization_id = $2",
         )
-        .bind(resource_id)
+        .bind(result_id_str(resource_id))
         .bind(scope.organization_id.as_str())
         .execute(&mut *tx)
         .await?;
@@ -151,6 +151,10 @@ impl PgTestTenantRepository {
         tx.commit().await?;
         Ok(())
     }
+}
+
+fn result_id_str(s: &str) -> &str {
+    s
 }
 
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
@@ -213,6 +217,12 @@ async fn setup_test_context() -> TestContext {
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
+            let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
+            sqlx::raw_sql(role_sql)
+                .execute(&admin_pool)
+                .await
+                .expect("Failed to initialize app_runtime role");
+
             if let Ok(runtime_pass) = env::var("APP_RUNTIME_PASSWORD") {
                 let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
                 sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
@@ -220,7 +230,7 @@ async fn setup_test_context() -> TestContext {
         })
         .await;
 
-    // Create isolated schema and set search path
+    // Create isolated schema
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
     sqlx::raw_sql(&create_schema_sql)
         .execute(&admin_pool)
@@ -234,7 +244,7 @@ async fn setup_test_context() -> TestContext {
         .await
         .expect("Failed to apply RLS fixture schema inside search_path");
 
-    // Grant schema USAGE on isolated schema to app_runtime
+    // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
     );
