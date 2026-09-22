@@ -62,6 +62,28 @@ Start with these documents:
 - [Security implementation specification](docs/security_implementation_spec.md) and [threat model](docs/threat_model.md) — security controls and threats.
 - [Documentation index](docs/README.md) — the complete corpus and phase specifications.
 
+## Commercial tiers
+
+The commercial model is one Sitolo platform serving Duka through enterprise. These are planning price hypotheses, not approved tariffs:
+
+| Tier | Indicative price | Device model | UI |
+|---|---:|---|---|
+| Duka | MK7,500/mo | Mobile only | Very simple |
+| SME | MK25,000/mo | Mobile + PC | Simple mobile / moderate PC |
+| Growth | MK50,000/mo | Mobile + PC | Moderate mobile / detailed PC |
+| Multi-Branch | From MK90,000/mo | Mobile branches + PC HQ | Simple branch / high-density HQ |
+| Enterprise | From MK200,000/mo | Mobile operations + PC/Web control | Role-specific / high-density control |
+
+The device doctrine is workflow-based:
+
+~~~text
+MOBILE → RUN / OPERATE
+PC     → CONTROL / MANAGE
+WEB    → ADMINISTER / SUPPORT
+~~~
+
+Duka does not require a PC. Multi-Branch does not require a PC at every branch. Enterprise is control-plane first rather than simply PC-first. Hardware remains optional at entry; the full tier, device, UI, subscriber-scenario, and economics model is documented in [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
+
 ## Delivery status
 
 The repository has progressed beyond the initial engineering substrate into the tenancy and authorization foundation.
