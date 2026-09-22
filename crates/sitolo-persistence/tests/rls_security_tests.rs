@@ -154,9 +154,24 @@ impl PgTestTenantRepository {
 }
 
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
+struct SchemaGuard {
+    schema_name: String,
+    admin_pool: sqlx::PgPool,
+}
+
+impl SchemaGuard {
+    async fn teardown(&self) {
+        let drop_sql = format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema_name);
+        let _ = sqlx::raw_sql(&drop_sql).execute(&self.admin_pool).await;
+    }
+}
+
 struct TestContext {
     pools: PgAuthorityPools,
     repo: PgTestTenantRepository,
+    guard: SchemaGuard,
+    org_a: Organization,
+    mem_a: Membership,
     org_a_scope: AuthorizedScope,
     org_b_scope: AuthorizedScope,
     org_a_b1_scope: AuthorizedScope,
@@ -170,15 +185,17 @@ struct TestContext {
 }
 
 async fn setup_test_context() -> TestContext {
+    let schema_id = uuid::Uuid::new_v4().simple().to_string();
+    let schema_name = format!("test_schema_{schema_id}");
+
     let admin_url = env::var("ADMIN_DATABASE_URL")
         .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/sitolo_test".to_string());
+        .expect(
+            "FAIL-CLOSED: Required ADMIN_DATABASE_URL or DATABASE_URL env variable not provided",
+        );
 
-    let runtime_url = env::var("RUNTIME_DATABASE_URL").unwrap_or_else(|_| {
-        let runtime_pass =
-            env::var("APP_RUNTIME_PASSWORD").unwrap_or_else(|_| "app_runtime_pass".to_string());
-        format!("postgres://app_runtime:{runtime_pass}@127.0.0.1:5432/sitolo_test")
-    });
+    let runtime_url = env::var("RUNTIME_DATABASE_URL")
+        .expect("FAIL-CLOSED: Required RUNTIME_DATABASE_URL env variable not provided");
 
     let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
     let runtime_opts: PgConnectOptions = runtime_url.parse().expect("Invalid runtime database URL");
@@ -203,6 +220,18 @@ async fn setup_test_context() -> TestContext {
             }
         })
         .await;
+
+    // Create isolated schema
+    let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
+    sqlx::raw_sql(&create_schema_sql)
+        .execute(&admin_pool)
+        .await
+        .expect("Failed to create isolated test schema");
+
+    let guard = SchemaGuard {
+        schema_name: schema_name.clone(),
+        admin_pool: admin_pool.clone(),
+    };
 
     let pools = PgAuthorityPools::connect_options(admin_opts, runtime_opts)
         .await
@@ -330,6 +359,9 @@ async fn setup_test_context() -> TestContext {
     TestContext {
         pools,
         repo,
+        guard,
+        org_a,
+        mem_a,
         org_a_scope,
         org_b_scope,
         org_a_b1_scope,
@@ -359,6 +391,7 @@ async fn test_catalog_runtime_role_privileges() {
         .verify_effective_privileges()
         .await
         .expect("app_runtime effective privileges failed catalog verification");
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -368,6 +401,7 @@ async fn test_catalog_rls_policy_metadata() {
         .verify_rls_catalog_metadata()
         .await
         .expect("RLS catalog metadata failed verification");
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
@@ -386,6 +420,7 @@ async fn test_positive_tenant_a_reads_a() {
     assert_eq!(res.id, ctx.res_a1_id);
     assert_eq!(res.organization_id, ctx.org_a_id_str);
     assert_eq!(res.data, "Secret Data A1");
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -400,6 +435,7 @@ async fn test_positive_tenant_b_reads_b() {
     assert_eq!(res.id, ctx.res_b1_id);
     assert_eq!(res.organization_id, ctx.org_b_id_str);
     assert_eq!(res.data, "Secret Data B1");
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -417,6 +453,7 @@ async fn test_positive_tenant_a_updates_a() {
         .unwrap();
 
     assert_eq!(res.data, "Updated Data A1");
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -433,10 +470,11 @@ async fn test_positive_tenant_a_deletes_a() {
         .await;
 
     assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 3. NEGATIVE CROSS-TENANT ISOLATION TESTS
+// 3. NEGATIVE CROSS-TENANT ISOLATION & WITH CHECK PROOFS
 // ============================================================================
 
 #[tokio::test]
@@ -451,6 +489,7 @@ async fn test_negative_tenant_a_cannot_read_b() {
         matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
         "Tenant A must not read Tenant B resource"
     );
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -474,6 +513,7 @@ async fn test_negative_tenant_a_cannot_update_b() {
         .unwrap();
 
     assert_eq!(b_res.data, "Secret Data B1");
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -496,6 +536,7 @@ async fn test_negative_tenant_a_cannot_delete_b() {
         .await;
 
     assert!(b_res.is_ok());
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -504,23 +545,30 @@ async fn test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid() {
     let res_malicious_id = format!("res_malicious_{}", uuid::Uuid::new_v4().simple());
 
     // Relationally valid fixture: Branch B1 belongs to Org B (FK constraint is 100% satisfied!)
-    let malicious_resource = TenantResource {
-        id: res_malicious_id.clone(),
-        organization_id: ctx.org_b_id_str.clone(),
-        branch_id: ctx.branch_b1_id_str.clone(),
-        data: "Malicious Insert".to_string(),
-    };
+    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-    // Attempt insert while executing under Tenant A's AuthorizedScope
-    let insert_res = ctx
-        .repo
-        .create_tenant_resource(&ctx.org_a_scope, &malicious_resource)
-        .await;
+    let raw_res = sqlx::query(
+        "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&res_malicious_id)
+    .bind(&ctx.org_b_id_str)
+    .bind(&ctx.branch_b1_id_str)
+    .bind("Malicious Insert Data")
+    .execute(&mut *tx)
+    .await;
 
+    assert!(raw_res.is_err(), "Raw INSERT must fail");
+    let err = raw_res.unwrap_err();
+    let pg_err = err.as_database_error().expect("Must be database error");
+
+    // Assert SQLSTATE 42501 (insufficient_privilege) or 44000 (check_violation) proving denial is strictly from RLS WITH CHECK, NOT FK
+    let code = pg_err.code().unwrap_or_default();
     assert!(
-        insert_res.is_err(),
-        "RLS WITH CHECK must deny inserting a row owned by Org B while operating under Org A context"
+        code == "42501" || code == "44000",
+        "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
     );
+
+    tx.rollback().await.unwrap();
 
     // Verify denial was strictly caused by RLS WITH CHECK, and DB state is unchanged
     let fetch_res = ctx
@@ -529,6 +577,7 @@ async fn test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid() {
         .await;
 
     assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -550,9 +599,14 @@ async fn test_negative_ownership_changing_update_relationally_valid() {
     .execute(&mut *tx)
     .await;
 
+    assert!(update_res.is_err(), "Ownership update must fail");
+    let err = update_res.unwrap_err();
+    let pg_err = err.as_database_error().expect("Must be database error");
+
+    let code = pg_err.code().unwrap_or_default();
     assert!(
-        update_res.is_err(),
-        "RLS WITH CHECK must deny changing ownership to Org B under Tenant A transaction context"
+        code == "42501" || code == "44000",
+        "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
     );
 
     tx.rollback().await.unwrap();
@@ -565,20 +619,69 @@ async fn test_negative_ownership_changing_update_relationally_valid() {
         .unwrap();
 
     assert_eq!(fetch_res.organization_id, ctx.org_a_id_str);
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 4. DIRECT DB BOUNDARY PROOF (WITHOUT APPLICATION WHERE CLAUSE)
+// 4. END-TO-END APPLICATION + DB COMPOSITION TEST
+// ============================================================================
+
+#[tokio::test]
+async fn test_end_to_end_application_and_db_composition() {
+    let ctx = setup_test_context().await;
+
+    // 1. AUTHORIZED PATH
+    // Principal A -> Org A binding -> Scope Resolution -> AuthorizedScope -> DB Context -> DB Query
+    let req_org_a = RequestedOrganizationId(OrganizationId::new(&ctx.org_a_id_str).unwrap());
+    let _trusted_a = bind_organization(&req_org_a, &ctx.mem_a)
+        .expect("Application binding succeeds for authorized membership");
+    let eff_scope_a =
+        resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None).expect("Scope resolution succeeds");
+    let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
+
+    let res_a = ctx
+        .repo
+        .get_tenant_resource(&authorized_scope_a, &ctx.res_a1_id)
+        .await
+        .expect("Authorized end-to-end operation succeeds");
+    assert_eq!(res_a.data, "Secret Data A1");
+
+    // 2. APPLICATION TAMPER PATH
+    // Principal A attempts to bind to Org B without membership -> Application rejects before DB call
+    let req_org_b = RequestedOrganizationId(OrganizationId::new(&ctx.org_b_id_str).unwrap());
+    let tamper_res = bind_organization(&req_org_b, &ctx.mem_a);
+    assert!(
+        tamper_res.is_err(),
+        "Application layer must reject cross-tenant binding attempt before DB layer"
+    );
+
+    // 3. DATABASE INDEPENDENCE PATH
+    // Tenant A DB context active -> deliberately issue broad raw DB query without app tenant predicate -> PostgreSQL independently blocks Tenant B rows
+    let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
+    let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
+        .bind(&ctx.res_b1_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .unwrap();
+
+    assert!(
+        row_b.is_none(),
+        "PostgreSQL RLS independently blocks Tenant B row even when raw query lacks WHERE organization_id predicate"
+    );
+    tx.commit().await.unwrap();
+    ctx.guard.teardown().await;
+}
+
+// ============================================================================
+// 5. DIRECT DB BOUNDARY PROOF
 // ============================================================================
 
 #[tokio::test]
 async fn test_direct_db_query_without_application_predicate() {
     let ctx = setup_test_context().await;
 
-    // Open transaction under Tenant A context
     let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-    // Intentionally issue a broad SELECT without `WHERE organization_id = $1` Rust predicate
     let row = sqlx::query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
         .bind(&ctx.res_b1_id)
         .fetch_optional(&mut *tx)
@@ -591,40 +694,39 @@ async fn test_direct_db_query_without_application_predicate() {
     );
 
     tx.commit().await.unwrap();
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 5. BRANCH ISOLATION TESTS
+// 6. BRANCH ISOLATION TESTS
 // ============================================================================
 
 #[tokio::test]
 async fn test_branch_scoped_read_isolation() {
     let ctx = setup_test_context().await;
 
-    // Org A with Branch A1 scope reads res_A1 (branch_A1) -> success
     let res1 = ctx
         .repo
         .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a1_id)
         .await;
     assert!(res1.is_ok());
 
-    // Org A with Branch A1 scope attempts to read res_A2 (branch_A2) -> denied by branch RLS
     let res2 = ctx
         .repo
         .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a2_id)
         .await;
     assert!(matches!(res2, Err(PgAuthorityError::NotFoundOrDenied)));
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
 async fn test_cross_tenant_branch_binding_denial() {
     let ctx = setup_test_context().await;
 
-    // Org B attempting to use Org A's branch_A1 -> composite FK / RLS fails
     let invalid_resource = TenantResource {
         id: format!("res_cross_branch_{}", uuid::Uuid::new_v4().simple()),
         organization_id: ctx.org_b_id_str.clone(),
-        branch_id: ctx.branch_a1_id_str.clone(), // Branch A1 belongs to Org A!
+        branch_id: ctx.branch_a1_id_str.clone(),
         data: "Cross Branch Invalid".to_string(),
     };
 
@@ -637,17 +739,17 @@ async fn test_cross_tenant_branch_binding_denial() {
         insert_res.is_err(),
         "Foreign key / RLS constraint must deny referencing a branch belonging to another organization"
     );
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 6. MISSING & INVALID CONTEXT TESTS
+// 7. MISSING & INVALID CONTEXT TESTS
 // ============================================================================
 
 #[tokio::test]
 async fn test_missing_tenant_context_fails_closed() {
     let ctx = setup_test_context().await;
 
-    // Begin tx without setting tenant context (unset app.organization_id)
     let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
@@ -659,6 +761,7 @@ async fn test_missing_tenant_context_fails_closed() {
         count, 0,
         "Unset / missing tenant context must return 0 rows (fail closed)"
     );
+    ctx.guard.teardown().await;
 }
 
 #[tokio::test]
@@ -682,10 +785,11 @@ async fn test_invalid_tenant_context_fails_closed() {
         matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
         "Nonexistent tenant context must fail closed"
     );
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 7. CONNECTION POOL LEAKAGE & ROLLBACK SAFETY
+// 8. CONNECTION POOL LEAKAGE & ROLLBACK SAFETY
 // ============================================================================
 
 #[tokio::test]
@@ -693,7 +797,6 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
     let ctx = setup_test_context().await;
 
     for _ in 0..10 {
-        // Step 1: Tx 1 sets Tenant A context, queries res_A1, then rolls back
         {
             let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
             set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
@@ -711,14 +814,12 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
             tx.rollback().await.unwrap();
         }
 
-        // Step 2: Tx 2 on same pool sets Tenant B context. Verify Tenant A context does NOT leak
         {
             let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
             set_transaction_tenant_context(&mut tx, &ctx.org_b_scope)
                 .await
                 .unwrap();
 
-            // Tenant B should see res_B1
             let count_b: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
                     .bind(&ctx.res_b1_id)
@@ -727,7 +828,6 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
                     .unwrap();
             assert_eq!(count_b, 1);
 
-            // Tenant B must NOT see res_A1
             let count_a: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
                     .bind(&ctx.res_a1_id)
@@ -742,10 +842,11 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
             tx.commit().await.unwrap();
         }
     }
+    ctx.guard.teardown().await;
 }
 
 // ============================================================================
-// 8. CONCURRENT TENANT A & B READ & WRITE ISOLATION
+// 9. CONCURRENT TENANT A & B READ & WRITE ISOLATION
 // ============================================================================
 
 #[tokio::test]
@@ -758,7 +859,6 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
         set.spawn(async move {
             let item_id = format!("res_concurrent_{i}_{}", uuid::Uuid::new_v4().simple());
             if i % 2 == 0 {
-                // Task for Tenant A: Insert item under Tenant A
                 let res_a = TenantResource {
                     id: item_id.clone(),
                     organization_id: ctx_clone.org_a_id_str.clone(),
@@ -771,14 +871,12 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
                     .await
                     .unwrap();
 
-                // Tenant A reads its inserted item
                 let read_a = ctx_clone
                     .repo
                     .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
                     .await;
                 assert!(read_a.is_ok());
 
-                // Tenant B attempts to read Tenant A's inserted item -> denied
                 let read_b_denied = ctx_clone
                     .repo
                     .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
@@ -788,7 +886,6 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
                     Err(PgAuthorityError::NotFoundOrDenied)
                 ));
             } else {
-                // Task for Tenant B: Insert item under Tenant B
                 let res_b = TenantResource {
                     id: item_id.clone(),
                     organization_id: ctx_clone.org_b_id_str.clone(),
@@ -801,14 +898,12 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
                     .await
                     .unwrap();
 
-                // Tenant B reads its inserted item
                 let read_b = ctx_clone
                     .repo
                     .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
                     .await;
                 assert!(read_b.is_ok());
 
-                // Tenant A attempts to read Tenant B's inserted item -> denied
                 let read_a_denied = ctx_clone
                     .repo
                     .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
@@ -824,4 +919,5 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
     while let Some(res) = set.join_next().await {
         res.expect("Concurrent task panicked");
     }
+    ctx.guard.teardown().await;
 }

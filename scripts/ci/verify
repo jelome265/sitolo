@@ -20,12 +20,14 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 echo "==> Compile"
 cargo check --workspace --all-targets --all-features --locked
 
-echo "==> Unit tests"
-cargo test --workspace --all-targets --all-features --locked
-
 echo "==> PostgreSQL RLS Security Suite"
 export DATABASE_URL="${DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/sitolo_test}"
-cargo test -p sitolo-persistence --test rls_security_tests --locked
+export ADMIN_DATABASE_URL="${ADMIN_DATABASE_URL:-$DATABASE_URL}"
+export APP_RUNTIME_PASSWORD="${APP_RUNTIME_PASSWORD:-app_runtime_pass}"
+export RUNTIME_DATABASE_URL="${RUNTIME_DATABASE_URL:-postgres://app_runtime:${APP_RUNTIME_PASSWORD}@127.0.0.1:5432/sitolo_test}"
+
+echo "==> Unit tests"
+cargo test --workspace --all-targets --all-features --locked
 
 echo "==> Release build"
 cargo build --workspace --release --locked
