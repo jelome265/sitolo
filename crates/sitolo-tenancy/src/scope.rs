@@ -144,14 +144,6 @@ impl AuthorizedScope {
             membership_version: membership.state_version,
         }
     }
-
-    /// Adds branch scope to this authorized scope.
-    #[allow(dead_code)]
-    #[must_use]
-    pub fn with_branch(mut self, branch_id: BranchId) -> Self {
-        self.branch_id = Some(branch_id);
-        self
-    }
 }
 
 /// Resolves the effective scope from server-loaded records (sections 5.1,

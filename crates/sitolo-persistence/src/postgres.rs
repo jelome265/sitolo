@@ -6,7 +6,7 @@
 
 use sitolo_domain::tenancy::{Branch, BranchId, Organization, OrganizationId, TenancyError};
 use sitolo_tenancy::AuthorizedScope;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use thiserror::Error;
 
@@ -30,16 +30,19 @@ pub struct PgAuthorityPools {
 }
 
 impl PgAuthorityPools {
-    /// Creates an administrative pool and a runtime pool given database credentials/host parameters.
-    pub async fn connect(admin_url: &str, runtime_url: &str) -> Result<Self, PgAuthorityError> {
+    /// Creates an administrative pool and a runtime pool given database connection options.
+    pub async fn connect_options(
+        admin_opts: PgConnectOptions,
+        runtime_opts: PgConnectOptions,
+    ) -> Result<Self, PgAuthorityError> {
         let admin_pool = PgPoolOptions::new()
-            .max_connections(20)
-            .connect(admin_url)
+            .max_connections(2)
+            .connect_with(admin_opts)
             .await?;
 
         let runtime_pool = PgPoolOptions::new()
-            .max_connections(20)
-            .connect(runtime_url)
+            .max_connections(3)
+            .connect_with(runtime_opts)
             .await?;
 
         Ok(Self {
@@ -48,7 +51,15 @@ impl PgAuthorityPools {
         })
     }
 
-    /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges.
+    /// Creates an administrative pool and a runtime pool given database URLs.
+    pub async fn connect(admin_url: &str, runtime_url: &str) -> Result<Self, PgAuthorityError> {
+        let admin_opts: PgConnectOptions = admin_url.parse()?;
+        let runtime_opts: PgConnectOptions = runtime_url.parse()?;
+        Self::connect_options(admin_opts, runtime_opts).await
+    }
+
+    /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges
+    /// and does NOT own protected relations.
     pub async fn verify_runtime_role(&self) -> Result<(), PgAuthorityError> {
         let row = sqlx::query(
             "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
@@ -84,10 +95,31 @@ impl PgAuthorityPools {
             ));
         }
 
+        // Verify runtime role is NOT the owner of protected tables (table ownership bypasses RLS in PG)
+        let protected_tables = vec!["organizations", "branches", "tenant_resources"];
+
+        for table in protected_tables {
+            let owner_role: String = sqlx::query_scalar(
+                "SELECT pg_get_userbyid(c.relowner)
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = 'public' AND c.relname = $1",
+            )
+            .bind(table)
+            .fetch_one(&self.admin_pool)
+            .await?;
+
+            if owner_role == "app_runtime" {
+                return Err(PgAuthorityError::SecurityViolation(format!(
+                    "Protected relation {table} must NOT be owned by app_runtime"
+                )));
+            }
+        }
+
         Ok(())
     }
 
-    /// Verifies via PostgreSQL catalogs that RLS is enabled and policies exist on protected tables.
+    /// Verifies via PostgreSQL catalogs that RLS is enabled, forced, and expected policies exist.
     pub async fn verify_rls_catalog_metadata(&self) -> Result<(), PgAuthorityError> {
         let protected_tables = vec!["organizations", "branches", "tenant_resources"];
 
@@ -116,22 +148,44 @@ impl PgAuthorityPools {
                 )));
             }
 
-            // Verify policy exists for table
-            let policy_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*)
+            // Verify policy exists with expected policy name
+            let expected_policy_name = format!("{table}_isolation_policy");
+            let policy_row = sqlx::query(
+                "SELECT polname, pg_get_expr(polqual, polrelid) as qual_expr, pg_get_expr(polwithcheck, polrelid) as check_expr
                  FROM pg_policy p
                  JOIN pg_class c ON c.oid = p.polrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public' AND c.relname = $1",
+                 WHERE n.nspname = 'public' AND c.relname = $1 AND p.polname = $2",
             )
             .bind(table)
-            .fetch_one(&self.admin_pool)
+            .bind(&expected_policy_name)
+            .fetch_optional(&self.admin_pool)
             .await?;
 
-            if policy_count == 0 {
-                return Err(PgAuthorityError::SecurityViolation(format!(
-                    "Table {table} has no RLS policies defined"
-                )));
+            match policy_row {
+                Some(p_row) => {
+                    let qual_expr: Option<String> = p_row.get("qual_expr");
+                    let check_expr: Option<String> = p_row.get("check_expr");
+
+                    let qual = qual_expr.unwrap_or_default();
+                    let check = check_expr.unwrap_or_default();
+
+                    if !qual.contains("app.organization_id") {
+                        return Err(PgAuthorityError::SecurityViolation(format!(
+                            "Policy {expected_policy_name} on {table} USING expression does not reference app.organization_id"
+                        )));
+                    }
+                    if !check.contains("app.organization_id") {
+                        return Err(PgAuthorityError::SecurityViolation(format!(
+                            "Policy {expected_policy_name} on {table} WITH CHECK expression does not reference app.organization_id"
+                        )));
+                    }
+                }
+                None => {
+                    return Err(PgAuthorityError::SecurityViolation(format!(
+                        "Table {table} missing expected policy {expected_policy_name}"
+                    )));
+                }
             }
         }
 

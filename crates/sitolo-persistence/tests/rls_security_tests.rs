@@ -5,18 +5,22 @@
 //! Prove tenant boundary against PostgreSQL RLS, least-privileged runtime role,
 //! transaction-local context derived from AuthorizedScope, and negative tests.
 
-use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId};
+use sitolo_domain::tenancy::{
+    Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenantUserId,
+};
 use sitolo_persistence::postgres::{
     PgAuthorityError, PgAuthorityPools, PgTenantRepository, TenantResource,
     set_transaction_tenant_context,
 };
-use sitolo_tenancy::AuthorizedScope;
+use sitolo_tenancy::{
+    AuthorizedScope, RequestedOrganizationId, bind_organization, resolve_effective_scope,
+};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
 
-static POOLS_INIT: OnceCell<PgAuthorityPools> = OnceCell::const_new();
+static MIGRATIONS_INIT: OnceCell<()> = OnceCell::const_new();
 
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
 struct TestContext {
@@ -31,39 +35,36 @@ struct TestContext {
     org_a_id_str: String,
     org_b_id_str: String,
     branch_a1_id_str: String,
+    branch_b1_id_str: String,
 }
 
-async fn get_shared_pools() -> PgAuthorityPools {
-    POOLS_INIT
+async fn setup_test_context() -> TestContext {
+    let db_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/sitolo_test".to_string());
+
+    let runtime_url = db_url
+        .replace("postgres:postgres@", "app_runtime:app_runtime_pass@")
+        .replace("postgres@", "app_runtime:app_runtime_pass@");
+
+    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db_url)
+        .await
+        .expect("FAIL-CLOSED: Real PostgreSQL database connection failed. Tests cannot run without PostgreSQL.");
+
+    MIGRATIONS_INIT
         .get_or_init(|| async {
-            let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgres://postgres:postgres@127.0.0.1:5432/sitolo_test".to_string()
-            });
-
-            let runtime_url = db_url
-                .replace("postgres:postgres@", "app_runtime:app_runtime_pass@")
-                .replace("postgres@", "app_runtime:app_runtime_pass@");
-
-            let admin_pool = sqlx::PgPool::connect(&db_url).await.expect(
-                "FAIL-CLOSED: Real PostgreSQL database connection failed. Tests cannot run without PostgreSQL.",
-            );
-
             let migration_sql = include_str!("../../../migrations/0001_initial_rls_schema.sql");
             sqlx::raw_sql(migration_sql)
                 .execute(&admin_pool)
                 .await
                 .expect("Failed to apply initial RLS schema migration");
-
-            PgAuthorityPools::connect(&db_url, &runtime_url)
-                .await
-                .expect("Failed to create authority pools")
         })
-        .await
-        .clone()
-}
+        .await;
 
-async fn setup_test_context() -> TestContext {
-    let pools = get_shared_pools().await;
+    let pools = PgAuthorityPools::connect(&db_url, &runtime_url)
+        .await
+        .expect("Failed to create authority pools");
 
     let unique_id = uuid::Uuid::new_v4().simple().to_string();
     let org_a_id_str = format!("org_A_{unique_id}");
@@ -76,31 +77,58 @@ async fn setup_test_context() -> TestContext {
     let res_a2_id = format!("res_A2_{unique_id}");
     let res_b1_id = format!("res_B1_{unique_id}");
 
-    // Build scopes
+    // Build domain objects
     let org_a_id = OrganizationId::new(&org_a_id_str).unwrap();
     let org_b_id = OrganizationId::new(&org_b_id_str).unwrap();
+
+    let mut org_a = Organization::provision(org_a_id.clone(), "Organization A").unwrap();
+    org_a.activate().unwrap();
+
+    let mut org_b = Organization::provision(org_b_id.clone(), "Organization B").unwrap();
+    org_b.activate().unwrap();
+
     let branch_a1_id = BranchId::new(&branch_a1_id_str).unwrap();
+    let branch_a2_id = BranchId::new(&branch_a2_id_str).unwrap();
+    let branch_b1_id = BranchId::new(&branch_b1_id_str).unwrap();
+
+    let mut branch_a1 =
+        Branch::provision(branch_a1_id.clone(), org_a_id.clone(), "Branch A1").unwrap();
+    branch_a1.activate().unwrap();
+
+    let mut branch_a2 =
+        Branch::provision(branch_a2_id.clone(), org_a_id.clone(), "Branch A2").unwrap();
+    branch_a2.activate().unwrap();
+
+    let mut branch_b1 =
+        Branch::provision(branch_b1_id.clone(), org_b_id.clone(), "Branch B1").unwrap();
+    branch_b1.activate().unwrap();
 
     let mem_a_id = MembershipId::new(format!("mem_A_{unique_id}")).unwrap();
     let mem_b_id = MembershipId::new(format!("mem_B_{unique_id}")).unwrap();
+    let user_a_id = TenantUserId::new(format!("user_A_{unique_id}")).unwrap();
+    let user_b_id = TenantUserId::new(format!("user_B_{unique_id}")).unwrap();
 
-    let org_a_scope = AuthorizedScope {
-        organization_id: org_a_id.clone(),
-        membership_id: mem_a_id.clone(),
-        branch_id: None,
-        organization_version: 1,
-        membership_version: 1,
-    };
+    let mut mem_a = Membership::invite(mem_a_id.clone(), org_a_id.clone(), user_a_id);
+    mem_a.mark_pending().unwrap();
+    mem_a.activate().unwrap();
 
-    let org_b_scope = AuthorizedScope {
-        organization_id: org_b_id.clone(),
-        membership_id: mem_b_id.clone(),
-        branch_id: None,
-        organization_version: 1,
-        membership_version: 1,
-    };
+    let mut mem_b = Membership::invite(mem_b_id.clone(), org_b_id.clone(), user_b_id);
+    mem_b.mark_pending().unwrap();
+    mem_b.activate().unwrap();
 
-    let org_a_b1_scope = org_a_scope.clone().with_branch(branch_a1_id.clone());
+    // Derive AuthorizedScope via full Phase 4 scope resolution pipeline
+    let req_a = RequestedOrganizationId(org_a_id.clone());
+    let _trusted_a = bind_organization(&req_a, &mem_a).unwrap();
+    let eff_a = resolve_effective_scope(&mem_a, &org_a, None).unwrap();
+    let org_a_scope = AuthorizedScope::from_effective(&eff_a);
+
+    let req_b = RequestedOrganizationId(org_b_id.clone());
+    let _trusted_b = bind_organization(&req_b, &mem_b).unwrap();
+    let eff_b = resolve_effective_scope(&mem_b, &org_b, None).unwrap();
+    let org_b_scope = AuthorizedScope::from_effective(&eff_b);
+
+    let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1)).unwrap();
+    let org_a_b1_scope = AuthorizedScope::from_effective(&eff_a_b1);
 
     let repo = PgTenantRepository::new(pools.runtime_pool.clone());
 
@@ -169,6 +197,7 @@ async fn setup_test_context() -> TestContext {
         org_a_id_str,
         org_b_id_str,
         branch_a1_id_str,
+        branch_b1_id_str,
     }
 }
 
@@ -323,16 +352,19 @@ async fn test_negative_tenant_a_cannot_delete_b() {
 }
 
 #[tokio::test]
-async fn test_negative_tenant_a_cannot_insert_b_owned_row() {
+async fn test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid() {
     let ctx = setup_test_context().await;
     let res_malicious_id = format!("res_malicious_{}", uuid::Uuid::new_v4().simple());
+
+    // Relationally valid fixture: Branch B1 belongs to Org B (FK constraint is 100% satisfied!)
     let malicious_resource = TenantResource {
         id: res_malicious_id.clone(),
-        organization_id: ctx.org_b_id_str.clone(), // Trying to insert for Org B
-        branch_id: "branch_B1_fake".to_string(),
+        organization_id: ctx.org_b_id_str.clone(),
+        branch_id: ctx.branch_b1_id_str.clone(),
         data: "Malicious Insert".to_string(),
     };
 
+    // Attempt insert while executing under Tenant A's AuthorizedScope
     let insert_res = ctx
         .repo
         .create_tenant_resource(&ctx.org_a_scope, &malicious_resource)
@@ -343,7 +375,7 @@ async fn test_negative_tenant_a_cannot_insert_b_owned_row() {
         "RLS WITH CHECK must deny inserting a row owned by Org B while operating under Org A context"
     );
 
-    // Verify DB state remains unchanged via Tenant B read
+    // Verify denial was strictly caused by RLS WITH CHECK, and DB state is unchanged
     let fetch_res = ctx
         .repo
         .get_tenant_resource(&ctx.org_b_scope, &res_malicious_id)
@@ -353,17 +385,30 @@ async fn test_negative_tenant_a_cannot_insert_b_owned_row() {
 }
 
 #[tokio::test]
-async fn test_negative_ownership_changing_update() {
+async fn test_negative_ownership_changing_update_relationally_valid() {
     let ctx = setup_test_context().await;
-    let update_res = ctx
-        .repo
-        .update_tenant_resource_ownership(&ctx.org_a_scope, &ctx.res_a1_id, &ctx.org_b_id_str)
-        .await;
+
+    // Relationally valid mutation target: Change organization_id to Org B AND branch_id to Branch B1 (belonging to Org B).
+    // The foreign key constraint is 100% valid! The ONLY constraint denying this update is PostgreSQL RLS WITH CHECK!
+    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
+
+    let update_res = sqlx::query(
+        "UPDATE tenant_resources
+         SET organization_id = $1, branch_id = $2
+         WHERE id = $3",
+    )
+    .bind(&ctx.org_b_id_str)
+    .bind(&ctx.branch_b1_id_str)
+    .bind(&ctx.res_a1_id)
+    .execute(&mut *tx)
+    .await;
 
     assert!(
         update_res.is_err(),
-        "RLS WITH CHECK must deny changing organization_id of res_A1 to org_B"
+        "RLS WITH CHECK must deny changing ownership to Org B under Tenant A transaction context"
     );
+
+    tx.rollback().await.unwrap();
 
     // Verify DB state remains unchanged (res_A1 still owned by org_A)
     let fetch_res = ctx
@@ -376,7 +421,33 @@ async fn test_negative_ownership_changing_update() {
 }
 
 // ============================================================================
-// 4. BRANCH ISOLATION TESTS
+// 4. DIRECT DB BOUNDARY PROOF (WITHOUT APPLICATION WHERE CLAUSE)
+// ============================================================================
+
+#[tokio::test]
+async fn test_direct_db_query_without_application_predicate() {
+    let ctx = setup_test_context().await;
+
+    // Open transaction under Tenant A context
+    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
+
+    // Intentionally issue a broad SELECT without `WHERE organization_id = $1` Rust predicate
+    let row = sqlx::query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
+        .bind(&ctx.res_b1_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .unwrap();
+
+    assert!(
+        row.is_none(),
+        "PostgreSQL RLS must independently hide res_B1 even when application query lacks a tenant predicate"
+    );
+
+    tx.commit().await.unwrap();
+}
+
+// ============================================================================
+// 5. BRANCH ISOLATION TESTS
 // ============================================================================
 
 #[tokio::test]
@@ -422,7 +493,7 @@ async fn test_cross_tenant_branch_binding_denial() {
 }
 
 // ============================================================================
-// 5. MISSING & INVALID CONTEXT TESTS
+// 6. MISSING & INVALID CONTEXT TESTS
 // ============================================================================
 
 #[tokio::test]
@@ -467,7 +538,7 @@ async fn test_invalid_tenant_context_fails_closed() {
 }
 
 // ============================================================================
-// 6. CONNECTION POOL LEAKAGE & ROLLBACK SAFETY
+// 7. CONNECTION POOL LEAKAGE & ROLLBACK SAFETY
 // ============================================================================
 
 #[tokio::test]
@@ -527,49 +598,78 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
 }
 
 // ============================================================================
-// 7. CONCURRENT TENANT A & B ISOLATION
+// 8. CONCURRENT TENANT A & B READ & WRITE ISOLATION
 // ============================================================================
 
 #[tokio::test]
-async fn test_concurrent_tenant_isolation() {
+async fn test_concurrent_tenant_isolation_reads_and_writes() {
     let ctx = Arc::new(setup_test_context().await);
     let mut set = JoinSet::new();
 
     for i in 0..8 {
         let ctx_clone = ctx.clone();
         set.spawn(async move {
+            let item_id = format!("res_concurrent_{i}_{}", uuid::Uuid::new_v4().simple());
             if i % 2 == 0 {
-                // Task for Tenant A
-                let res = ctx_clone
+                // Task for Tenant A: Insert item under Tenant A
+                let res_a = TenantResource {
+                    id: item_id.clone(),
+                    organization_id: ctx_clone.org_a_id_str.clone(),
+                    branch_id: ctx_clone.branch_a1_id_str.clone(),
+                    data: format!("Concurrent Data A {i}"),
+                };
+                ctx_clone
                     .repo
-                    .get_tenant_resource(&ctx_clone.org_a_scope, &ctx_clone.res_a1_id)
-                    .await;
-                assert!(res.is_ok(), "Concurrent Tenant A read res_A1 must succeed");
+                    .create_tenant_resource(&ctx_clone.org_a_scope, &res_a)
+                    .await
+                    .unwrap();
 
-                let res_b = ctx_clone
+                // Tenant A reads its inserted item
+                let read_a = ctx_clone
                     .repo
-                    .get_tenant_resource(&ctx_clone.org_a_scope, &ctx_clone.res_b1_id)
+                    .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
                     .await;
-                assert!(
-                    matches!(res_b, Err(PgAuthorityError::NotFoundOrDenied)),
-                    "Concurrent Tenant A read res_B1 must be denied"
-                );
+                assert!(read_a.is_ok());
+
+                // Tenant B attempts to read Tenant A's inserted item -> denied
+                let read_b_denied = ctx_clone
+                    .repo
+                    .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
+                    .await;
+                assert!(matches!(
+                    read_b_denied,
+                    Err(PgAuthorityError::NotFoundOrDenied)
+                ));
             } else {
-                // Task for Tenant B
-                let res = ctx_clone
+                // Task for Tenant B: Insert item under Tenant B
+                let res_b = TenantResource {
+                    id: item_id.clone(),
+                    organization_id: ctx_clone.org_b_id_str.clone(),
+                    branch_id: ctx_clone.branch_b1_id_str.clone(),
+                    data: format!("Concurrent Data B {i}"),
+                };
+                ctx_clone
                     .repo
-                    .get_tenant_resource(&ctx_clone.org_b_scope, &ctx_clone.res_b1_id)
-                    .await;
-                assert!(res.is_ok(), "Concurrent Tenant B read res_B1 must succeed");
+                    .create_tenant_resource(&ctx_clone.org_b_scope, &res_b)
+                    .await
+                    .unwrap();
 
-                let res_a = ctx_clone
+                // Tenant B reads its inserted item
+                let read_b = ctx_clone
                     .repo
-                    .get_tenant_resource(&ctx_clone.org_b_scope, &ctx_clone.res_a1_id)
+                    .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
                     .await;
-                assert!(
-                    matches!(res_a, Err(PgAuthorityError::NotFoundOrDenied)),
-                    "Concurrent Tenant B read res_A1 must be denied"
-                );
+                assert!(read_b.is_ok());
+
+                // Tenant A attempts to read Tenant B's inserted item -> denied
+                let read_a_denied = ctx_clone
+                    .repo
+                    .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
+                    .await;
+                assert!(matches!(
+                    read_a_denied,
+                    Err(PgAuthorityError::NotFoundOrDenied)
+                ));
             }
         });
     }
