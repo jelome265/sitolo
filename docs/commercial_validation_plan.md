@@ -3004,3 +3004,45 @@ WHAT DECISION FOLLOWED?
 No commercial initiative should be described as validated when these questions cannot be answered.
 
 **End of Commercial Validation Plan.**
+
+
+# 50. Commercial Operating Model Documentation Crosswalk
+
+The Commercial Operating Model is now decomposed into dedicated documents. The existing experiment framework remains authoritative for validation thresholds and methodology; these documents define the mechanisms to validate.
+
+| Commercial mechanism | Governing document | Existing/required validation focus |
+|---|---|---|
+| buyer/user/approver separation | [Buyer/User/Approver Model](buyer_user_approver_and_purchase_process.md) | decision-path mapping, approval loss, sales-cycle friction |
+| collection/payment method | [Payment & Collections](payment_collections_and_subscription_billing.md) | payment-method conversion, success, fees, delinquency, recovery |
+| distribution | [Distribution Strategy](distribution_channel_and_market_access_strategy.md) | channel CAC, activation, retention, contribution |
+| partner economics | [Partner Economics](partner_agent_economics_and_governance.md) | commission burden, partner quality, concentration |
+| onboarding/migration | [Onboarding & Migration](onboarding_and_migration_strategy.md) | time-to-first-value, migration failure, assisted-cost burden |
+| trust/recovery | [Trust & Continuity](trust_adoption_and_operational_continuity.md) | recovery success, discrepancy reports, trust incidents |
+| prolonged offline | [Offline Validation](offline_continuity_commercial_validation.md) | multi-day offline convergence, duplicate/conflict rate, support burden |
+| retention/churn | [Retention & Churn](retention_churn_and_customer_lifecycle.md) | segmented churn, reactivation, seasonal inactivity |
+| support economics | [Support Economics](support_economics_and_service_operations.md) | contacts/account, cost/account, resolution, support-caused churn |
+| regulatory boundary | [Regulatory Perimeter](regulatory_perimeter_and_compliance_boundary.md) | legal/provider readiness before regulated feature release |
+| tax/fiscal readiness | [Tax & Fiscal Readiness](tax_and_fiscal_readiness_strategy.md) | tax-status segmentation, EIS purchase driver, compliance workflow |
+| data portability | [Data Governance](data_portability_and_data_governance.md) | export success, enterprise procurement questions, trust/churn signals |
+| fraud/loss prevention | [Fraud & Business Control](fraud_loss_prevention_and_business_control.md) | variance reduction, control adoption, willingness-to-pay |
+| verticalization | [Vertical Module Model](vertical_module_commercial_model.md) | module demand, support burden, incremental willingness-to-pay |
+| upgrade/expansion | [Upgrade & Tier Migration](upgrade_expansion_and_tier_migration_model.md) | trigger frequency, upgrade acceptance, expansion contribution |
+| unit economics | [Unit Economics](unit_economics_cac_and_contribution_model.md) | contribution, CAC, payback by tier/channel |
+| defensibility | [Defensibility Strategy](defensibility_and_moat_strategy.md) | workflow depth, referral share, retention, integration dependency |
+| geographic expansion | [Geographic Expansion](geographic_expansion_and_country_entry_strategy.md) | country dossier completeness and pre-entry economics |
+| reconciliation | [Mobile Money Reconciliation](mobile_money_reconciliation_business_model.md) | reconciliation adoption, exception resolution, retention impact |
+| merchant credit/lay-by | [Credit & Lay-by](credit_and_layby_commercial_model.md) | workflow demand and legal classification before financial-product expansion |
+| intelligence/alerts | [Business Intelligence](business_intelligence_alerts_and_action_model.md) | action rate and measurable business outcome, not “AI usage” |
+
+## 50.1 Required Experiment Discipline
+
+Every new experiment derived from these documents must retain the existing discipline:
+
+- one primary hypothesis;
+- pre-registered population and metric;
+- fixed pass/fail/conditional thresholds;
+- segment-level reporting;
+- contribution economics where money is involved;
+- documented evidence and decision log.
+
+No new commercial document overrides the experiment governance already defined in this plan.
