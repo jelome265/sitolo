@@ -13,6 +13,6 @@
 mod scope;
 
 pub use scope::{
-    EffectiveScope, RequestedBranchId, RequestedOrganizationId, ScopeError, TrustedOrganizationId,
-    bind_organization, resolve_effective_scope,
+    AuthorizedScope, EffectiveScope, RequestedBranchId, RequestedOrganizationId, ScopeError,
+    TrustedOrganizationId, bind_organization, resolve_effective_scope,
 };

@@ -106,6 +106,7 @@ pub struct EffectiveScope {
 pub struct AuthorizedScope {
     pub organization_id: OrganizationId,
     pub membership_id: MembershipId,
+    pub branch_id: Option<BranchId>,
     pub organization_version: u64,
     pub membership_version: u64,
 }
@@ -120,6 +121,7 @@ impl AuthorizedScope {
         AuthorizedScope {
             organization_id: scope.organization_id.clone(),
             membership_id: scope.membership_id.clone(),
+            branch_id: scope.branch_id.clone(),
             organization_version: scope.organization_version,
             membership_version: scope.membership_version,
         }
@@ -137,9 +139,18 @@ impl AuthorizedScope {
         AuthorizedScope {
             organization_id: trusted.0.clone(),
             membership_id: membership.id.clone(),
+            branch_id: None,
             organization_version: membership.state_version,
             membership_version: membership.state_version,
         }
+    }
+
+    /// Adds branch scope to this authorized scope.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn with_branch(mut self, branch_id: BranchId) -> Self {
+        self.branch_id = Some(branch_id);
+        self
     }
 }
 

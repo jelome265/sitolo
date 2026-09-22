@@ -7,6 +7,7 @@
 
 mod memory;
 mod ports;
+pub mod postgres;
 mod runtime;
 mod tenancy;
 
