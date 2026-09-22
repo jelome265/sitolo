@@ -24,6 +24,7 @@ echo "==> Unit tests"
 cargo test --workspace --all-targets --all-features --locked
 
 echo "==> PostgreSQL RLS Security Suite"
+export DATABASE_URL="${DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/sitolo_test}"
 cargo test -p sitolo-persistence --test rls_security_tests --locked
 
 echo "==> Release build"

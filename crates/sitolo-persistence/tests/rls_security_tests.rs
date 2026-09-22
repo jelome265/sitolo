@@ -9,12 +9,13 @@ use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenantUserId,
 };
 use sitolo_persistence::postgres::{
-    PgAuthorityError, PgAuthorityPools, PgTenantRepository, TenantResource,
-    set_transaction_tenant_context,
+    PgAuthorityError, PgAuthorityPools, set_transaction_tenant_context,
 };
 use sitolo_tenancy::{
     AuthorizedScope, RequestedOrganizationId, bind_organization, resolve_effective_scope,
 };
+use sqlx::postgres::PgConnectOptions;
+use sqlx::{Postgres, Row, Transaction};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -22,10 +23,140 @@ use tokio::task::JoinSet;
 
 static MIGRATIONS_INIT: OnceCell<()> = OnceCell::const_new();
 
+/// Test-harness tenant resource entity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantResource {
+    pub id: String,
+    pub organization_id: String,
+    pub branch_id: String,
+    pub data: String,
+}
+
+/// Test-harness repository helper for Part 7 security proof operations.
+pub struct PgTestTenantRepository {
+    pub runtime_pool: sqlx::PgPool,
+}
+
+impl PgTestTenantRepository {
+    pub fn new(runtime_pool: sqlx::PgPool) -> Self {
+        Self { runtime_pool }
+    }
+
+    pub async fn begin_tx(
+        &self,
+        scope: &AuthorizedScope,
+    ) -> Result<Transaction<'_, Postgres>, PgAuthorityError> {
+        let mut tx = self.runtime_pool.begin().await?;
+        set_transaction_tenant_context(&mut tx, scope).await?;
+        Ok(tx)
+    }
+
+    pub async fn create_tenant_resource(
+        &self,
+        scope: &AuthorizedScope,
+        resource: &TenantResource,
+    ) -> Result<(), PgAuthorityError> {
+        let mut tx = self.begin_tx(scope).await?;
+        sqlx::query(
+            "INSERT INTO tenant_resources (id, organization_id, branch_id, data)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&resource.id)
+        .bind(&resource.organization_id)
+        .bind(&resource.branch_id)
+        .bind(&resource.data)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn get_tenant_resource(
+        &self,
+        scope: &AuthorizedScope,
+        resource_id: &str,
+    ) -> Result<TenantResource, PgAuthorityError> {
+        let mut tx = self.begin_tx(scope).await?;
+        let row = sqlx::query(
+            "SELECT id, organization_id, branch_id, data
+             FROM tenant_resources
+             WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(resource_id)
+        .bind(scope.organization_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        match row {
+            Some(row) => Ok(TenantResource {
+                id: row.get("id"),
+                organization_id: row.get("organization_id"),
+                branch_id: row.get("branch_id"),
+                data: row.get("data"),
+            }),
+            None => Err(PgAuthorityError::NotFoundOrDenied),
+        }
+    }
+
+    pub async fn update_tenant_resource(
+        &self,
+        scope: &AuthorizedScope,
+        resource_id: &str,
+        new_data: &str,
+    ) -> Result<(), PgAuthorityError> {
+        let mut tx = self.begin_tx(scope).await?;
+        let result = sqlx::query(
+            "UPDATE tenant_resources
+             SET data = $1
+             WHERE id = $2 AND organization_id = $3",
+        )
+        .bind(new_data)
+        .bind(resource_id)
+        .bind(scope.organization_id.as_str())
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Err(PgAuthorityError::NotFoundOrDenied);
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn delete_tenant_resource(
+        &self,
+        scope: &AuthorizedScope,
+        resource_id: &str,
+    ) -> Result<(), PgAuthorityError> {
+        let mut tx = self.begin_tx(scope).await?;
+        let result = sqlx::query(
+            "DELETE FROM tenant_resources
+             WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(resource_id)
+        .bind(scope.organization_id.as_str())
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Err(PgAuthorityError::NotFoundOrDenied);
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
 struct TestContext {
     pools: PgAuthorityPools,
-    repo: PgTenantRepository,
+    repo: PgTestTenantRepository,
     org_a_scope: AuthorizedScope,
     org_b_scope: AuthorizedScope,
     org_a_b1_scope: AuthorizedScope,
@@ -39,21 +170,33 @@ struct TestContext {
 }
 
 async fn setup_test_context() -> TestContext {
-    let db_url = env::var("DATABASE_URL")
+    let admin_url = env::var("ADMIN_DATABASE_URL")
+        .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/sitolo_test".to_string());
 
-    let runtime_url = db_url
-        .replace("postgres:postgres@", "app_runtime:app_runtime_pass@")
-        .replace("postgres@", "app_runtime:app_runtime_pass@");
+    let runtime_url = env::var("RUNTIME_DATABASE_URL").unwrap_or_else(|_| {
+        let runtime_pass =
+            env::var("APP_RUNTIME_PASSWORD").unwrap_or_else(|_| "app_runtime_pass".to_string());
+        format!("postgres://app_runtime:{runtime_pass}@127.0.0.1:5432/sitolo_test")
+    });
+
+    let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
+    let runtime_opts: PgConnectOptions = runtime_url.parse().expect("Invalid runtime database URL");
 
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
-        .connect(&db_url)
+        .connect_with(admin_opts.clone())
         .await
         .expect("FAIL-CLOSED: Real PostgreSQL database connection failed. Tests cannot run without PostgreSQL.");
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
+            // Set runtime role password dynamically from injected APP_RUNTIME_PASSWORD
+            let runtime_pass =
+                env::var("APP_RUNTIME_PASSWORD").unwrap_or_else(|_| "app_runtime_pass".to_string());
+            let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
+            sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
+
             let migration_sql = include_str!("../../../migrations/0001_initial_rls_schema.sql");
             sqlx::raw_sql(migration_sql)
                 .execute(&admin_pool)
@@ -62,7 +205,7 @@ async fn setup_test_context() -> TestContext {
         })
         .await;
 
-    let pools = PgAuthorityPools::connect(&db_url, &runtime_url)
+    let pools = PgAuthorityPools::connect_options(admin_opts, runtime_opts)
         .await
         .expect("Failed to create authority pools");
 
@@ -130,7 +273,7 @@ async fn setup_test_context() -> TestContext {
     let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1)).unwrap();
     let org_a_b1_scope = AuthorizedScope::from_effective(&eff_a_b1);
 
-    let repo = PgTenantRepository::new(pools.runtime_pool.clone());
+    let repo = PgTestTenantRepository::new(pools.runtime_pool.clone());
 
     // Seed Orgs A and B via admin pool
     sqlx::query(
@@ -212,6 +355,11 @@ async fn test_catalog_runtime_role_privileges() {
         .verify_runtime_role()
         .await
         .expect("app_runtime role privileges failed catalog verification");
+
+    ctx.pools
+        .verify_effective_privileges()
+        .await
+        .expect("app_runtime effective privileges failed catalog verification");
 }
 
 #[tokio::test]

@@ -4,15 +4,12 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN
-        CREATE ROLE app_runtime WITH LOGIN PASSWORD 'app_runtime_pass' NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-    ELSE
-        ALTER ROLE app_runtime WITH PASSWORD 'app_runtime_pass';
+        CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     END IF;
 END
 $$;
 
--- Grant database & schema privileges
-GRANT CONNECT ON DATABASE sitolo_test TO app_runtime;
+-- Grant schema privileges
 GRANT USAGE ON SCHEMA public TO app_runtime;
 
 -- 2. Organizations Table
