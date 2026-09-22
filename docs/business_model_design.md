@@ -936,7 +936,7 @@ LOCKED ONLY TO EXTRACT MONEY
 
 The previous price table is a planning hypothesis, not an approved tariff.
 
-Current Malawi competitor pricing provides an external market anchor, but not a willingness-to-pay conclusion. As of the 2026-09 commercial review, Phindu publicly lists general retail from MWK 65,000/month, while MalondaPlus lists Starter at MWK 75,000/month, Business at MWK 130,000/month, and Enterprise at MWK 180,000/month. These are vendor-published prices and must not be presented as independent evidence of market share or customer willingness to pay.
+Current Malawi competitor pricing provides an external market anchor, but not a willingness-to-pay conclusion. As of the 22 September 2026 review, Phindu publicly lists general retail from MWK 65,000/month; MalondaPlus publicly lists MWK 25,000/month Starter, MWK 45,000/month Growth, MWK 90,000/month Professional, and MWK 130,000/month Enterprise; and GulaSync publicly lists MWK 20,000/month Starter, MWK 35,000/month Business, and MWK 75,000/month Enterprise. These are vendor-published prices and must not be presented as independent evidence of market share or customer willingness to pay.
 
 Sitolo pricing must be validated through controlled offers rather than selected from competitor prices or internal intuition.
 
@@ -2443,7 +2443,8 @@ Sitolo therefore needs to compete on an integrated business-control loop and mea
 
 Sources:
 - https://www.phindu.co/pricing
-- https://www.malonda.ictechmw.com/malondaplus/index.php
+- https://www.malondaplus.com/malondaplus/pricing.php
+- https://www.gulasync.com/pricing
 
 ---
 
