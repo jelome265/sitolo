@@ -283,59 +283,6 @@ No stage is considered proven merely because the next stage is technically possi
 
 ---
 
-
-The core thesis is:
-
-> **A business operating system can acquire customers cheaply through operational utility and monetize them over time through increased control and complexity.**
-
-The merchant may initially care only about:
-
-```text
-FAST SALES
-```
-
-but the company wants the relationship to grow toward:
-
-```text
-FAST SALES
-+
-TRUSTED STOCK
-+
-PAYMENT CONTROL
-+
-RECONCILIATION
-+
-BUSINESS FINANCE
-+
-BRANCH MANAGEMENT
-+
-COMPLIANCE
-+
-ENTERPRISE INTEGRATION
-```
-
-The commercial flywheel is:
-
-```text
-LOW FRICTION
-    ↓
-ADOPTION
-    ↓
-DAILY USAGE
-    ↓
-DEPENDENCY
-    ↓
-EXPANSION
-    ↓
-REVENUE
-    ↓
-BETTER PRODUCT
-    ↓
-LOWER FRICTION
-```
-
----
-
 # 5. The Category
 
 ## 5.0 Category vs Commercial Beachhead
@@ -358,32 +305,6 @@ Enterprise
 ~~~
 
 This separation prevents the platform roadmap from forcing the sales motion to address every segment simultaneously.
-
-## 5.1 Public category
-
-**Business Operating System for African SMEs.**
-
-## 5.2 Internal strategic category
-
-**SME operating and financial-control infrastructure.**
-
-## 5.3 What Sitolo is not
-
-Sitolo is not positioned as:
-
-- a simple cash register;
-- a generic accounting package;
-- a heavyweight ERP by default;
-- a wallet;
-- a bank;
-- a lender;
-- an insurer;
-- a generic e-commerce marketplace.
-
-Future connections to financial services can exist without changing the core category.
-
----
-
 
 ## 5.1 Public category
 
@@ -1018,22 +939,6 @@ The complete pricing experiment and follow-up decision rules are defined in [Com
 
 ---
 
-
-The following ranges are planning hypotheses only.
-
-| Plan | Indicative range | Primary purpose |
-|---|---:|---|
-| Entry | MK0–10k/month | Adoption |
-| Core | MK20k–40k/month | Recurring base |
-| Business | MK50k–100k/month | Expansion |
-| Growth | MK100k–200k+/month | Multi-branch |
-| Enterprise | MK150k–500k+/month | High-value accounts |
-| Custom | Negotiated | Large integrations / SLA |
-
-The exact price must be validated with actual customers.
-
----
-
 # 30. Price Based on Complexity
 
 A more robust commercial model is:
@@ -1279,22 +1184,6 @@ EIS packaging may be included in upper plans or enterprise implementation where 
 
 ---
 
-
-EIS should create value through:
-
-- compliant electronic invoicing workflows where approved;
-- integration;
-- reduced manual reporting burden;
-- better record continuity.
-
-Commercial packaging:
-
-- included in upper plans;
-- add-on for formal businesses;
-- enterprise implementation.
-
----
-
 # 43. Revenue Stream — Financial Partners
 
 Future partner revenue may come from:
@@ -1438,29 +1327,6 @@ The defensibility thesis should therefore be treated as a combination of:
 - merchant trust.
 
 No individual feature should be treated as defensible merely because Sitolo implemented it.
-
----
-
-
-The value grows over time.
-
-```text
-DAY 1
-ONE SALE
-
-MONTH 3
-THOUSANDS OF EVENTS
-
-YEAR 1
-LONGITUDINAL PATTERN
-
-YEAR 3
-BUSINESS HISTORY
-```
-
-Historical data becomes useful because it explains current business behavior.
-
-The moat is therefore **trusted history**, not simply data possession.
 
 ---
 
@@ -1912,24 +1778,6 @@ CONTRIBUTION
 ~~~
 
 CAC, payback, retention and support burden must be attributed by channel.
-
----
-
-
-Use a portfolio of channels.
-
-```text
-DIRECT
-PARTNERS
-REFERRALS
-FIELD SALES
-CONTENT
-COMMUNITY
-DIGITAL
-ENTERPRISE SALES
-```
-
-The correct channel is the one producing retained customers, not merely cheap leads.
 
 ---
 
@@ -2568,19 +2416,6 @@ Sources:
 
 ---
 
-
-Current market research shows increasingly sophisticated African and Malawian products combining POS, inventory, offline operation, business reporting, mobile-money workflows and accounting/business management.
-
-Examples include vendor offerings such as MalondaPlus, Phindu, Quick-Think, Stooqo, ninoPOS and other African SMB-management tools.
-
-The strategic conclusion is critical:
-
-> **POS + inventory + offline is not sufficient differentiation anymore.**
-
-Sitolo must win on the integrated business-control loop.
-
----
-
 # 111. Competitive Positioning
 
 ~~~text
@@ -2597,22 +2432,6 @@ SITOLO
 This is a positioning hypothesis.
 
 It is valid only when supported by win/loss evidence, customer interviews, conversion data, and retention behaviour.
-
----
-
-
-```text
-BASIC POS
-“SELL”
-
-ERP
-“MANAGE EVERYTHING”
-
-SITOLO
-“RUN + CONTROL THE BUSINESS”
-```
-
-Sitolo should occupy the middle ground between overly simplistic POS and heavyweight ERP.
 
 ---
 
@@ -2634,20 +2453,6 @@ The first three are largely replicable capabilities. The commercial validation p
 
 ---
 
-
-Key differentiators should become:
-
-1. African SME operational fit.
-2. Mobile-first daily workflows.
-3. Offline-capable operation.
-4. Integrated payment visibility.
-5. Reconciliation as a first-class business function.
-6. Progressive enterprise controls.
-7. Business-type configuration without product fragmentation.
-8. Local-market integrations and support.
-
----
-
 # 113. Offline Differentiation
 
 Offline capability is commercially valuable only if it is reliable and materially useful to the target ICP.
@@ -2666,17 +2471,6 @@ Validation must measure whether offline capability changes:
 - support load;
 - willingness to pay;
 - channel conversion.
-
----
-
-
-Offline capability is commercially valuable only if it is reliable.
-
-A useful promise is:
-
-> **Keep selling when connectivity is unavailable; synchronize when it returns.**
-
-Do not promise that external payment providers or tax services themselves remain available offline.
 
 ---
 
@@ -4357,21 +4151,6 @@ Do not optimize purely for transaction volume. High transaction counts without c
 
 ---
 
-
-Recommended candidate:
-
-> **Verified business activity per active merchant.**
-
-It combines:
-
-- real usage;
-- business events;
-- merchant dependency.
-
-Do not optimize purely for transaction volume.
-
----
-
 # 216. Secondary Product Metrics
 
 Track:
@@ -4684,21 +4463,6 @@ ACQUISITION -50%
 A business model that survives only the base case is fragile.
 
 Detailed PMF and economic thresholds are defined in [Commercial Validation Plan](commercial_validation_plan.md).
-
----
-
-
-Stress-test the plan against:
-
-- 50% slower acquisition;
-- 2× support cost;
-- 20% lower ARPU;
-- 2× churn;
-- payment-provider outage;
-- EIS delay;
-- enterprise sales delays.
-
-If the business collapses under every downside case, the model is fragile.
 
 ---
 
@@ -5018,20 +4782,6 @@ Commodity-POS risk should remain an explicit commercial gate until customers dem
 
 ---
 
-
-Symptoms:
-
-- low ARPU;
-- high competition;
-- low switching cost;
-- feature parity.
-
-Countermeasure:
-
-> Deepen reconciliation, control and business-system value.
-
----
-
 # 252. Strategic Risk — Giant ERP
 
 Symptoms:
@@ -5079,18 +4829,6 @@ A lower price is not a commercial win when it produces negative contribution or 
 
 ---
 
-
-Symptoms:
-
-- customers love the product;
-- company loses money serving them.
-
-Countermeasure:
-
-> Measure cost-to-serve and value-based pricing.
-
----
-
 # 255. Strategic Risk — Overpricing
 
 Symptoms:
@@ -5119,18 +4857,6 @@ Countermeasure:
 > **Charge separately for real custom services, productize reusable requirements, and reject destructive requirements.**
 
 Enterprise revenue does not justify weakening the common product architecture.
-
----
-
-
-Symptoms:
-
-- custom features dominate roadmap;
-- engineering becomes consulting.
-
-Countermeasure:
-
-> Charge separately for custom services and reject destructive requirements.
 
 ---
 
@@ -5217,22 +4943,6 @@ Future financial-partner value remains a separate low-confidence hypothesis and 
 
 ---
 
-
-At minimum validate:
-
-1. Merchants will pay recurring SaaS.
-2. Reconciliation increases retention or willingness to pay.
-3. Business-type onboarding improves activation.
-4. Desktop increases value for growing businesses.
-5. Offline capability is a meaningful purchase driver.
-6. EIS increases enterprise value.
-7. Branch expansion increases ARPU.
-8. Accountant referrals produce quality customers.
-9. The product can be supported at positive contribution margin.
-10. Financial partners eventually value the structured merchant record.
-
----
-
 # 262. Commercial Experiment Register
 
 Each experiment must contain:
@@ -5265,23 +4975,6 @@ No “successful” label without evidence against the pre-registered pass crite
 
 ---
 
-
-Each experiment should contain:
-
-```text
-HYPOTHESIS
-SEGMENT
-VARIABLE
-BASELINE
-SAMPLE
-RESULT
-DECISION
-```
-
-No “successful” label without evidence.
-
----
-
 # 263. 12 Initial Commercial Experiments
 
 The 12 experiments remain the canonical first validation portfolio:
@@ -5302,22 +4995,6 @@ The 12 experiments remain the canonical first validation portfolio:
 | CV-12 | Enterprise pilot economics | Can enterprise sales convert without destructive custom work? |
 
 Sample sizes, experimental cells, thresholds, CAC accounting, and PMF gates are defined in [Commercial Validation Plan](commercial_validation_plan.md).
-
----
-
-
-1. Free vs trial.
-2. Core price sensitivity.
-3. Reconciliation willingness-to-pay.
-4. Accountant referrals.
-5. Distributor acquisition.
-6. Business-type onboarding.
-7. Mobile-only retention.
-8. Mobile+desktop retention.
-9. Branch expansion demand.
-10. EIS purchase-driver effect.
-11. Premium support demand.
-12. Enterprise pilot economics.
 
 ---
 
@@ -5348,23 +5025,6 @@ Every pilot must specify:
 - exit date.
 
 An indefinite pilot is treated as unpaid consulting, not validation.
-
----
-
-
-Every serious pilot should contain a conversion path.
-
-```text
-PILOT
-→
-MEASURE
-→
-REVIEW
-→
-PAID CONTRACT
-```
-
-If a prospect refuses any commercial discussion after a value demonstration, record the lesson.
 
 ---
 
@@ -5824,31 +5484,6 @@ The Commercial Validation Plan must produce evidence for these claims before the
 
 ---
 
-
-The moat is the combination:
-
-```text
-LOCAL FIT
-+
-OFFLINE RELIABILITY
-+
-WORKFLOW DEPTH
-+
-RECONCILIATION
-+
-BUSINESS HISTORY
-+
-INTEGRATIONS
-+
-TRUST
-+
-DISTRIBUTION
-```
-
-No single feature is sufficient.
-
----
-
 # 294. Final Business Model Flywheel
 
 ```text
@@ -6118,63 +5753,6 @@ The governing commercial discipline remains:
 > **Win with operations. Retain with control. Expand with complexity. Monetize enterprise needs. Build financial partnerships only after the software business is strong.**
 
 The executable evidence contract is [Commercial Validation Plan](commercial_validation_plan.md).
-
----
-
-
-Sitolo is a business operating system, not a POS application.
-
-Its strongest commercial design is:
-
-```text
-MOBILE
-→ run the business
-
-DESKTOP
-→ control the business
-
-CLOUD
-→ hold the shared business record
-
-FINANCIAL LAYER
-→ reconcile and explain money
-
-ENTERPRISE LAYER
-→ govern growth and complexity
-
-ECOSYSTEM
-→ connect partners when the business is ready
-```
-
-The merchant enters because Sitolo makes selling and stock easier.
-
-The merchant stays because Sitolo makes money and operations clearer.
-
-The merchant upgrades because the business becomes more complex.
-
-The company grows because the same customer can progress from:
-
-```text
-DUKA
-→
-SMALL SME
-→
-MULTI-STAFF
-→
-MULTI-BRANCH
-→
-ENTERPRISE
-```
-
-The financial layer is strategically important because it transforms raw transactions into a trusted record of economic activity.
-
-The business model should therefore remain disciplined:
-
-> **Win with operations. Retain with control. Expand with complexity. Monetize enterprise needs. Build financial partnerships only after the software business is strong.**
-
-That is the commercial foundation of:
-
-# **SITOLO — BUSINESS OPERATING SYSTEM FOR AFRICAN SMEs**
 
 ---
 
@@ -7880,26 +7458,3 @@ SYSTEM ARCHITECTURE
 Commercial validation must run in parallel with product implementation, while regulatory, security, financial-integrity, tenant-isolation, and data-governance requirements remain authoritative.
 
 ---
-
-
-The business model is intentionally complete enough that the next document can focus on **system architecture design** rather than rediscovering product economics.
-
-The next design should derive technical boundaries from:
-
-```text
-CUSTOMER VALUE
-    ↓
-BUSINESS WORKFLOWS
-    ↓
-COMMERCIAL ENTITLEMENTS
-    ↓
-DATA / TRUST REQUIREMENTS
-    ↓
-INTEGRATION REQUIREMENTS
-    ↓
-SYSTEM ARCHITECTURE
-```
-
-It should not reverse that order.
-
-**END OF BUSINESS MODEL DESIGN.**
