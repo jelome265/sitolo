@@ -191,17 +191,16 @@ async fn setup_test_context() -> TestContext {
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
-            // Set runtime role password dynamically from injected APP_RUNTIME_PASSWORD
-            let runtime_pass =
-                env::var("APP_RUNTIME_PASSWORD").unwrap_or_else(|_| "app_runtime_pass".to_string());
-            let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
-            sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
-
             let migration_sql = include_str!("../../../migrations/0001_initial_rls_schema.sql");
             sqlx::raw_sql(migration_sql)
                 .execute(&admin_pool)
                 .await
                 .expect("Failed to apply initial RLS schema migration");
+
+            if let Ok(runtime_pass) = env::var("APP_RUNTIME_PASSWORD") {
+                let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
+                sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
+            }
         })
         .await;
 
