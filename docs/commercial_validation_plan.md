@@ -573,7 +573,21 @@ A controlled time-limited trial will produce better paid conversion and a health
 
 ## Population
 
-Qualified primary-ICP merchants who have not previously used Sitolo.
+Qualified merchants from a defined validation cohort who have not previously used Sitolo.
+
+The default experiment lane may use the current general-retail validation cohort, but Duka accounts must be analysed separately whenever pricing, support, onboarding, device requirements, or value proposition materially differ.
+
+The experiment must preserve:
+
+~~~text
+SEGMENT
+BUSINESS TYPE
+SIZE BAND
+CHANNEL
+DEVICE MIX
+PRICE
+PLAN
+~~~
 
 ## Minimum sample
 
@@ -666,7 +680,7 @@ The primary validation cohort can support a price above the low-end adoption hyp
 
 ## Test structure
 
-Use three transparent price cells for substantially equivalent core capability:
+The standard core-price experiment remains:
 
 ~~~text
 P1 = MWK 35,000/month
@@ -676,7 +690,51 @@ P3 = MWK 75,000/month
 
 These are test prices only, not approved final prices.
 
-They are intentionally designed to examine demand below, around, and above the public market anchor observed in current Malawi vendor pricing.
+They test demand for the growing-SME/core operating package. They must **not** be reused as a universal price for Dukas, Multi-Branch accounts, or Enterprise.
+
+### Duka price lane
+
+Duka requires a distinct low-price experiment because the unit economics and hardware assumptions are materially different.
+
+Initial Duka planning hypothesis:
+
+~~~text
+Duka reference price = MK7,500/month
+~~~
+
+This is not a final tariff.
+
+The Duka experiment must test a narrow set of low-price offers around the reference point and must measure:
+
+~~~text
+PAID CONVERSION
++
+DAY-30 / DAY-90 RETENTION
++
+CAC
++
+SUPPORT COST
++
+INFRASTRUCTURE COST
++
+CONTRIBUTION
+~~~
+
+A Duka price should never be selected solely because it maximizes conversion.
+
+### Tier architecture reference
+
+The current planning tier structure is:
+
+| Tier | Indicative price | Main device model |
+|---|---:|---|
+| Duka | MK7,500/month | Mobile only |
+| SME | MK25,000/month | Mobile + PC |
+| Growth | MK50,000/month | Mobile + PC |
+| Multi-Branch | From MK90,000/month | Mobile branches + PC HQ |
+| Enterprise | From MK200,000/month | Mobile operations + PC/Web control |
+
+All five values are planning hypotheses. The commercial program must validate them individually or through appropriately designed price/packaging experiments.
 
 ## Minimum sample
 
@@ -2495,7 +2553,401 @@ That evidence should precede aggressive regional expansion, speculative fintech,
 
 ---
 
-# 47. References and Current External Market Baseline
+
+
+# 47. Tier, Device and Subscriber Validation Framework
+
+The commercial validation program must validate the **tier architecture**, not merely one generic subscription price.
+
+## 47.1 Tier architecture hypothesis
+
+The current planning hypothesis is:
+
+| Tier | Indicative monthly price | Customer | Default device model | UI complexity |
+|---|---:|---|---|---|
+| Duka | MK7,500 | One-location ultra-micro merchant | Mobile only | Very simple |
+| SME | MK25,000 | Small established retailer | Mobile + PC | Simple mobile / moderate PC |
+| Growth | MK50,000 | Growing, more complex SME | Mobile + PC | Moderate mobile / detailed PC |
+| Multi-Branch | From MK90,000 | Two or more locations | Mobile branches + PC HQ | Simple branch / high-density HQ |
+| Enterprise | From MK200,000 | High-governance organization | Mobile + PC/Web | Role-specific / high-density control |
+
+The values remain commercial hypotheses.
+
+## 47.2 Device doctrine
+
+The underlying hypothesis is:
+
+~~~text
+MOBILE
+→ RUN / OPERATE
+
+PC
+→ CONTROL / MANAGE
+
+WEB
+→ ADMINISTER / SUPPORT
+~~~
+
+This is a workflow rule.
+
+It is not a rigid rule that every SME must have both devices or that every enterprise branch must have a PC.
+
+## 47.3 Duka device hypothesis
+
+~~~
+DUKA
+→ EXISTING ANDROID PHONE
+→ MOBILE OPERATIONS
+→ NO PC REQUIREMENT
+→ NO PRINTER REQUIREMENT
+→ NO SCANNER REQUIREMENT
+~~~
+
+The Duka test must measure whether existing-device onboarding reduces:
+
+- acquisition friction;
+- time-to-first-sale;
+- onboarding cost;
+- support.
+
+## 47.4 SME and Growth device hypothesis
+
+~~~
+MOBILE
+→ FRONTLINE
+
+PC
+→ BACK OFFICE
+~~~
+
+Test whether desktop availability improves:
+
+- retention;
+- reporting usage;
+- reconciliation;
+- purchasing;
+- expansion.
+
+Desktop should remain optional for low-complexity workflows.
+
+## 47.5 Multi-Branch device hypothesis
+
+~~~
+                    HQ
+                    |
+                   PC
+                    |
+       +------------+------------+
+       |            |            |
+    Branch A     Branch B     Branch C
+      Mobile       Mobile       Mobile
+~~~
+
+The primary test is whether centralized PC control plus mobile branch operation reduces total device requirements while preserving control.
+
+A branch PC may be justified by:
+
+- transaction volume;
+- peripherals;
+- staff workflow;
+- local operational requirements.
+
+Branch count alone is insufficient justification.
+
+## 47.6 Enterprise device hypothesis
+
+~~~
+PC / WEB
+=
+CONTROL PLANE
+
+MOBILE
+=
+DISTRIBUTED OPERATING PLANE
+~~~
+
+Enterprise testing must determine how much control-plane work belongs in PC/Web and how much branch activity remains better served by mobile.
+
+## 47.7 Device problem hypothesis
+
+The device constraint is real enough to measure explicitly.
+
+Afrobarometer's 2024/2025 Malawi survey reported 25% adult smartphone ownership and 10% household computer ownership. GSMA's August 2026 Malawi report separately estimated smartphone adoption at 33% and identified device affordability and the mobile-internet usage gap as major constraints.
+
+The studies use different methods, so their percentages must not be mechanically combined.
+
+The commercial conclusion to test is:
+
+> Requiring a PC at entry can materially reduce addressable adoption for the lower end of the market.
+
+## 47.8 Hardware policy
+
+Default:
+
+~~~text
+SOFTWARE FIRST
++
+BYOD FIRST
++
+OPTIONAL HARDWARE
+~~~
+
+Potential future accessories:
+
+- Android tablets;
+- receipt printers;
+- barcode scanners;
+- dedicated POS devices.
+
+Hardware partnerships remain optional.
+
+## 47.9 Device replacement
+
+A device test is incomplete unless replacement works:
+
+~~~text
+OLD DEVICE LOST
+      ↓
+NEW DEVICE
+      ↓
+AUTHENTICATE
+      ↓
+AUTHORIZE
+      ↓
+RESTORE PERMITTED STATE
+      ↓
+CONTINUE OPERATING
+~~~
+
+Business identity and data must not be tied irreversibly to one physical device.
+
+## 47.10 Subscriber planning scenario
+
+The following is a **portfolio planning scenario**, not a forecast:
+
+| Tier | Illustrative paying accounts | Share |
+|---|---:|---:|
+| Duka | 600 | 60% |
+| SME | 220 | 22% |
+| Growth | 100 | 10% |
+| Multi-Branch | 60 | 6% |
+| Enterprise | 20 | 2% |
+| **Total** | **1,000** | **100%** |
+
+Using the planning price hypotheses:
+
+~~~text
+Duka
+600 × MK7,500 = MK4.5M MRR
+
+SME
+220 × MK25,000 = MK5.5M MRR
+
+Growth
+100 × MK50,000 = MK5.0M MRR
+
+Multi-Branch
+60 × MK90,000 = MK5.4M MRR
+
+Enterprise
+20 × MK200,000 = MK4.0M MRR
+
+TOTAL = MK24.4M illustrative MRR
+~~~
+
+This scenario is useful because it demonstrates:
+
+> **A majority-Duka customer base can coexist with a diversified revenue portfolio.**
+
+It does not establish:
+
+- expected market share;
+- expected year-one subscribers;
+- actual conversion;
+- actual retention;
+- actual revenue.
+
+## 47.11 Subscriber target governance
+
+Hard subscriber targets must be stage-gated.
+
+~~~
+PRODUCT VALIDATION
+→
+PAID VALIDATION
+→
+SEGMENT CONTRIBUTION
+→
+CHANNEL REPEATABILITY
+→
+SCALE
+~~~
+
+Increasing account targets before proving unit economics is prohibited by this commercial doctrine.
+
+## 47.12 Segment-level subscriber reporting
+
+At minimum report:
+
+~~~text
+TOTAL ACCOUNTS
+TOTAL PAYING ACCOUNTS
+ACTIVE PAYING ACCOUNTS
+DUKA ACCOUNTS
+SME ACCOUNTS
+GROWTH ACCOUNTS
+MULTI-BRANCH ACCOUNTS
+ENTERPRISE ACCOUNTS
+NET NEW ACCOUNTS
+CHURNED ACCOUNTS
+UPGRADED ACCOUNTS
+DOWNGRADED ACCOUNTS
+~~~
+
+Also report per segment:
+
+~~~text
+ARPU
+CAC
+DAY-30 RETENTION
+DAY-90 RETENTION
+SUPPORT COST
+CONTRIBUTION
+~~~
+
+## 47.13 Tier transition metrics
+
+Track:
+
+~~~text
+DUKA → SME
+SME → GROWTH
+GROWTH → MULTI-BRANCH
+MULTI-BRANCH → ENTERPRISE
+~~~
+
+But also:
+
+~~~text
+DUKA → REMAINS DUKA
+SME → REMAINS SME
+GROWTH → REMAINS GROWTH
+~~~
+
+Remaining on a profitable tier is not failure.
+
+## 47.14 Device adoption metrics
+
+Track:
+
+~~~text
+MOBILE-ONLY ACTIVE RATE
+PC-ACTIVE RATE
+MOBILE + PC ACTIVE RATE
+AVERAGE DEVICES / ACCOUNT
+DEVICES / BRANCH
+PC-REQUIRED-TO-ACTIVATE RATE
+DEVICE-RELATED CHURN
+DEVICE-RELATED SUPPORT
+~~~
+
+The key metric is not device count.
+
+The key metric is whether device architecture improves business outcomes at acceptable cost.
+
+## 47.15 UI complexity metrics
+
+Track:
+
+- time to first sale;
+- time to complete common workflow;
+- task error rate;
+- support incidents related to navigation;
+- feature discovery;
+- number of screens visited for common tasks;
+- abandonment.
+
+The lower tier must not win merely by having fewer features.
+
+It must win by accomplishing its critical jobs with less friction.
+
+## 47.16 Tier economics gate
+
+A tier is not commercially scalable until:
+
+~~~text
+REVENUE
+− PAYMENT COST
+− INFRASTRUCTURE
+− SUPPORT
+− CAC / COMMISSION
+− ONBOARDING
+=
+POSITIVE OR STRATEGICALLY JUSTIFIED CONTRIBUTION
+~~~
+
+Any intentionally subsidized tier requires an explicit decision record showing:
+
+- why the subsidy exists;
+- what evidence is expected;
+- the maximum duration;
+- the conversion/retention mechanism;
+- the stop condition.
+
+## 47.17 Device and tier anti-patterns
+
+Prohibited:
+
+~~~text
+CHEAP PLAN
+→ BAD RELIABILITY
+
+CHEAP PLAN
+→ WEAK SECURITY
+
+DUKA
+→ FORCED PC
+
+MULTI-BRANCH
+→ FORCED PC AT EVERY BRANCH
+
+ENTERPRISE
+→ MOBILE DISABLED
+
+UPGRADE
+→ ACCOUNT RECREATION
+
+HARDWARE
+→ REQUIRED BEFORE FIRST VALUE
+~~~
+
+## 47.18 Final device doctrine
+
+The official commercial interpretation is:
+
+~~~text
+DUKA
+→ MOBILE FIRST / MOBILE ONLY BY DEFAULT
+
+SME
+→ MOBILE + PC
+
+GROWTH
+→ MOBILE + PC
+
+MULTI-BRANCH
+→ MOBILE BRANCHES + PC HQ
+
+ENTERPRISE
+→ MOBILE OPERATIONS + PC / WEB CONTROL
+~~~
+
+But the underlying rule remains:
+
+> **Use the device that best performs the job.**
+
+
+# 48. References and Current External Market Baseline
 
 1. **DataReportal — Digital 2026: Malawi**
    - late-2025 data used for the 2026 planning cycle;
@@ -2527,7 +2979,7 @@ Public competitor prices and claims are not treated as independent proof of dema
 
 ---
 
-# 48. Acceptance Criteria
+# 49. Acceptance Criteria
 
 This validation plan is implementation-ready when the commercial operating system can answer:
 
