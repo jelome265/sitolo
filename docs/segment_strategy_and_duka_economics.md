@@ -3482,3 +3482,1632 @@ This document and the related commercial corpus are considered aligned when:
     https://www.phindu.co/pricing
 
 **End of Universal Segment Strategy, Duka Economics & Market Coverage Doctrine.**
+
+
+---
+
+# 114. Commercial Tier Architecture
+
+The Sitolo commercial model should begin with five practical tiers.
+
+These are **planning hypotheses**, not approved final tariffs.
+
+| Tier | Indicative monthly price | Customer archetype | Primary operating surface | Primary control surface |
+|---|---:|---|---|---|
+| Duka | **MK7,500/mo** | Ultra-micro shop / one-location micro retailer | Mobile | Mobile |
+| SME | **MK25,000/mo** | Small established retailer | Mobile | PC |
+| Growth | **MK50,000/mo** | Growing / more complex SME | Mobile | PC |
+| Multi-Branch | **from MK90,000/mo** | 2+ locations under one organization | Mobile at branches | PC at HQ |
+| Enterprise | **from MK200,000/mo** | High-governance, integration-heavy organization | Mobile + desktop where needed | PC / web control plane |
+
+The key rule is:
+
+> **Price is attached to operational capability and cost-to-serve, not to a moral hierarchy of merchants.**
+
+A Duka is not "less important."
+
+It simply generates a different economic value/cost profile.
+
+An enterprise is not "better."
+
+It simply has more organizational complexity and may require more expensive services.
+
+---
+
+# 115. Tier 1 — Duka
+
+## 115.1 Customer profile
+
+Typical:
+
+- one location;
+- one owner;
+- zero to a few assistants;
+- one primary Android phone;
+- small catalogue;
+- cash and/or mobile-money activity;
+- limited administrative time;
+- high sensitivity to recurring software cost.
+
+The tier must support a merchant who has never used business software.
+
+## 115.2 Commercial hypothesis
+
+**Indicative price:** MK7,500/month.
+
+This price is intentionally below the public pricing of the currently observed local products, but the price is not justified merely by being cheap.
+
+It is justified only if Sitolo can deliver:
+
+- low CAC;
+- low onboarding cost;
+- low support cost;
+- low infrastructure cost;
+- sufficient retention;
+- sufficient transaction/activity frequency;
+- positive contribution.
+
+## 115.3 Device
+
+**Mobile only by default.**
+
+No PC is required.
+
+No laptop is required.
+
+No printer is required.
+
+No scanner is required.
+
+No desktop installation project is required.
+
+## 115.4 UI complexity
+
+**Very low.**
+
+Candidate primary navigation:
+
+~~~
+SELL
+STOCK
+MONEY
+TODAY
+MORE
+~~~
+
+The customer should see the most common jobs first.
+
+## 115.5 Core features
+
+- quick sale;
+- product catalogue;
+- stock quantity;
+- simple purchase/receiving;
+- cash record;
+- mobile-money record;
+- daily summary;
+- estimated gross profit;
+- low-stock alert;
+- basic customer credit;
+- basic reports;
+- offline continuity;
+- synchronization;
+- basic action auditability.
+
+## 115.6 Explicitly deferred from the main Duka experience
+
+- branch administration;
+- complex warehouse management;
+- advanced approval matrices;
+- enterprise governance;
+- complex integrations;
+- heavy configuration;
+- advanced desktop administration.
+
+The underlying platform may support these capabilities without exposing them.
+
+---
+
+# 116. Tier 2 — SME
+
+## 116.1 Customer profile
+
+Typical:
+
+- one location;
+- multiple users;
+- larger inventory;
+- recurring procurement;
+- supplier management;
+- more daily transactions;
+- owner/manager plus staff.
+
+## 116.2 Indicative price
+
+**MK25,000/month.**
+
+This is a planning hypothesis.
+
+## 116.3 Device model
+
+~~~
+MOBILE
+=
+FRONTLINE OPERATION
+
+PC
+=
+BACK-OFFICE CONTROL
+~~~
+
+Mobile remains important.
+
+PC becomes useful rather than mandatory for every action.
+
+## 116.4 Mobile features
+
+- sales;
+- stock lookup;
+- receiving;
+- cash operations;
+- customer activity;
+- quick reports;
+- operational alerts.
+
+## 116.5 PC features
+
+- bulk catalogue management;
+- purchasing;
+- supplier management;
+- reconciliation;
+- detailed reports;
+- staff administration;
+- exports;
+- configuration.
+
+## 116.6 UI complexity
+
+**Moderate.**
+
+The mobile UI remains simple.
+
+The desktop UI can expose greater density and more simultaneous information.
+
+---
+
+# 117. Tier 3 — Growth
+
+## 117.1 Customer profile
+
+Typical:
+
+- more staff;
+- higher transaction volume;
+- greater stock complexity;
+- several operational processes;
+- need for stronger control;
+- frequent use of management reporting.
+
+Specialist SMEs may also fit this tier when the workflow complexity is material.
+
+## 117.2 Indicative price
+
+**MK50,000/month.**
+
+This is a planning hypothesis.
+
+## 117.3 Device model
+
+~~~
+MOBILE
+=
+OPERATE
+
+PC
+=
+MANAGE + ANALYZE + CONTROL
+~~~
+
+The manager may spend more time on PC while staff continue using mobile.
+
+## 117.4 Features
+
+Everything relevant in SME, plus where applicable:
+
+- advanced inventory;
+- purchasing controls;
+- supplier analysis;
+- customer credit management;
+- payment reconciliation;
+- expense workflows;
+- richer reports;
+- granular permissions;
+- approvals;
+- desktop management;
+- expanded audit;
+- multiple devices.
+
+## 117.5 UI complexity
+
+**Moderate-to-high for PC, still controlled on mobile.**
+
+The mobile application must not become an enterprise dashboard merely because the account has upgraded.
+
+---
+
+# 118. Tier 4 — Multi-Branch
+
+## 118.1 Definition
+
+Multi-Branch means:
+
+> **One organization operating two or more physical locations that require centralized management.**
+
+It does not mean "large corporation."
+
+Examples:
+
+~~~
+ONE OWNER
+ ├── Duka A
+ └── Duka B
+~~~
+
+~~~
+PHARMACY GROUP
+ ├── Branch 1
+ ├── Branch 2
+ └── Branch 3
+~~~
+
+~~~
+RETAILER
+ ├── Lilongwe
+ ├── Blantyre
+ ├── Mzuzu
+ └── Zomba
+~~~
+
+A business becomes multi-branch because it has a cross-location control problem.
+
+It does not need a minimum employee count to qualify.
+
+## 118.2 Indicative pricing
+
+**From MK90,000/month**, depending on:
+
+- branch count;
+- user/device count;
+- advanced controls;
+- reconciliation scope;
+- support;
+- integrations.
+
+## 118.3 Device architecture
+
+Default:
+
+~~~
+                    HEAD OFFICE
+                        |
+                       PC
+                        |
+           +------------+------------+
+           |            |            |
+       BRANCH A      BRANCH B      BRANCH C
+        MOBILE        MOBILE        MOBILE
+~~~
+
+The critical design decision:
+
+> **Not every branch needs a PC.**
+
+A three-branch merchant may operate economically with:
+
+- one HQ control workstation;
+- three branch phones;
+- optional additional desktop terminals only where operationally justified.
+
+## 118.4 HQ PC functions
+
+- branch administration;
+- centralized catalogue;
+- pricing;
+- procurement;
+- transfers;
+- consolidated reports;
+- organization-wide reconciliation;
+- staff administration;
+- approvals;
+- audit;
+- branch performance.
+
+## 118.5 Branch mobile functions
+
+- selling;
+- receiving;
+- stock;
+- cash;
+- payment capture;
+- customer interaction;
+- offline operations;
+- branch-level workflows.
+
+## 118.6 UI complexity
+
+**High at HQ, intentionally simple at branches.**
+
+The branch cashier should not have to understand headquarters governance.
+
+---
+
+# 119. Tier 5 — Enterprise
+
+## 119.1 Definition
+
+Enterprise is not simply "more branches."
+
+It is the combination of materially greater:
+
+- organizational scale;
+- governance requirements;
+- authorization depth;
+- integration requirements;
+- audit requirements;
+- procurement/security requirements;
+- support expectations.
+
+An organization can be enterprise-like with relatively few locations if its control requirements are high.
+
+## 119.2 Indicative price
+
+**From MK200,000/month**, plus implementation/services where applicable.
+
+The price is a planning hypothesis.
+
+## 119.3 Device model
+
+Enterprise should be described as **control-plane first**, not "PC first."
+
+~~~
+                  ENTERPRISE HQ
+                       |
+                 PC / WEB CONTROL
+                       |
+          +------------+------------+
+          |            |            |
+       Branch A     Branch B     Branch C
+        MOBILE       MOBILE       MOBILE
+~~~
+
+Additional desktop terminals may be used at high-volume branches.
+
+## 119.4 Enterprise control-plane functions
+
+- organization governance;
+- advanced IAM;
+- segregation of duties;
+- approval workflows;
+- consolidated reports;
+- cross-branch reconciliation;
+- audit exports;
+- enterprise integrations;
+- API administration;
+- security administration;
+- implementation controls;
+- SLA/support management.
+
+## 119.5 Enterprise operational functions
+
+Mobile remains important for:
+
+- branch operations;
+- field work;
+- stock;
+- receiving;
+- sales;
+- operational approvals.
+
+Desktop may also be used for high-volume or hardware-dependent workflows.
+
+## 119.6 UI complexity
+
+**Highest at control surfaces, not necessarily at frontline surfaces.**
+
+The branch worker can still experience a very simple mobile workflow.
+
+The administrator sees the complexity.
+
+This is deliberate progressive disclosure.
+
+---
+
+# 120. Device Strategy — Workflow Over Tier
+
+Tier labels are not the fundamental device rule.
+
+The fundamental rule is:
+
+> **Choose the device based on the job being performed.**
+
+| Job | Preferred surface |
+|---|---|
+| Quick sale | Mobile |
+| Quick stock lookup | Mobile |
+| Branch receiving | Mobile |
+| Cash handling | Mobile |
+| Field operation | Mobile |
+| Bulk catalogue editing | PC |
+| Detailed procurement management | PC |
+| Deep reconciliation | PC |
+| Staff administration | PC |
+| Branch administration | PC |
+| Consolidated reporting | PC |
+| Enterprise governance | PC/Web |
+| Support administration | Web/PC |
+
+Therefore:
+
+~~~
+MOBILE
+=
+OPERATE
+
+PC
+=
+CONTROL
+
+WEB
+=
+ADMINISTER / SUPPORT
+~~~
+
+This should remain true even if a specific tier uses all three.
+
+---
+
+# 121. Why the Main Device Question Matters
+
+The correct question is not:
+
+> "What is the main device for the Duka tier?"
+
+The correct question is:
+
+> **"What is the primary operational surface and what is the primary control surface for this business?"**
+
+The answers become:
+
+### Duka
+
+~~~
+Operational surface: Mobile
+Control surface: Mobile
+~~~
+
+### SME
+
+~~~
+Operational surface: Mobile
+Control surface: PC
+~~~
+
+### Growth
+
+~~~
+Operational surface: Mobile
+Control surface: PC
+~~~
+
+### Multi-Branch
+
+~~~
+Operational surface: Mobile at branches
+Control surface: PC at HQ
+~~~
+
+### Enterprise
+
+~~~
+Operational surface: Mobile + selected desktop
+Control surface: PC / Web
+~~~
+
+This is cleaner than declaring a single "main device."
+
+---
+
+# 122. Device Problem — It Is Real
+
+Device access is a real commercial constraint in Malawi.
+
+Afrobarometer's Malawi 2024/2025 survey reported:
+
+- 66% adult mobile-phone ownership;
+- 25% adult smartphone ownership;
+- 10% household computer ownership;
+- 71% saying they never use the internet;
+- 13% reporting daily internet use.
+
+The survey also reports that device ownership is more common among urban, educated and economically better-off groups.
+
+GSMA's August 2026 Malawi report separately estimates smartphone adoption at 33% and says roughly 80% of the population lives within mobile-broadband coverage but is not using mobile internet. It identifies device affordability and digital skills among the barriers.
+
+The figures differ because the studies use different methods and definitions. The strategic conclusion is the same:
+
+> **A PC prerequisite would exclude a substantial portion of the intended market.**
+
+References:
+
+- Afrobarometer, "Leave no Malawian offline? Understanding the country's persistent gender digital divide" (19 Dec 2025): https://www.afrobarometer.org/publication/ad1094-leave-no-malawian-offline-understanding-the-countrys-persistent-gender-digital-divide/
+- GSMA, "80% of Malawians Remain Offline Despite Coverage" (20 Aug 2026): https://www.gsma.com/newsroom/press-release/80-of-malawians-remain-offline-despite-coverage-new-gsma-report-highlights-path-to-inclusive-digital-access-and-mwk-1-1-trillion-growth/
+
+---
+
+# 123. Device Strategy — Do Not Become a Hardware Company
+
+Sitolo should not require a hardware bundle to use the software.
+
+Avoid:
+
+~~~
+BUY LAPTOP
++
+BUY PRINTER
++
+BUY SCANNER
++
+BUY INTERNET
++
+INSTALL SOFTWARE
++
+TECHNICIAN VISIT
+~~~
+
+That onboarding path is incompatible with low-ARPU Duka economics.
+
+Instead:
+
+~~~
+EXISTING ANDROID PHONE
+        ↓
+SITOLO
+        ↓
+FIRST SALE
+        ↓
+FIRST BUSINESS SUMMARY
+~~~
+
+The merchant should be able to start with hardware already owned.
+
+---
+
+# 124. Hardware Strategy — Optional Ecosystem
+
+After software-market validation, Sitolo may support optional hardware:
+
+- Android phones;
+- Android tablets;
+- receipt printers;
+- barcode scanners;
+- dedicated POS devices.
+
+But the default principle remains:
+
+> **Hardware expands capability. It does not gate entry.**
+
+Hardware partnerships may later reduce acquisition friction or enable merchant-financing bundles.
+
+Those partnerships require their own economics, warranty, replacement, support, and inventory model.
+
+---
+
+# 125. Device Partnerships
+
+Potential future partners:
+
+- handset retailers;
+- telecom operators;
+- device distributors;
+- POS-device vendors;
+- wholesalers;
+- business-equipment providers;
+- financing/instalment providers.
+
+Potential package:
+
+~~~
+ANDROID DEVICE
++
+SITOLO
++
+DATA
++
+OPTIONAL ACCESSORIES
+~~~
+
+This is a future distribution hypothesis, not a day-one requirement.
+
+---
+
+# 126. PC Should Be Optional Until Complexity Justifies It
+
+The product must not create an artificial upgrade boundary merely to sell desktop access.
+
+The rule is:
+
+> **PC becomes commercially valuable when business control becomes complex.**
+
+Signals include:
+
+- larger catalogue;
+- large procurement workload;
+- multiple users;
+- reconciliation effort;
+- many reports;
+- multiple branches;
+- centralized management;
+- enterprise governance.
+
+A Duka should never need a PC simply because Sitolo's backend architecture is sophisticated.
+
+---
+
+# 127. Multi-Branch Device Doctrine
+
+Multi-Branch is where the device architecture becomes a genuine operating model.
+
+Default:
+
+~~~
+CENTRAL CONTROL
+       |
+       PC
+       |
++------+------+------+
+|      |      |
+A      B      C
+|      |      |
+MOB    MOB    MOB
+~~~
+
+Optional:
+
+~~~
+HQ PC
++
+BRANCH PC where transaction volume/hardware requires
++
+BRANCH MOBILE
+~~~
+
+The branch PC should be justified by workflow, not by the existence of a branch.
+
+---
+
+# 128. Enterprise Device Doctrine
+
+Enterprise is **not** a desktop replacement for mobile.
+
+It is:
+
+~~~
+PC / WEB
+=
+CONTROL PLANE
+
+MOBILE
+=
+DISTRIBUTED OPERATING PLANE
+~~~
+
+This mirrors the organization itself:
+
+~~~
+HEAD OFFICE
+→ decides / controls / reconciles
+
+BRANCHES / FIELD
+→ execute / sell / receive / operate
+~~~
+
+The technical architecture should therefore treat device clients as different execution surfaces over the same authoritative platform.
+
+---
+
+# 129. Subscriber Planning Scenario
+
+The following is a **planning scenario**, not a forecast.
+
+A useful illustrative portfolio is 1,000 paying organizations:
+
+| Tier | Illustrative accounts | Share |
+|---|---:|---:|
+| Duka | 600 | 60% |
+| SME | 220 | 22% |
+| Growth | 100 | 10% |
+| Multi-Branch | 60 | 6% |
+| Enterprise | 20 | 2% |
+| **Total** | **1,000** | **100%** |
+
+The purpose is to test whether the tier system works economically when account count is heavily concentrated at the bottom.
+
+At the indicative prices:
+
+~~~
+Duka
+600 × MK7,500
+= MK4,500,000 MRR
+
+SME
+220 × MK25,000
+= MK5,500,000 MRR
+
+Growth
+100 × MK50,000
+= MK5,000,000 MRR
+
+Multi-Branch
+60 × MK90,000
+= MK5,400,000 MRR
+
+Enterprise
+20 × MK200,000
+= MK4,000,000 MRR
+~~~
+
+Illustrative total:
+
+> **MK24,400,000 MRR**
+
+Again:
+
+- this is not a revenue forecast;
+- the account mix is not an industry benchmark;
+- the prices are not approved tariffs;
+- the scenario exists to test portfolio economics.
+
+The scenario demonstrates an important strategic property:
+
+> **Dukas can be the majority of accounts without being the majority of revenue.**
+
+---
+
+# 130. Expected Subscriber Logic by Tier
+
+The company should not set subscriber expectations solely as:
+
+~~~
+DUKA = 600
+SME = 220
+...
+~~~
+
+because actual mix must emerge from acquisition and retention.
+
+The real planning model is:
+
+~~~
+MARKET COVERAGE
++
+CHANNEL CAPACITY
++
+CONVERSION
++
+RETENTION
++
+CAC
++
+CONTRIBUTION
+=
+SUSTAINABLE ACCOUNT MIX
+~~~
+
+The 60/22/10/6/2 scenario should therefore be treated as a stress-test portfolio.
+
+---
+
+# 131. Subscriber Targets Must Be Stage-Gated
+
+Before setting a hard count target, establish:
+
+### Stage 1 — Product validation
+
+Prove activation and repeat use.
+
+### Stage 2 — Paid validation
+
+Prove actual payment.
+
+### Stage 3 — Segment economics
+
+Prove contribution by tier.
+
+### Stage 4 — Channel repeatability
+
+Prove acquisition outside founder-only sales.
+
+### Stage 5 — Scale
+
+Increase account targets only after contribution and support remain controlled.
+
+This avoids chasing account count before the business model is known to work.
+
+---
+
+# 132. Tier Economics Stress Test
+
+For every tier:
+
+~~~
+ARPU
+− PAYMENT COST
+− INFRASTRUCTURE
+− SUPPORT
+− ACQUISITION COST
+− ONBOARDING
+− PARTNER COMMISSION
+=
+CONTRIBUTION
+~~~
+
+The expected direction is:
+
+### Duka
+
+Low ARPU → very low variable cost required.
+
+### SME
+
+Moderate ARPU → moderate acquisition/support tolerance.
+
+### Growth
+
+Higher ARPU → greater room for assisted workflows.
+
+### Multi-Branch
+
+High value → implementation and management complexity must still be covered.
+
+### Enterprise
+
+High ACV → implementation, integration and support must be explicitly priced.
+
+---
+
+# 133. Tier UI Complexity Matrix
+
+| Tier | Mobile UI | PC UI | Control density | Default mode |
+|---|---|---|---|---|
+| Duka | Very simple | None required | Low | Mobile-first |
+| SME | Simple | Moderate | Medium | Mobile + PC |
+| Growth | Moderate | Detailed | Medium-high | Mobile + PC |
+| Multi-Branch | Simple per branch | High | High | Mobile branches + PC HQ |
+| Enterprise | Role-specific | Very high | Very high | Mobile operations + PC/Web control |
+
+This means:
+
+> **UI complexity should grow for the people who need complexity, not for everybody attached to the account.**
+
+---
+
+# 134. Tier Feature Matrix
+
+| Capability | Duka | SME | Growth | Multi-Branch | Enterprise |
+|---|---|---|---|---|---|
+| Sales/POS | Core | Core | Core | Core | Core |
+| Basic inventory | Core | Core | Core | Core | Core |
+| Purchasing | Basic | Full | Advanced | Centralized | Advanced |
+| Cash | Core | Core | Advanced | Consolidated | Consolidated |
+| Mobile-money recording | Core | Core | Core | Core | Core |
+| Reconciliation | Basic | Core | Advanced | Cross-branch | Enterprise |
+| Reports | Daily/basic | Management | Advanced | Consolidated | Advanced/controlled |
+| Users | Very limited | Multi-user | Granular | Branch-scoped | Advanced IAM |
+| Devices | Very limited | Multiple | Multiple | Branch-specific | Managed |
+| Branches | 1 | 1 by default | 1+ where packaged | 2+ | Many |
+| Desktop | Not required | Yes | Yes | HQ/control | Control plane |
+| Approvals | Minimal | Basic | Advanced | Branch/org | Advanced |
+| Audit | Core | Core | Deep | Cross-branch | Enterprise |
+| Integrations | Minimal | Selected | More | Centralized | Extensive |
+| SLA | No | No | Optional | Priority | Yes/contracted |
+| Implementation | Self-service | Guided | Assisted | Assisted | Full |
+
+This table is conceptual.
+
+Actual entitlements require implementation, security review, pricing validation, and product acceptance.
+
+---
+
+# 135. The Product Must Not Use "Device Upgrade" as the Primary Upsell
+
+The upsell should be:
+
+~~~
+MORE BUSINESS COMPLEXITY
+→
+MORE CONTROL
+~~~
+
+not:
+
+~~~
+BUY PC
+→
+GET MORE FEATURES
+~~~
+
+The PC is a consequence of the workflow.
+
+It is not the product.
+
+---
+
+# 136. Device-Agnostic Data Model
+
+All clients must operate over the same authoritative business model.
+
+~~~
+MOBILE
+   \
+    \
+     → SITOLO API → POSTGRESQL
+    /
+   /
+PC / WEB
+~~~
+
+Device-specific local state can exist for offline continuity.
+
+But:
+
+> **Device identity is not business identity.**
+
+The same organization, user, branch, product, sale and payment semantics must survive device replacement.
+
+---
+
+# 137. Device Loss / Replacement
+
+Because low-cost merchants may rely heavily on one phone, device replacement is a commercial reliability requirement.
+
+The product must support:
+
+~~~
+OLD DEVICE LOST / DAMAGED
+        ↓
+NEW DEVICE
+        ↓
+AUTHENTICATE
+        ↓
+AUTHORIZE
+        ↓
+RESTORE / SYNC PERMITTED STATE
+        ↓
+CONTINUE OPERATING
+~~~
+
+The system must not equate "device disappeared" with "business data disappeared."
+
+Existing security and device-identity rules remain authoritative.
+
+---
+
+# 138. Offline Device Strategy
+
+The mobile device is allowed local continuity.
+
+It is not allowed permanent authority.
+
+~~~
+OFFLINE
+→ LOCAL DURABLE COMMAND
+→ LATER SYNC
+→ SERVER VALIDATION
+→ AUTHORITATIVE ACCEPTANCE / REJECTION
+→ RECONCILIATION
+~~~
+
+This must be consistent with the existing synchronization specification.
+
+---
+
+# 139. Printing and Peripheral Strategy
+
+Printing is a peripheral concern.
+
+The basic Duka experience should not require a printer.
+
+Where needed:
+
+- Tauri can integrate with desktop printing;
+- mobile can support compatible printer pathways;
+- branch installations can use dedicated hardware.
+
+The business logic should never depend on the printer being available for a sale record to exist.
+
+The authoritative record remains the server-side business transaction after safe acceptance.
+
+---
+
+# 140. Barcode Strategy
+
+Barcode scanning is an efficiency capability, not a prerequisite.
+
+### Duka
+
+Manual search / simple scan when available.
+
+### SME
+
+Optional scanner and camera-based scanning.
+
+### Growth
+
+More frequent barcode usage.
+
+### Multi-Branch
+
+Potential dedicated scanners at selected sites.
+
+### Enterprise
+
+Hardware integration where justified.
+
+Do not require a barcode scanner to sell software to the smallest merchant.
+
+---
+
+# 141. Connectivity and Device Economics
+
+Device strategy must consider:
+
+~~~
+HARDWARE COST
++
+DATA COST
++
+ELECTRICITY
++
+REPLACEMENT RISK
++
+SUPPORT
+~~~
+
+A technically elegant workflow may still be commercially weak if it assumes:
+
+- constant charging;
+- large data packages;
+- modern CPUs;
+- abundant storage;
+- reliable Wi-Fi;
+- always-on broadband.
+
+The mobile client should therefore optimize for constrained devices and intermittent connectivity.
+
+---
+
+# 142. African Distribution Reality
+
+A universal product requires distribution that works outside major urban offices.
+
+Potential routes:
+
+~~~
+DIGITAL
++
+REFERRALS
++
+ACCOUNTANTS
++
+DISTRIBUTORS
++
+AGENTS
++
+WHOLESALERS
++
+DEVICE PARTNERS
+~~~
+
+The relative importance must be tested.
+
+Do not assume the US-style paid-search + credit-card SaaS funnel is sufficient for Duka acquisition.
+
+---
+
+# 143. Tier-Specific Acquisition Motions
+
+| Tier | Likely motion to test |
+|---|---|
+| Duka | referral, community, agent, WhatsApp, self-service |
+| SME | referral, accountant, distributor, digital |
+| Growth | partner + founder/sales |
+| Multi-Branch | direct sales + partner |
+| Enterprise | account sales + procurement |
+
+These are hypotheses.
+
+The commercial measurement system must identify:
+
+- CAC;
+- conversion;
+- activation;
+- retention;
+- contribution.
+
+---
+
+# 144. Tier-Specific Support
+
+| Tier | Support model |
+|---|---|
+| Duka | self-service + lightweight escalation |
+| SME | standard support |
+| Growth | standard/priority |
+| Multi-Branch | priority |
+| Enterprise | dedicated/SLA |
+
+Support intensity should follow contribution capacity.
+
+The product should continuously automate the highest-volume repetitive problems.
+
+---
+
+# 145. Tier Migration
+
+Customers should not need to create a new Sitolo account when their complexity increases.
+
+Desired flow:
+
+~~~
+DUKA
+  ↓
+SME
+  ↓
+GROWTH
+  ↓
+MULTI-BRANCH
+  ↓
+ENTERPRISE
+~~~
+
+The organization remains the same.
+
+The entitlements change.
+
+The historical business record remains continuous.
+
+This is one of the major advantages of one-platform architecture.
+
+---
+
+# 146. Tier Migration Must Not Be Forced
+
+A Duka can remain a Duka indefinitely.
+
+That is not a failed customer.
+
+A merchant upgrades when real complexity appears.
+
+The system should therefore support:
+
+~~~
+REMAIN
+OR
+EXPAND
+~~~
+
+rather than:
+
+~~~
+USE PRODUCT
+→
+FORCED UPGRADE
+~~~
+
+This is especially important for price-sensitive merchants.
+
+---
+
+# 147. Commercial Trigger for Upgrade
+
+Potential triggers:
+
+- second location;
+- additional staff;
+- higher user count;
+- advanced reconciliation;
+- deeper procurement;
+- management reporting;
+- approval needs;
+- integration requirements.
+
+The upgrade prompt should explain:
+
+> **what new business problem is being solved**
+
+rather than:
+
+> **you hit an arbitrary feature wall.**
+
+---
+
+# 148. Duka Pricing Stress Test
+
+Before approving MK7,500/month, test:
+
+~~~
+CONVERSION
+RETENTION
+SUPPORT
+CAC
+INFRASTRUCTURE
+PAYMENT COST
+~~~
+
+A price can be too low if it creates:
+
+- low perceived value;
+- excessive support;
+- payment-fee drag;
+- poor contribution.
+
+A price can be too high if it prevents activation and adoption.
+
+The experiment decides.
+
+---
+
+# 149. SME/Growth Pricing Stress Test
+
+For MK25,000 and MK50,000 hypotheses, test:
+
+- willingness to pay;
+- support burden;
+- desktop adoption;
+- reconciliation adoption;
+- purchasing adoption;
+- retention;
+- expansion.
+
+The price should reflect the depth of business control, not the cost of a desktop application.
+
+---
+
+# 150. Multi-Branch Pricing Stress Test
+
+Multi-Branch pricing should eventually incorporate:
+
+~~~
+BASE ORGANIZATION
++
+BRANCH COUNT
++
+USER COUNT
++
+DEVICE COUNT
++
+ADVANCED CONTROLS
++
+SUPPORT
++
+INTEGRATIONS
+~~~
+
+Avoid a single universal Multi-Branch price that makes:
+
+- two branches massively overpay;
+- fifty branches massively underpay.
+
+---
+
+# 151. Enterprise Pricing Stress Test
+
+Enterprise pricing may need:
+
+~~~
+ANNUAL SUBSCRIPTION
++
+IMPLEMENTATION
++
+MIGRATION
++
+INTEGRATION
++
+SLA
++
+PREMIUM SUPPORT
+~~~
+
+Enterprise deals must be evaluated on total contribution.
+
+A large subscription with an enormous implementation cost can be commercially weak.
+
+---
+
+# 152. Planning Scenario Sensitivity
+
+Do not assume the 600/220/100/60/20 mix is correct.
+
+Run at least three planning scenarios:
+
+### Duka-heavy
+
+~~~
+70% Duka
+20% SME
+6% Growth
+3% Multi-Branch
+1% Enterprise
+~~~
+
+### Balanced
+
+~~~
+60% Duka
+22% SME
+10% Growth
+6% Multi-Branch
+2% Enterprise
+~~~
+
+### Higher-complexity
+
+~~~
+45% Duka
+25% SME
+15% Growth
+10% Multi-Branch
+5% Enterprise
+~~~
+
+For each scenario calculate:
+
+- MRR;
+- contribution;
+- support load;
+- infrastructure load;
+- expected sales effort;
+- partner dependency.
+
+These are planning exercises, not forecasts.
+
+---
+
+# 153. Why Scenario Planning Matters
+
+If Sitolo becomes Duka-heavy, the company must be excellent at:
+
+- self-service;
+- mobile;
+- support automation;
+- low-cost acquisition.
+
+If Sitolo becomes enterprise-heavy, the company must be excellent at:
+
+- implementation;
+- security reviews;
+- integrations;
+- account management.
+
+The platform can support both.
+
+The operating company must understand which mix it is actually creating.
+
+---
+
+# 154. Device Problem Decision
+
+The commercial conclusion is:
+
+> **The device problem is real, but it is not a reason to narrow Sitolo's market.**
+
+The response is:
+
+~~~
+MOBILE-FIRST ENTRY
++
+OPTIONAL PC
++
+PROGRESSIVE COMPLEXITY
++
+BYOD
++
+OPTIONAL HARDWARE
++
+PARTNERSHIPS LATER
+~~~
+
+This preserves access while allowing richer businesses to use richer tools.
+
+---
+
+# 155. Final Tier Doctrine
+
+The five tiers should be understood as:
+
+~~~
+DUKA
+= SIMPLE OPERATING BUSINESS
+
+SME
+= OPERATING + BASIC CONTROL
+
+GROWTH
+= OPERATING + DEEPER CONTROL
+
+MULTI-BRANCH
+= CENTRAL CONTROL OF MULTIPLE OPERATING LOCATIONS
+
+ENTERPRISE
+= GOVERNED CONTROL OF A COMPLEX ORGANIZATION
+~~~
+
+The device model follows:
+
+~~~
+DUKA
+→ MOBILE
+
+SME
+→ MOBILE + PC
+
+GROWTH
+→ MOBILE + PC
+
+MULTI-BRANCH
+→ MOBILE BRANCHES + PC HQ
+
+ENTERPRISE
+→ MOBILE OPERATIONS + PC/WEB CONTROL
+~~~
+
+And the UI follows:
+
+~~~
+DUKA
+→ VERY SIMPLE
+
+SME
+→ SIMPLE MOBILE / MODERATE PC
+
+GROWTH
+→ MODERATE MOBILE / DETAILED PC
+
+MULTI-BRANCH
+→ SIMPLE BRANCH / HIGH-DENSITY HQ
+
+ENTERPRISE
+→ ROLE-SPECIFIC FRONTLINE / HIGH-DENSITY CONTROL
+~~~
+
+---
+
+# 156. Final Product Principle
+
+The definitive principle is:
+
+> **Do not sell devices. Sell business control, and use the device that best performs the job.**
+
+A phone is not the "cheap version" of Sitolo.
+
+A PC is not the "real version" of Sitolo.
+
+They are different operational surfaces.
+
+~~~
+MOBILE
+→ RUN
+
+PC
+→ CONTROL
+
+WEB
+→ ADMINISTER / SUPPORT
+~~~
+
+That is the device architecture for a universal Sitolo.
+
+---
+
+# 157. Final Commercial Model
+
+The complete model is:
+
+~~~
+                         SITOLO
+                           |
+              BUSINESS OPERATING SYSTEM
+                           |
+     +---------------------+----------------------+
+     |                     |                      |
+   DUKA                  SME                  ENTERPRISE
+     |                     |                      |
+  MOBILE                MOBILE + PC           PC / WEB + MOBILE
+     |                     |                      |
+  OPERATE               OPERATE              CONTROL / GOVERN
+     |                  + CONTROL                   |
+     |                     |                   +---+---+
+     |                     |                   |       |
+ SIMPLE UI            MODERATE UI          HQ/ADMIN  BRANCH
+     |                     |                    PC    MOBILE
+     |                     |                         |
+ LOW PRICE             MID PRICE                  HIGH ACV
+     |                     |                         |
+ LOW TOUCH            MIXED SUPPORT              HIGH TOUCH
+     |                     |                         |
+     +---------------------+----------------------+
+                           |
+                    SHARED BUSINESS CORE
+                           |
+                    SHARED TRUST MODEL
+                           |
+                  SHARED BUSINESS HISTORY
+~~~
+
+Multi-Branch is the transition between the ordinary SME control model and enterprise governance:
+
+~~~
+ONE LOCATION
+    ↓
+MORE USERS
+    ↓
+MORE COMPLEXITY
+    ↓
+2+ LOCATIONS
+    ↓
+CENTRAL CONTROL
+    ↓
+MULTI-BRANCH
+    ↓
+GOVERNANCE / INTEGRATION
+    ↓
+ENTERPRISE
+~~~
+
+This model allows Sitolo to remain one product while adapting its economics and experience to the actual complexity of the merchant.
+
+---
+
+# 158. Implementation Implications
+
+The commercial architecture should eventually be reflected in:
+
+- server-enforced entitlements;
+- branch-aware permissions;
+- device identity;
+- subscription state;
+- plan migration;
+- feature flags where appropriate;
+- mobile navigation variants;
+- desktop information architecture;
+- enterprise control-plane routes;
+- segment-level analytics.
+
+No client may decide independently that a capability is allowed.
+
+The server remains the entitlement authority.
+
+Existing tenant, authorization, audit, synchronization, persistence and security contracts remain authoritative.
+
+---
+
+# 159. Final Acceptance Criteria for Tier and Device Strategy
+
+The implementation is commercially aligned when:
+
+- Duka can operate without a PC;
+- SME can operate mobile + PC;
+- Growth can use mobile + PC without forcing complexity onto frontline workers;
+- Multi-Branch can centrally manage branches from a PC without requiring every branch to have a PC;
+- Enterprise has a PC/Web control plane while maintaining mobile operations;
+- all plans share one trust/security baseline;
+- plan entitlements are server-enforced;
+- tier migration preserves the organization and historical record;
+- prices are explicitly labelled hypotheses until tested;
+- subscriber counts are explicitly labelled scenarios until earned;
+- device replacement does not destroy business state;
+- offline continuity remains bounded and server-validated;
+- hardware remains optional for entry;
+- support economics are measured by tier;
+- acquisition economics are measured by tier;
+- aggregate metrics cannot hide broken segment economics.
