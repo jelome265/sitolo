@@ -1,4 +1,4 @@
--- Phase 4 Part 7 / PR-008 Initial Schema & RLS Policies
+-- Phase 4 Part 7 / PR-008 Test Fixture Schema & RLS Policies
 
 -- 1. Create runtime role if not exists
 DO $$
@@ -9,7 +9,7 @@ BEGIN
 END
 $$;
 
--- Grant schema privileges
+-- Grant schema privileges on search_path schema
 GRANT USAGE ON SCHEMA public TO app_runtime;
 
 -- 2. Organizations Table

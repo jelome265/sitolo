@@ -62,7 +62,7 @@ impl PgAuthorityPools {
 
     /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
     /// has zero role memberships in `pg_auth_members`, and does NOT own protected relations.
-    pub async fn verify_runtime_role(&self) -> Result<(), PgAuthorityError> {
+    pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
         let row = sqlx::query(
             "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
              FROM pg_roles
@@ -102,8 +102,9 @@ impl PgAuthorityPools {
                 "SELECT pg_get_userbyid(c.relowner)
                  FROM pg_class c
                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public' AND c.relname = $1",
+                 WHERE n.nspname = $1 AND c.relname = $2",
             )
+            .bind(schema_name)
             .bind(table)
             .fetch_one(&self.admin_pool)
             .await?;
@@ -118,7 +119,10 @@ impl PgAuthorityPools {
 
     /// Verifies via PostgreSQL catalog functions that `app_runtime` has exact effective privileges
     /// against an explicit allowlist (SELECT, INSERT, UPDATE, DELETE) and no forbidden admin privileges.
-    pub async fn verify_effective_privileges(&self) -> Result<(), PgAuthorityError> {
+    pub async fn verify_effective_privileges(
+        &self,
+        schema_name: &str,
+    ) -> Result<(), PgAuthorityError> {
         let has_connect: bool = sqlx::query_scalar(
             "SELECT has_database_privilege('app_runtime', current_database(), 'CONNECT')",
         )
@@ -130,7 +134,8 @@ impl PgAuthorityPools {
         }
 
         let has_usage: bool =
-            sqlx::query_scalar("SELECT has_schema_privilege('app_runtime', 'public', 'USAGE')")
+            sqlx::query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'USAGE')")
+                .bind(schema_name)
                 .fetch_one(&self.admin_pool)
                 .await?;
 
@@ -142,9 +147,11 @@ impl PgAuthorityPools {
         let required_privileges = vec!["SELECT", "INSERT", "UPDATE", "DELETE"];
 
         for table in protected_tables {
+            let rel_name = format!("{schema_name}.{table}");
             for priv_kind in &required_privileges {
-                let query =
-                    format!("SELECT has_table_privilege('app_runtime', '{table}', '{priv_kind}')");
+                let query = format!(
+                    "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
+                );
                 let has_priv: bool = sqlx::query_scalar(&query)
                     .fetch_one(&self.admin_pool)
                     .await?;
@@ -156,8 +163,9 @@ impl PgAuthorityPools {
 
             let forbidden_privileges = vec!["TRUNCATE", "TRIGGER", "REFERENCES"];
             for priv_kind in &forbidden_privileges {
-                let query =
-                    format!("SELECT has_table_privilege('app_runtime', '{table}', '{priv_kind}')");
+                let query = format!(
+                    "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
+                );
                 let has_priv: bool = sqlx::query_scalar(&query)
                     .fetch_one(&self.admin_pool)
                     .await?;
@@ -173,7 +181,10 @@ impl PgAuthorityPools {
 
     /// Verifies via PostgreSQL catalogs (`pg_policy`, `pg_class`, `pg_namespace`) that RLS is enabled, forced,
     /// polroles targets app_runtime/PUBLIC, polcmd = '*', and exact USING/WITH CHECK expressions exist.
-    pub async fn verify_rls_catalog_metadata(&self) -> Result<(), PgAuthorityError> {
+    pub async fn verify_rls_catalog_metadata(
+        &self,
+        schema_name: &str,
+    ) -> Result<(), PgAuthorityError> {
         let protected_tables = vec!["organizations", "branches", "tenant_resources"];
 
         for table in protected_tables {
@@ -181,8 +192,9 @@ impl PgAuthorityPools {
                 "SELECT c.relrowsecurity, c.relforcerowsecurity
                  FROM pg_class c
                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public' AND c.relname = $1",
+                 WHERE n.nspname = $1 AND c.relname = $2",
             )
+            .bind(schema_name)
             .bind(table)
             .fetch_one(&self.admin_pool)
             .await?;
@@ -194,6 +206,23 @@ impl PgAuthorityPools {
                 return Err(PgAuthorityError::SecurityViolation);
             }
 
+            // Verify EXACT policy count on relation = 1
+            let policy_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*)
+                 FROM pg_policy p
+                 JOIN pg_class c ON c.oid = p.polrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = $1 AND c.relname = $2",
+            )
+            .bind(schema_name)
+            .bind(table)
+            .fetch_one(&self.admin_pool)
+            .await?;
+
+            if policy_count != 1 {
+                return Err(PgAuthorityError::SecurityViolation);
+            }
+
             let expected_policy_name = format!("{table}_isolation_policy");
             let policy_row = sqlx::query(
                 "SELECT polname, polcmd, polroles::bigint[] as polroles,
@@ -202,8 +231,9 @@ impl PgAuthorityPools {
                  FROM pg_policy p
                  JOIN pg_class c ON c.oid = p.polrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'public' AND c.relname = $1 AND p.polname = $2",
+                 WHERE n.nspname = $1 AND c.relname = $2 AND p.polname = $3",
             )
+            .bind(schema_name)
             .bind(table)
             .bind(&expected_policy_name)
             .fetch_optional(&self.admin_pool)
@@ -221,7 +251,7 @@ impl PgAuthorityPools {
                         return Err(PgAuthorityError::SecurityViolation);
                     }
 
-                    // Verify polroles targets app_runtime role or 0 (PUBLIC / ALL)
+                    // Verify polroles strictly targets app_runtime role or PUBLIC (0)
                     let runtime_oid: i64 = sqlx::query_scalar(
                         "SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'",
                     )

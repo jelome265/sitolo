@@ -170,6 +170,7 @@ struct TestContext {
     pools: PgAuthorityPools,
     repo: PgTestTenantRepository,
     guard: SchemaGuard,
+    schema_name: String,
     org_a: Organization,
     mem_a: Membership,
     org_a_scope: AuthorizedScope,
@@ -197,8 +198,12 @@ async fn setup_test_context() -> TestContext {
     let runtime_url = env::var("RUNTIME_DATABASE_URL")
         .expect("FAIL-CLOSED: Required RUNTIME_DATABASE_URL env variable not provided");
 
-    let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
-    let runtime_opts: PgConnectOptions = runtime_url.parse().expect("Invalid runtime database URL");
+    let mut admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
+    let mut runtime_opts: PgConnectOptions =
+        runtime_url.parse().expect("Invalid runtime database URL");
+
+    admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
+    runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
 
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -208,12 +213,6 @@ async fn setup_test_context() -> TestContext {
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
-            let migration_sql = include_str!("../../../migrations/0001_initial_rls_schema.sql");
-            sqlx::raw_sql(migration_sql)
-                .execute(&admin_pool)
-                .await
-                .expect("Failed to apply initial RLS schema migration");
-
             if let Ok(runtime_pass) = env::var("APP_RUNTIME_PASSWORD") {
                 let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
                 sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
@@ -221,12 +220,28 @@ async fn setup_test_context() -> TestContext {
         })
         .await;
 
-    // Create isolated schema
+    // Create isolated schema and set search path
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
     sqlx::raw_sql(&create_schema_sql)
         .execute(&admin_pool)
         .await
         .expect("Failed to create isolated test schema");
+
+    // Apply Part 7 schema inside search_path
+    let schema_sql = include_str!("fixtures/rls_schema.sql");
+    sqlx::raw_sql(schema_sql)
+        .execute(&admin_pool)
+        .await
+        .expect("Failed to apply RLS fixture schema inside search_path");
+
+    // Grant schema USAGE on isolated schema to app_runtime
+    let grant_schema_sql = format!(
+        "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
+    );
+    sqlx::raw_sql(&grant_schema_sql)
+        .execute(&admin_pool)
+        .await
+        .expect("Failed to grant schema privileges to app_runtime");
 
     let guard = SchemaGuard {
         schema_name: schema_name.clone(),
@@ -360,6 +375,7 @@ async fn setup_test_context() -> TestContext {
         pools,
         repo,
         guard,
+        schema_name,
         org_a,
         mem_a,
         org_a_scope,
@@ -383,12 +399,12 @@ async fn setup_test_context() -> TestContext {
 async fn test_catalog_runtime_role_privileges() {
     let ctx = setup_test_context().await;
     ctx.pools
-        .verify_runtime_role()
+        .verify_runtime_role(&ctx.schema_name)
         .await
         .expect("app_runtime role privileges failed catalog verification");
 
     ctx.pools
-        .verify_effective_privileges()
+        .verify_effective_privileges(&ctx.schema_name)
         .await
         .expect("app_runtime effective privileges failed catalog verification");
     ctx.guard.teardown().await;
@@ -398,7 +414,7 @@ async fn test_catalog_runtime_role_privileges() {
 async fn test_catalog_rls_policy_metadata() {
     let ctx = setup_test_context().await;
     ctx.pools
-        .verify_rls_catalog_metadata()
+        .verify_rls_catalog_metadata(&ctx.schema_name)
         .await
         .expect("RLS catalog metadata failed verification");
     ctx.guard.teardown().await;
@@ -920,4 +936,50 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
         res.expect("Concurrent task panicked");
     }
     ctx.guard.teardown().await;
+}
+
+// ============================================================================
+// 10. SCHEMA ISOLATION & TEARDOWN REGRESSION ASSERTIONS
+// ============================================================================
+
+#[tokio::test]
+async fn test_schema_isolation_and_teardown_regression() {
+    let ctx = setup_test_context().await;
+    let schema_name = ctx.schema_name.clone();
+
+    // 1. Verify schema exists
+    let schema_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+            .bind(&schema_name)
+            .fetch_one(&ctx.pools.admin_pool)
+            .await
+            .unwrap();
+    assert!(schema_exists, "Isolated schema must exist");
+
+    // 2. Verify organizations exists in isolated schema
+    let org_table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = 'organizations')",
+    )
+    .bind(&schema_name)
+    .fetch_one(&ctx.pools.admin_pool)
+    .await
+    .unwrap();
+    assert!(
+        org_table_exists,
+        "organizations table must exist in isolated schema"
+    );
+
+    // 3. Perform teardown and assert schema no longer exists
+    ctx.guard.teardown().await;
+
+    let schema_exists_after: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+            .bind(&schema_name)
+            .fetch_one(&ctx.pools.admin_pool)
+            .await
+            .unwrap();
+    assert!(
+        !schema_exists_after,
+        "Isolated schema must be completely dropped after teardown"
+    );
 }
