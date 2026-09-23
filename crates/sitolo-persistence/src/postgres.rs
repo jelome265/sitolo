@@ -71,7 +71,7 @@ impl PgAuthorityPools {
     }
 
     /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
-    /// has zero role memberships in `pg_auth_members`, rolinherit = false, and does NOT own protected relations.
+    /// has zero role memberships in `pg_auth_members`, rolinherit = false, rolreplication = false, and does NOT own protected relations.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
         let row = sqlx::query(
             "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolreplication

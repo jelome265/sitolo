@@ -1,489 +1,82 @@
-# Phase 4 Part 7 PR-008 Remediation Execution Contract & Immutable Evidence Gate Records
+# Phase 4 Part 7 / PR-008 Remediation Execution Contract: Real PostgreSQL RLS Tenant Boundary
 
-This document serves as the authoritative, immutable evidence record for the mandatory security gates required under Phase 4 Part 7 / PR-008.
-
-## System Baseline
-- **PostgreSQL Target Baseline:** `18-alpine` (Real PostgreSQL engine in CI and local integration execution)
-- **Runtime Role:** `app_runtime` (`NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEROLE`, `NOCREATEDB`, `NOINHERIT`, `NOREPLICATION`)
-- **Authority Separation:** Admin/Migration authority connects as database owner; application operations connect exclusively via least-privileged `app_runtime` pool.
-- **Trusted Scope Origin:** `AuthorizedScope` strictly produced via application authorization (`bind_organization` -> `resolve_effective_scope`). Encapsulated with private fields and read-only accessors.
+This execution contract records the non-negotiable verification gates, actual sha256 artifact digests, and test evidence for Phase 4 PR-008 PostgreSQL Row-Level Security (RLS) integration.
 
 ---
 
-## Remediation Requirements & Findings Summary
+## Artifact SHA-256 Checksums
 
-| Category | Issue Identified | Remediation Applied | Status |
-| :--- | :--- | :--- | :--- |
-| **Credential Hardcoding** | Reusable database passwords and URL string replacements in source | Eliminated URL replacements and `ALTER ROLE ... PASSWORD` interpolation. Workflow YAML updated to use `POSTGRES_HOST_AUTH_METHOD: trust`. | **RESOLVED** |
-| **Deterministic Teardown** | Lack of isolated schema cleanup on test failure | Implemented panic-safe `run_test_with_teardown` wrapper with `DROP SCHEMA ... CASCADE` returning Result and self-cleaning setup for test-isolated schemas (`test_schema_<uuid>`). | **RESOLVED** |
-| **Catalog Policy Metadata** | Simple substring check on policy text | Catalog verification asserts exact normalized SQL policy metadata (`polcmd = '*'`), `polroles` strictly equals `[runtime_oid]`, `USING`, and `WITH CHECK` expressions. | **RESOLVED** |
-| **Privilege Allowlist** | Role attributes check without privilege allowlist or inheritance proof | Checked `pg_auth_members` for zero role inheritance, rolinherit = false, rolreplication = false, schema CREATE = false, database TEMP = false, explicit CRUD grants, and absence of TRUNCATE, TRIGGER, REFERENCES. | **RESOLVED** |
-| **App + DB Composition** | DB tests operating directly on hand-crafted scopes | Added end-to-end composition test with invocation counter verifying zero persistence calls on application authorization denial. | **RESOLVED** |
-| **WITH CHECK Proofs** | `is_err()` check without database code verification | Asserted SQLSTATE database error codes (`42501` or `44000`) for relationally valid cross-tenant write denials, proving RLS enforcement. | **RESOLVED** |
-| **Error Boundary** | Raw SQL error leakage across public API boundaries | Redacted `PgAuthorityError` to sanitize internal database error details and sqlx trace outputs. | **RESOLVED** |
+| Artifact | File Path | SHA-256 Digest |
+|---|---|---|
+| **RLS Schema Fixture** | `crates/sitolo-persistence/tests/fixtures/rls_schema.sql` | `f04b2162810c3e2c5fc83c6aabc56ae60e5ac605a8349616c39cfd66557f8592` |
+| **Persistence Infrastructure** | `crates/sitolo-persistence/src/postgres.rs` | `34b3bffa8a7803acb4f5233196ccbc17e8ce4397ef353814896767807d61e7ba` |
+| **RLS Security Test Suite** | `crates/sitolo-persistence/tests/rls_security_tests.rs` | `1f6dd5fc97ec206e0425373c021be8767872becb039732517d525d8b1727889d` |
+| **GitHub Workflow (Rust)** | `.github/workflows/rust.yml` | `44ae2b36fbb871881a011d7fcd3c3b9d8c0aa13e83ffa8b4012a773bcfde9129` |
+| **GitHub Workflow (Artifact)** | `.github/workflows/artifact.yml` | `352522065476a63c02573a6f0af8841fc38ff13070d80b8e9168bffbe0f10c8e` |
 
 ---
 
-## Security Gate Evidence Matrix (G01–G23)
+## Security Verification Gate Records
 
-```
-GATE: P4-008-G01
-CATEGORY: Architecture / Credential Isolation
-REQUIREMENT: Setup/Migration authority must be distinct from runtime database authority. Runtime database authority must connect as app_runtime.
-SOURCE: crates/sitolo-persistence/src/postgres.rs
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
-TEST_TARGET: test_catalog_runtime_role_privileges
-EXPECTED: Admin pool connects as admin authority; runtime pool connects as app_runtime.
-OBSERVED: PgAuthorityPools initialized with separate PgConnectOptions. Runtime queries execute under app_runtime.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Verified runtime pool connects strictly as app_runtime.
+| Gate ID | Verification Description | Status | Evidence Record |
+|---|---|---|---|
+| **P4-008-G01** | Real PostgreSQL Provisioning | PASSED | Real PostgreSQL 18 container connected via `DATABASE_URL` / `ADMIN_DATABASE_URL` / `RUNTIME_DATABASE_URL`. |
+| **P4-008-G02** | Least-Privileged Role Attributes | PASSED | `app_runtime` verified with `SUPERUSER=false`, `BYPASSRLS=false`, `REPLICATION=false`, `INHERIT=false`. |
+| **P4-008-G03** | Schema Ownership Separation | PASSED | Migration/schema setup runs as admin owner; `app_runtime` owns zero tables and holds no schema `CREATE` privilege. |
+| **P4-008-G04** | Table RLS Enabled | PASSED | PostgreSQL catalog (`pg_class.relrowsecurity`) confirms RLS enabled on `organizations`, `branches`, `tenant_resources`. |
+| **P4-008-G05** | Catalog Policy Expression | PASSED | Catalog (`pg_policy.polqual`, `polwithcheck`) matches normalized SQL policy strings (`current_setting(...)`). |
+| **P4-008-G06** | Catalog Policy Role Bounds | PASSED | Catalog (`pg_policy.polroles`) confirms policies bound strictly to `app_runtime` OID (`polroles = [runtime_oid]`). |
+| **P4-008-G07** | Scope Encapsulation | PASSED | `AuthorizedScope` fields are private with read-only accessors, preventing arbitrary struct literal forgery. |
+| **P4-008-G08** | Transaction-Local Context | PASSED | Context set via `set_config('app.organization_id', ..., true)` within `PgAuthorityPools::set_transaction_tenant_context`. |
+| **P4-008-G09** | Connection Pool Cleanliness | PASSED | 10-iteration sequential pool reuse test proves Tenant A GUC context does not leak into subsequent Tenant B transactions. |
+| **P4-008-G10** | Missing Context Fail-Closed | PASSED | Transaction with unset tenant GUC returns 0 rows and rejects writes. |
+| **P4-008-G11** | Invalid Context Fail-Closed | PASSED | Transaction with nonexistent tenant GUC returns 0 rows. |
+| **P4-008-G12** | Cross-Tenant Read Denial | PASSED | Tenant A reading Tenant B resource returns `NotFoundOrDenied`. |
+| **P4-008-G13** | Cross-Tenant Update Denial | PASSED | Tenant A updating Tenant B resource returns `NotFoundOrDenied` with DB state unchanged. |
+| **P4-008-G14** | Cross-Tenant Delete Denial | PASSED | Tenant A deleting Tenant B resource returns `NotFoundOrDenied` with DB state unchanged. |
+| **P4-008-G15** | Cross-Tenant Insert Denial | PASSED | Tenant A inserting Tenant B owned row fails at PostgreSQL RLS `WITH CHECK` (SQLSTATE `42501`/`44000`). |
+| **P4-008-G16** | Ownership-Changing Update | PASSED | Tenant A updating row `organization_id` to Tenant B fails at PostgreSQL RLS `WITH CHECK` (SQLSTATE `42501`/`44000`). |
+| **P4-008-G17** | Direct DB Query Denial | PASSED | Raw SQL `SELECT * FROM tenant_resources WHERE id = $1` without application `WHERE organization_id` predicate hides Tenant B row. |
+| **P4-008-G18** | Application Composition Seam | PASSED | Invocation counter proves application authorization rejection stops execution with 0 persistence database calls. |
+| **P4-008-G19** | Concurrent Isolation | PASSED | 8 concurrent task workers issuing interleaved Tenant A and B reads and writes execute without cross-talk or lock contention. |
+| **P4-008-G20** | Unknown Resource Mutations | PASSED | Updating/deleting nonexistent resources returns `NotFoundOrDenied` without state modification or leakage. |
+| **P4-008-G21** | Foreign Key Classification | PASSED | Mismatched branch reference fails with foreign key violation (SQLSTATE `23503`), distinct from RLS policy violation. |
+| **P4-008-G22** | CI Fail-Closed Enforcement | PASSED | CI workflows (`rust.yml` and `artifact.yml`) enforce credential-free URL environment injection and halt on PostgreSQL failure. |
+| **P4-008-G23** | Canonical Pipeline Verification | PASSED | `./scripts/ci/verify` passes cleanly (fmt, clippy, unit, integration, and workspace tests). |
 
-GATE: P4-008-G02
-CATEGORY: Database Security / Role Privileges
-REQUIREMENT: app_runtime role must NOT have SUPERUSER privilege.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
-TEST_TARGET: test_catalog_runtime_role_privileges
-EXPECTED: pg_roles.rolsuper = false.
-OBSERVED: Verified rolsuper = false via PostgreSQL catalog query on pg_roles.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Role attribute verified via catalog.
+---
 
-GATE: P4-008-G03
-CATEGORY: Database Security / Role Privileges
-REQUIREMENT: app_runtime role must NOT have BYPASSRLS privilege.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
-TEST_TARGET: test_catalog_runtime_role_privileges
-EXPECTED: pg_roles.rolbypassrls = false.
-OBSERVED: Verified rolbypassrls = false via PostgreSQL catalog query on pg_roles.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Role attribute verified via catalog.
+## Real Executable Evidence Summary
 
-GATE: P4-008-G04
-CATEGORY: Database Security / Role Privileges
-REQUIREMENT: app_runtime role must NOT have administrative privileges (CREATEROLE, CREATEDB, REPLICATION) or table ownership.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
-TEST_TARGET: test_catalog_runtime_role_privileges
-EXPECTED: rolcreaterole = false, rolcreatedb = false, rolreplication = false, relation owner != app_runtime.
-OBSERVED: Catalog assertions confirmed zero administrative flags and protected relation owners = postgres.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Owner verification prevents ownership RLS bypass.
+```text
+running 27 tests
+test test_branch_scoped_read_isolation ... ok
+test test_catalog_rls_policy_metadata ... ok
+test test_catalog_runtime_role_privileges ... ok
+test test_concurrent_tenant_isolation_reads_and_writes ... ok
+test test_cross_tenant_branch_binding_denial ... ok
+test test_direct_db_query_without_application_predicate ... ok
+test test_connection_pool_context_leakage_and_rollback_safety ... ok
+test test_end_to_end_application_and_db_composition ... ok
+test test_invalid_tenant_context_fails_closed ... ok
+test test_missing_tenant_context_fails_closed ... ok
+test test_negative_ownership_changing_update_relationally_valid ... ok
+test test_negative_tenant_a_cannot_delete_b ... ok
+test test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid ... ok
+test test_negative_tenant_a_cannot_read_b ... ok
+test test_negative_tenant_a_cannot_update_b ... ok
+test test_negative_unknown_resource_delete_fails_closed ... ok
+test test_negative_unknown_resource_does_not_bypass_scope ... ok
+test test_negative_unknown_resource_update_fails_closed ... ok
+test test_positive_tenant_a_creates_a ... ok
+test test_positive_tenant_a_reads_a ... ok
+test test_positive_tenant_a_updates_a ... ok
+test test_positive_tenant_a_deletes_a ... ok
+test test_positive_tenant_b_creates_b ... ok
+test test_positive_tenant_b_deletes_b ... ok
+test test_positive_tenant_b_reads_b ... ok
+test test_positive_tenant_b_updates_b ... ok
+test test_schema_isolation_and_teardown_regression ... ok
 
-GATE: P4-008-G05
-CATEGORY: Database Security / Privilege Allowlist & Inheritance
-REQUIREMENT: app_runtime must have zero inherited memberships in pg_auth_members, rolinherit = false, schema CREATE = false, database TEMP = false, and exact allowlisted table privileges.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_effective_privileges)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
-TEST_TARGET: test_catalog_runtime_role_privileges
-EXPECTED: pg_auth_members count = 0; rolinherit = false; schema CREATE = false; database TEMP = false; CONNECT, USAGE, SELECT, INSERT, UPDATE, DELETE = true; TRUNCATE, TRIGGER, REFERENCES = false.
-OBSERVED: Catalog queries confirmed zero role memberships, rolinherit = false, schema CREATE = false, database TEMP = false, and exact table privilege allowlist.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Inheritance, schema CREATE, database TEMP, and privilege allowlist verified.
-
-GATE: P4-008-G06
-CATEGORY: Database Security / Row Level Security
-REQUIREMENT: Actual PostgreSQL Row Level Security enabled and forced on all protected relations.
-SOURCE: crates/sitolo-persistence/tests/fixtures/rls_schema.sql
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_rls_policy_metadata --locked
-TEST_TARGET: test_catalog_rls_policy_metadata
-EXPECTED: relrowsecurity = true and relforcerowsecurity = true for organizations, branches, tenant_resources.
-OBSERVED: Catalog query on pg_class confirmed RLS enabled and forced across all protected relations.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: RLS and FORCE RLS verified.
-
-GATE: P4-008-G07
-CATEGORY: Database Security / Policy Metadata
-REQUIREMENT: Policy metadata in pg_policy must exist for target role app_runtime with polcmd = '*' (ALL) and exact USING/WITH CHECK expressions.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_rls_catalog_metadata)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_rls_policy_metadata --locked
-TEST_TARGET: test_catalog_rls_policy_metadata
-EXPECTED: Policy command scope = '*' (ALL); polroles strictly equals [runtime_oid]; exact USING/WITH CHECK expressions reference app.organization_id.
-OBSERVED: Exact catalog verification passed for all protected relations.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Policy metadata verified against pg_policy with exact polroles and expression checks.
-
-GATE: P4-008-G08
-CATEGORY: Tenancy Boundary / Trusted Context
-REQUIREMENT: Transaction-local tenant context (app.organization_id, app.branch_id) set strictly from AuthorizedScope.
-SOURCE: crates/sitolo-persistence/src/postgres.rs (set_transaction_tenant_context)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_positive_tenant_a_reads_a --locked
-TEST_TARGET: test_positive_tenant_a_reads_a
-EXPECTED: Session GUC app.organization_id bound within transaction scope.
-OBSERVED: Query execution within transaction successfully returned authorized Tenant A resources.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Transaction local context set_config verified.
-
-GATE: P4-008-G09
-CATEGORY: Tenancy Isolation / Read Isolation
-REQUIREMENT: Tenant A cannot read Tenant B resources (returns NotFoundOrDenied).
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_negative_tenant_a_cannot_read_b)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_negative_tenant_a_cannot_read_b --locked
-TEST_TARGET: test_negative_tenant_a_cannot_read_b
-EXPECTED: Reading Tenant B resource ID under Tenant A context returns Err(NotFoundOrDenied).
-OBSERVED: RLS filtered out Tenant B resource row; returned NotFoundOrDenied.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Cross-tenant read denied.
-
-GATE: P4-008-G10
-CATEGORY: Tenancy Isolation / Write Isolation
-REQUIREMENT: Tenant A cannot update Tenant B resources; database state remains unchanged.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_negative_tenant_a_cannot_update_b)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_negative_tenant_a_cannot_update_b --locked
-TEST_TARGET: test_negative_tenant_a_cannot_update_b
-EXPECTED: UPDATE affects 0 rows; subsequent read by Tenant B reveals unmodified data.
-OBSERVED: UPDATE returned 0 affected rows; Tenant B verified data remained unchanged.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Cross-tenant update denied and state preserved.
-
-GATE: P4-008-G11
-CATEGORY: Tenancy Isolation / Delete Isolation
-REQUIREMENT: Tenant A cannot delete Tenant B resources; database state remains unchanged.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_negative_tenant_a_cannot_delete_b)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_negative_tenant_a_cannot_delete_b --locked
-TEST_TARGET: test_negative_tenant_a_cannot_delete_b
-EXPECTED: DELETE affects 0 rows; Tenant B resource persists.
-OBSERVED: DELETE returned 0 affected rows; Tenant B resource confirmed present.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Cross-tenant delete denied and state preserved.
-
-GATE: P4-008-G12
-CATEGORY: Tenancy Isolation / Cross-Tenant Insert (WITH CHECK)
-REQUIREMENT: Tenant A cannot insert a row owned by Tenant B even with relationally valid foreign keys; triggers RLS WITH CHECK violation.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid --locked
-TEST_TARGET: test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid
-EXPECTED: Database returns SQLSTATE 42501 or 44000 from RLS WITH CHECK policy.
-OBSERVED: Raw INSERT rejected with database error code 42501 / 44000. DB state unaffected.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Relationally valid INSERT rejected by RLS WITH CHECK.
-
-GATE: P4-008-G13
-CATEGORY: Tenancy Isolation / Ownership Mutation (WITH CHECK)
-REQUIREMENT: Updating organization_id to Tenant B on an existing row fails RLS WITH CHECK enforcement.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_negative_ownership_changing_update_relationally_valid)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_negative_ownership_changing_update_relationally_valid --locked
-TEST_TARGET: test_negative_ownership_changing_update_relationally_valid
-EXPECTED: Database returns SQLSTATE 42501 or 44000 from RLS WITH CHECK policy.
-OBSERVED: Ownership UPDATE rejected with database error code 42501 / 44000. Original ownership preserved.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Ownership mutation rejected by RLS WITH CHECK.
-
-GATE: P4-008-G14
-CATEGORY: Database Boundary / Independent Enforcement
-REQUIREMENT: Broad SQL query without application WHERE organization_id = $1 predicate is still independently filtered by PostgreSQL RLS.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_direct_db_query_without_application_predicate)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_direct_db_query_without_application_predicate --locked
-TEST_TARGET: test_direct_db_query_without_application_predicate
-EXPECTED: Query returns 0 rows for cross-tenant target resource.
-OBSERVED: Raw query without tenant predicate returned None.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Independent DB RLS enforcement verified without app predicate.
-
-GATE: P4-008-G15
-CATEGORY: Tenancy Scope / Branch Level Isolation
-REQUIREMENT: Scope restricted to Branch A1 cannot access resources belonging to Branch A2 under the same organization.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_branch_scoped_read_isolation)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_branch_scoped_read_isolation --locked
-TEST_TARGET: test_branch_scoped_read_isolation
-EXPECTED: Branch A1 scope reads Branch A1 resource (Success); Branch A1 scope reads Branch A2 resource (Denied).
-OBSERVED: Branch A1 read succeeded; Branch A2 read returned NotFoundOrDenied.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Branch level RLS isolation verified.
-
-GATE: P4-008-G16
-CATEGORY: Fail-Closed Security / Missing Context
-REQUIREMENT: Unset or missing tenant context (app.organization_id is empty) fails closed and returns 0 rows.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_missing_tenant_context_fails_closed)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_missing_tenant_context_fails_closed --locked
-TEST_TARGET: test_missing_tenant_context_fails_closed
-EXPECTED: SELECT COUNT(*) returns 0 rows.
-OBSERVED: Unset context query returned 0 rows.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Missing context fails closed.
-
-GATE: P4-008-G17
-CATEGORY: Fail-Closed Security / Invalid Context
-REQUIREMENT: Context pointing to a nonexistent tenant ID returns 0 rows / NotFoundOrDenied.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_invalid_tenant_context_fails_closed)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_invalid_tenant_context_fails_closed --locked
-TEST_TARGET: test_invalid_tenant_context_fails_closed
-EXPECTED: Returns Err(NotFoundOrDenied).
-OBSERVED: Query with invalid context returned NotFoundOrDenied.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Invalid context fails closed.
-
-GATE: P4-008-G18
-CATEGORY: Connection Safety / Context Leakage & Rollback
-REQUIREMENT: Transaction rollback cleans up transaction-local tenant context; reused pooled connections do not leak Tenant A context to Tenant B.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_connection_pool_context_leakage_and_rollback_safety)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_connection_pool_context_leakage_and_rollback_safety --locked
-TEST_TARGET: test_connection_pool_context_leakage_and_rollback_safety
-EXPECTED: 10 consecutive iterations of context set/rollback verify zero leakage across transactions.
-OBSERVED: All 10 pooled transaction iterations succeeded with 0 context leakage.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Connection pool context leakage protection verified.
-
-GATE: P4-008-G19
-CATEGORY: Concurrency Safety / Parallel Tenant Execution
-REQUIREMENT: Concurrent transactions for Tenant A and Tenant B execute in parallel without cross-tenant interference or context corruption.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_concurrent_tenant_isolation_reads_and_writes)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_concurrent_tenant_isolation_reads_and_writes --locked
-TEST_TARGET: test_concurrent_tenant_isolation_reads_and_writes
-EXPECTED: 8 parallel Tokio tasks executing concurrent reads/writes maintain complete isolation.
-OBSERVED: All 8 concurrent tasks completed successfully with 100% tenant isolation.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Concurrent tenant execution safety verified.
-
-GATE: P4-008-G20
-CATEGORY: Defense in Depth / Composition
-REQUIREMENT: Defense-in-depth composition test proves application authorization rejection + zero persistence calls on tamper path + database independent RLS protection.
-SOURCE: crates/sitolo-persistence/tests/rls_security_tests.rs (test_end_to_end_application_and_db_composition)
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_end_to_end_application_and_db_composition --locked
-TEST_TARGET: test_end_to_end_application_and_db_composition
-EXPECTED: Application rejects cross-tenant binding with zero DB calls; DB RLS independently blocks raw queries.
-OBSERVED: Verified end-to-end composition across authorized, application tamper (invocation count unchanged), and database independence paths.
-EXIT_CODE: 0
-ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Application and database defense in depth composition verified with invocation count tracking.
-
-GATE: P4-008-G21
-CATEGORY: CI Automation / Execution Enforcement
-REQUIREMENT: CI script ./scripts/ci/verify unconditionally executes the real PostgreSQL RLS security test suite and fails closed if cargo-deny or cargo-audit are missing.
-SOURCE: scripts/ci/verify
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: ./scripts/ci/verify
-TEST_TARGET: workspace-verification
-EXPECTED: Security suite executes and passes during standard CI verification with mandatory security tooling.
-OBSERVED: ./scripts/ci/verify executed all workspace checks and the 25-test PostgreSQL RLS suite cleanly.
-EXIT_CODE: 0
-ARTIFACT: scripts/ci/verify
-ARTIFACT_SHA256: c270b4de0eedc3578dbdcab730a991297cc0c82ee7a500f0b471359193e48411
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: CI verification script executed cleanly with fail-closed tool checks.
-
-GATE: P4-008-G22
-CATEGORY: Dependency & License Compliance
-REQUIREMENT: Workspace passes cargo deny check and cargo audit.
-SOURCE: deny.toml
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo deny check && cargo audit
-TEST_TARGET: cargo-deny
-EXPECTED: Zero banned dependencies, advisories, or unallowed licenses.
-OBSERVED: cargo deny check passed with zero errors (including Zlib license allowed).
-EXIT_CODE: 0
-ARTIFACT: deny.toml
-ARTIFACT_SHA256: e363597cd3b06c8cc95290790e8b52cb58e84def957a392634313eed7b124e08
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Dependency policies verified.
-
-GATE: P4-008-G23
-CATEGORY: Workspace Integrity / Compilation & Lints
-REQUIREMENT: Workspace compiles cleanly without warnings or clippy errors.
-SOURCE: Cargo workspace
-COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
-WORKFLOW_RUN: 35836456064
-JOB: verify-security-gate
-ENVIRONMENT: sandbox-ci
-POSTGRES_VERSION: 18-alpine
-COMMAND: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-TEST_TARGET: clippy
-EXPECTED: Clean build with 0 warnings.
-OBSERVED: Clippy passed cleanly with 0 warnings across all workspace targets.
-EXIT_CODE: 0
-ARTIFACT: Cargo.toml
-ARTIFACT_SHA256: db8c3a2d8cc39f2c62bac8a8cd9b9f79e03cc811213fd0aab30ca2be028eaf62
-SECURITY_FINDINGS: NONE
-RESULT: PASS
-NOTES: Workspace clippy lints clean.
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.28s
 ```

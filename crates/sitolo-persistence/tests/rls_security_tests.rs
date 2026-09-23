@@ -165,6 +165,26 @@ fn result_id_str(s: &str) -> &str {
     s
 }
 
+/// Minimal test-only application orchestration seam verifying persistence invocation bounds.
+pub async fn execute_application_tenant_operation(
+    membership: &Membership,
+    organization: &Organization,
+    requested_org_id: &RequestedOrganizationId,
+    repo: &PgTestTenantRepository,
+    resource_id: &str,
+) -> Result<TenantResource, PgAuthorityError> {
+    let _trusted_org = bind_organization(requested_org_id, membership)
+        .map_err(|_| PgAuthorityError::NotFoundOrDenied)?;
+
+    let eff_scope = resolve_effective_scope(membership, organization, None)
+        .map_err(|_| PgAuthorityError::NotFoundOrDenied)?;
+
+    let authorized_scope = AuthorizedScope::from_effective(&eff_scope);
+
+    repo.get_tenant_resource(&authorized_scope, resource_id)
+        .await
+}
+
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
 struct SchemaGuard {
     schema_name: String,
@@ -185,7 +205,9 @@ struct TestContext {
     guard: SchemaGuard,
     schema_name: String,
     org_a: Organization,
+    org_b: Organization,
     mem_a: Membership,
+    _mem_b: Membership,
     org_a_scope: AuthorizedScope,
     org_b_scope: AuthorizedScope,
     org_a_b1_scope: AuthorizedScope,
@@ -195,6 +217,7 @@ struct TestContext {
     org_a_id_str: String,
     org_b_id_str: String,
     branch_a1_id_str: String,
+    _branch_a2_id_str: String,
     branch_b1_id_str: String,
 }
 
@@ -435,7 +458,9 @@ async fn setup_test_context() -> TestContext {
         guard,
         schema_name,
         org_a,
+        org_b,
         mem_a,
+        _mem_b: mem_b,
         org_a_scope,
         org_b_scope,
         org_a_b1_scope,
@@ -445,6 +470,7 @@ async fn setup_test_context() -> TestContext {
         org_a_id_str,
         org_b_id_str,
         branch_a1_id_str,
+        _branch_a2_id_str: branch_a2_id_str,
         branch_b1_id_str,
     }
 }
@@ -682,6 +708,40 @@ async fn test_negative_unknown_resource_does_not_bypass_scope() {
 }
 
 #[tokio::test]
+async fn test_negative_unknown_resource_update_fails_closed() {
+    run_test_with_teardown(|ctx| async move {
+        let unknown_res_id = format!("res_NONEXISTENT_{}", uuid::Uuid::new_v4().simple());
+        let update_res = ctx
+            .repo
+            .update_tenant_resource(&ctx.org_a_scope, &unknown_res_id, "Hacked Data")
+            .await;
+
+        assert!(
+            matches!(update_res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Unknown resource update must return NotFoundOrDenied without mutating state"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_negative_unknown_resource_delete_fails_closed() {
+    run_test_with_teardown(|ctx| async move {
+        let unknown_res_id = format!("res_NONEXISTENT_{}", uuid::Uuid::new_v4().simple());
+        let delete_res = ctx
+            .repo
+            .delete_tenant_resource(&ctx.org_a_scope, &unknown_res_id)
+            .await;
+
+        assert!(
+            matches!(delete_res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Unknown resource delete must return NotFoundOrDenied without mutating state"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_negative_tenant_a_cannot_update_b() {
     run_test_with_teardown(|ctx| async move {
         let update_res = ctx
@@ -815,25 +875,31 @@ async fn test_end_to_end_application_and_db_composition() {
     run_test_with_teardown(|ctx| async move {
         let initial_invocations = ctx.repo.invocation_count.load(Ordering::SeqCst);
 
-        // 1. AUTHORIZED PATH
+        // 1. AUTHORIZED PATH via application orchestration seam
         let req_org_a = RequestedOrganizationId(OrganizationId::new(&ctx.org_a_id_str).unwrap());
-        let _trusted_a = bind_organization(&req_org_a, &ctx.mem_a)
-            .expect("Application binding succeeds for authorized membership");
-        let eff_scope_a = resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None)
-            .expect("Scope resolution succeeds");
-        let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
-
-        let res_a = ctx
-            .repo
-            .get_tenant_resource(&authorized_scope_a, &ctx.res_a1_id)
-            .await
-            .expect("Authorized end-to-end operation succeeds");
+        let res_a = execute_application_tenant_operation(
+            &ctx.mem_a,
+            &ctx.org_a,
+            &req_org_a,
+            &ctx.repo,
+            &ctx.res_a1_id,
+        )
+        .await
+        .expect("Authorized end-to-end operation succeeds");
         assert_eq!(res_a.data, "Secret Data A1");
 
         // 2. APPLICATION TAMPER PATH (Zero persistence invocation proof)
         let count_before_tamper = ctx.repo.invocation_count.load(Ordering::SeqCst);
         let req_org_b = RequestedOrganizationId(OrganizationId::new(&ctx.org_b_id_str).unwrap());
-        let tamper_res = bind_organization(&req_org_b, &ctx.mem_a);
+        let tamper_res = execute_application_tenant_operation(
+            &ctx.mem_a,
+            &ctx.org_b,
+            &req_org_b,
+            &ctx.repo,
+            &ctx.res_b1_id,
+        )
+        .await;
+
         assert!(
             tamper_res.is_err(),
             "Application layer must reject cross-tenant binding attempt before DB layer"
@@ -847,6 +913,8 @@ async fn test_end_to_end_application_and_db_composition() {
         );
 
         // 3. DATABASE INDEPENDENCE PATH
+        let eff_scope_a = resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None).unwrap();
+        let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
         let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
         let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
             .bind(&ctx.res_b1_id)
@@ -925,15 +993,30 @@ async fn test_cross_tenant_branch_binding_denial() {
             data: "Cross Branch Invalid".to_string(),
         };
 
-        let insert_res = ctx
-            .repo
-            .create_tenant_resource(&ctx.org_b_scope, &invalid_resource)
-            .await;
+        let mut tx = ctx.repo.begin_tx(&ctx.org_b_scope).await.unwrap();
 
-        assert!(
-            insert_res.is_err(),
-            "Foreign key / RLS constraint must deny referencing a branch belonging to another organization"
+        let insert_res = sqlx::query(
+            "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&invalid_resource.id)
+        .bind(&invalid_resource.organization_id)
+        .bind(&invalid_resource.branch_id)
+        .bind(&invalid_resource.data)
+        .execute(&mut *tx)
+        .await;
+
+        assert!(insert_res.is_err(), "Cross branch insert must fail");
+        let err = insert_res.unwrap_err();
+        let pg_err = err.as_database_error().expect("Must be database error");
+
+        // Assert SQLSTATE 23503 (foreign_key_violation)
+        assert_eq!(
+            pg_err.code().unwrap_or_default(),
+            "23503",
+            "Must be SQLSTATE 23503 (foreign_key_violation) for invalid composite branch reference"
         );
+
+        tx.rollback().await.unwrap();
     })
     .await;
 }
