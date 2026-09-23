@@ -1063,6 +1063,7 @@ async fn test_missing_tenant_context_fails_closed() {
     run_test_with_teardown(|ctx| async move {
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
 
+        // 1. Read denial proof
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
             .fetch_one(&mut *tx)
             .await
@@ -1072,6 +1073,31 @@ async fn test_missing_tenant_context_fails_closed() {
             count, 0,
             "Unset / missing tenant context must return 0 rows (fail closed)"
         );
+
+        // 2. Write denial proof
+        let insert_res = sqlx::query(
+            "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
+        )
+        .bind("res_no_context")
+        .bind(&ctx.org_a_id_str)
+        .bind(&ctx.branch_a1_id_str)
+        .bind("Data Without Context")
+        .execute(&mut *tx)
+        .await;
+
+        assert!(
+            insert_res.is_err(),
+            "INSERT without tenant context must fail closed at RLS WITH CHECK"
+        );
+        let err = insert_res.unwrap_err();
+        let pg_err = err.as_database_error().expect("Must be database error");
+        let code = pg_err.code().unwrap_or_default();
+        assert!(
+            code == "42501" || code == "44000",
+            "Must be SQLSTATE 42501 or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
+        );
+
+        tx.rollback().await.unwrap();
     })
     .await;
 }

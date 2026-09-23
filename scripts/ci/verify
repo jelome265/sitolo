@@ -24,7 +24,7 @@ echo "==> Unit tests"
 cargo test --workspace --all-targets --all-features --locked
 
 echo "==> PostgreSQL RLS Security Suite"
-cargo test -p sitolo-persistence --test rls_security_tests --locked
+cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked
 
 echo "==> Release build"
 cargo build --workspace --release --locked
