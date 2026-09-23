@@ -39,12 +39,15 @@ echo "==> Dependency and license policy"
 if command -v cargo-deny >/dev/null 2>&1; then
   cargo deny check
 else
-  echo "    cargo-deny not installed; skipping (the CI security workflow installs it unconditionally)"
+  echo "FAIL-CLOSED: cargo-deny is required for verification pipeline execution" >&2
+  exit 1
 fi
+
 if command -v cargo-audit >/dev/null 2>&1; then
   cargo audit
 else
-  echo "    cargo-audit not installed; skipping (the CI security workflow installs it unconditionally)"
+  echo "FAIL-CLOSED: cargo-audit is required for verification pipeline execution" >&2
+  exit 1
 fi
 
 echo "==> All verification passed"

@@ -20,6 +20,7 @@ use std::env;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
 
@@ -34,20 +35,25 @@ pub struct TenantResource {
     pub data: String,
 }
 
-/// Test-harness repository helper for Part 7 security proof operations.
+/// Test-harness repository helper for Part 7 security proof operations with invocation tracking.
 pub struct PgTestTenantRepository {
     pub runtime_pool: sqlx::PgPool,
+    pub invocation_count: Arc<AtomicUsize>,
 }
 
 impl PgTestTenantRepository {
     pub fn new(runtime_pool: sqlx::PgPool) -> Self {
-        Self { runtime_pool }
+        Self {
+            runtime_pool,
+            invocation_count: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     pub async fn begin_tx(
         &self,
         scope: &AuthorizedScope,
     ) -> Result<Transaction<'_, Postgres>, PgAuthorityError> {
+        self.invocation_count.fetch_add(1, Ordering::SeqCst);
         let mut tx = self.runtime_pool.begin().await?;
         set_transaction_tenant_context(&mut tx, scope).await?;
         Ok(tx)
@@ -166,9 +172,10 @@ struct SchemaGuard {
 }
 
 impl SchemaGuard {
-    async fn teardown(&self) {
+    async fn teardown(&self) -> Result<(), PgAuthorityError> {
         let drop_sql = format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema_name);
-        let _ = sqlx::raw_sql(&drop_sql).execute(&self.admin_pool).await;
+        sqlx::raw_sql(&drop_sql).execute(&self.admin_pool).await?;
+        Ok(())
     }
 }
 
@@ -200,7 +207,7 @@ where
 
     // Verify explicit runtime pool user identity is strictly app_runtime
     let current_user: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&ctx.pools.runtime_pool)
+        .fetch_one(ctx.pools.runtime_pool())
         .await
         .expect("Failed to query current_user from runtime pool");
     assert_eq!(
@@ -212,7 +219,7 @@ where
     let join_handle = tokio::spawn(AssertUnwindSafe(test_fn(ctx_clone)));
     let res = join_handle.await;
 
-    ctx.guard.teardown().await;
+    ctx.guard.teardown().await.expect("Schema teardown failed");
 
     match res {
         Ok(()) => {}
@@ -274,7 +281,7 @@ async fn setup_test_context() -> TestContext {
     // Apply Part 7 schema inside search_path
     let schema_sql = include_str!("fixtures/rls_schema.sql");
     if let Err(err) = sqlx::raw_sql(schema_sql).execute(&admin_pool).await {
-        guard.teardown().await;
+        guard.teardown().await.ok();
         panic!("Failed to apply RLS fixture schema inside search_path: {err:?}");
     }
 
@@ -283,14 +290,14 @@ async fn setup_test_context() -> TestContext {
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
     );
     if let Err(err) = sqlx::raw_sql(&grant_schema_sql).execute(&admin_pool).await {
-        guard.teardown().await;
+        guard.teardown().await.ok();
         panic!("Failed to grant schema privileges to app_runtime: {err:?}");
     }
 
     let pools = match PgAuthorityPools::connect_options(admin_opts, runtime_opts).await {
         Ok(p) => p,
         Err(err) => {
-            guard.teardown().await;
+            guard.teardown().await.ok();
             panic!("Failed to create authority pools: {err:?}");
         }
     };
@@ -359,7 +366,7 @@ async fn setup_test_context() -> TestContext {
     let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1)).unwrap();
     let org_a_b1_scope = AuthorizedScope::from_effective(&eff_a_b1);
 
-    let repo = PgTestTenantRepository::new(pools.runtime_pool.clone());
+    let repo = PgTestTenantRepository::new(pools.runtime_pool().clone());
 
     // Seed Orgs A and B via admin pool
     if let Err(err) = sqlx::query(
@@ -373,9 +380,9 @@ async fn setup_test_context() -> TestContext {
     .bind("Organization B")
     .bind("ACTIVE")
     .bind(1i64)
-    .execute(&pools.admin_pool)
+    .execute(pools.admin_pool())
     .await {
-        guard.teardown().await;
+        guard.teardown().await.ok();
         panic!("Failed to seed organizations: {err:?}");
     }
 
@@ -392,10 +399,10 @@ async fn setup_test_context() -> TestContext {
     .bind(&org_a_id_str)
     .bind(&branch_b1_id_str)
     .bind(&org_b_id_str)
-    .execute(&pools.admin_pool)
+    .execute(pools.admin_pool())
     .await
     {
-        guard.teardown().await;
+        guard.teardown().await.ok();
         panic!("Failed to seed branches: {err:?}");
     }
 
@@ -415,10 +422,10 @@ async fn setup_test_context() -> TestContext {
     .bind(&res_b1_id)
     .bind(&org_b_id_str)
     .bind(&branch_b1_id_str)
-    .execute(&pools.admin_pool)
+    .execute(pools.admin_pool())
     .await
     {
-        guard.teardown().await;
+        guard.teardown().await.ok();
         panic!("Failed to seed tenant resources: {err:?}");
     }
 
@@ -474,7 +481,7 @@ async fn test_catalog_rls_policy_metadata() {
 }
 
 // ============================================================================
-// 2. POSITIVE ISOLATION TESTS
+// 2. POSITIVE ISOLATION TESTS & SYMMETRIC B OPERATIONS
 // ============================================================================
 
 #[tokio::test]
@@ -537,6 +544,33 @@ async fn test_positive_tenant_a_creates_a() {
 }
 
 #[tokio::test]
+async fn test_positive_tenant_b_creates_b() {
+    run_test_with_teardown(|ctx| async move {
+        let new_res_id = format!("res_B_created_{}", uuid::Uuid::new_v4().simple());
+        let new_resource = TenantResource {
+            id: new_res_id.clone(),
+            organization_id: ctx.org_b_id_str.clone(),
+            branch_id: ctx.branch_b1_id_str.clone(),
+            data: "Newly Created Data B".to_string(),
+        };
+
+        ctx.repo
+            .create_tenant_resource(&ctx.org_b_scope, &new_resource)
+            .await
+            .expect("Tenant B should create its own resource");
+
+        let fetched = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &new_res_id)
+            .await
+            .unwrap();
+
+        assert_eq!(fetched.data, "Newly Created Data B");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_positive_tenant_a_updates_a() {
     run_test_with_teardown(|ctx| async move {
         ctx.repo
@@ -556,6 +590,25 @@ async fn test_positive_tenant_a_updates_a() {
 }
 
 #[tokio::test]
+async fn test_positive_tenant_b_updates_b() {
+    run_test_with_teardown(|ctx| async move {
+        ctx.repo
+            .update_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id, "Updated Data B1")
+            .await
+            .expect("Tenant B should update its own resource res_B1");
+
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
+            .await
+            .unwrap();
+
+        assert_eq!(res.data, "Updated Data B1");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_positive_tenant_a_deletes_a() {
     run_test_with_teardown(|ctx| async move {
         ctx.repo
@@ -566,6 +619,24 @@ async fn test_positive_tenant_a_deletes_a() {
         let fetch_res = ctx
             .repo
             .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await;
+
+        assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_positive_tenant_b_deletes_b() {
+    run_test_with_teardown(|ctx| async move {
+        ctx.repo
+            .delete_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
+            .await
+            .expect("Tenant B should delete its own resource res_B1");
+
+        let fetch_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
             .await;
 
         assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
@@ -742,6 +813,9 @@ async fn test_negative_ownership_changing_update_relationally_valid() {
 #[tokio::test]
 async fn test_end_to_end_application_and_db_composition() {
     run_test_with_teardown(|ctx| async move {
+        let initial_invocations = ctx.repo.invocation_count.load(Ordering::SeqCst);
+
+        // 1. AUTHORIZED PATH
         let req_org_a = RequestedOrganizationId(OrganizationId::new(&ctx.org_a_id_str).unwrap());
         let _trusted_a = bind_organization(&req_org_a, &ctx.mem_a)
             .expect("Application binding succeeds for authorized membership");
@@ -756,6 +830,8 @@ async fn test_end_to_end_application_and_db_composition() {
             .expect("Authorized end-to-end operation succeeds");
         assert_eq!(res_a.data, "Secret Data A1");
 
+        // 2. APPLICATION TAMPER PATH (Zero persistence invocation proof)
+        let count_before_tamper = ctx.repo.invocation_count.load(Ordering::SeqCst);
         let req_org_b = RequestedOrganizationId(OrganizationId::new(&ctx.org_b_id_str).unwrap());
         let tamper_res = bind_organization(&req_org_b, &ctx.mem_a);
         assert!(
@@ -763,6 +839,14 @@ async fn test_end_to_end_application_and_db_composition() {
             "Application layer must reject cross-tenant binding attempt before DB layer"
         );
 
+        // Prove invocation count did NOT increase on application authorization rejection
+        let count_after_tamper = ctx.repo.invocation_count.load(Ordering::SeqCst);
+        assert_eq!(
+            count_before_tamper, count_after_tamper,
+            "Persistence layer MUST NOT be invoked when application authorization fails"
+        );
+
+        // 3. DATABASE INDEPENDENCE PATH
         let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
         let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
             .bind(&ctx.res_b1_id)
@@ -775,6 +859,11 @@ async fn test_end_to_end_application_and_db_composition() {
             "PostgreSQL RLS independently blocks Tenant B row even when raw query lacks WHERE organization_id predicate"
         );
         tx.commit().await.unwrap();
+
+        assert!(
+            ctx.repo.invocation_count.load(Ordering::SeqCst) > initial_invocations,
+            "Invocation counter accurately recorded operations"
+        );
     })
     .await;
 }
@@ -856,7 +945,7 @@ async fn test_cross_tenant_branch_binding_denial() {
 #[tokio::test]
 async fn test_missing_tenant_context_fails_closed() {
     run_test_with_teardown(|ctx| async move {
-        let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+        let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
             .fetch_one(&mut *tx)
@@ -880,7 +969,7 @@ async fn test_invalid_tenant_context_fails_closed() {
         let bind_res = bind_organization(&req_org_nonexistent, &ctx.mem_a);
         assert!(bind_res.is_err(), "Binding nonexistent org must fail");
 
-        let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+        let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
         sqlx::query("SELECT set_config('app.organization_id', 'org_NONEXISTENT', true)")
             .execute(&mut *tx)
             .await
@@ -908,7 +997,7 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
     run_test_with_teardown(|ctx| async move {
         for _ in 0..10 {
             {
-                let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+                let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
                 set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
                     .await
                     .unwrap();
@@ -925,7 +1014,7 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
             }
 
             {
-                let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+                let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
                 set_transaction_tenant_context(&mut tx, &ctx.org_b_scope)
                     .await
                     .unwrap();
@@ -1047,7 +1136,7 @@ async fn test_schema_isolation_and_teardown_regression() {
         let schema_exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
                 .bind(&schema_name)
-                .fetch_one(&ctx.pools.admin_pool)
+                .fetch_one(ctx.pools.admin_pool())
                 .await
                 .unwrap();
         assert!(schema_exists, "Isolated schema must exist");
@@ -1060,7 +1149,7 @@ async fn test_schema_isolation_and_teardown_regression() {
             )
             .bind(&schema_name)
             .bind(table)
-            .fetch_one(&ctx.pools.admin_pool)
+            .fetch_one(ctx.pools.admin_pool())
             .await
             .unwrap();
             assert!(

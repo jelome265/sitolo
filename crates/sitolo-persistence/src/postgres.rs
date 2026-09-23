@@ -34,8 +34,8 @@ impl From<sqlx::Error> for PgAuthorityError {
 /// Managed authority pair: admin pool (migration/setup authority) and runtime pool (least privileged).
 #[derive(Clone)]
 pub struct PgAuthorityPools {
-    pub admin_pool: PgPool,
-    pub runtime_pool: PgPool,
+    admin_pool: PgPool,
+    runtime_pool: PgPool,
 }
 
 impl PgAuthorityPools {
@@ -60,11 +60,21 @@ impl PgAuthorityPools {
         })
     }
 
+    /// Read-only accessor for runtime pool.
+    pub fn runtime_pool(&self) -> &PgPool {
+        &self.runtime_pool
+    }
+
+    /// Read-only accessor for admin pool (test-only/internal).
+    pub fn admin_pool(&self) -> &PgPool {
+        &self.admin_pool
+    }
+
     /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
-    /// has zero role memberships in `pg_auth_members`, and does NOT own protected relations.
+    /// has zero role memberships in `pg_auth_members`, rolinherit = false, and does NOT own protected relations.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
         let row = sqlx::query(
-            "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
+            "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit
              FROM pg_roles
              WHERE rolname = 'app_runtime'",
         )
@@ -75,8 +85,9 @@ impl PgAuthorityPools {
         let bypassrls: bool = row.get("rolbypassrls");
         let createrole: bool = row.get("rolcreaterole");
         let createdb: bool = row.get("rolcreatedb");
+        let inherit: bool = row.get("rolinherit");
 
-        if superuser || bypassrls || createrole || createdb {
+        if superuser || bypassrls || createrole || createdb || inherit {
             return Err(PgAuthorityError::SecurityViolation);
         }
 
@@ -118,7 +129,7 @@ impl PgAuthorityPools {
     }
 
     /// Verifies via PostgreSQL catalog functions that `app_runtime` has exact effective privileges
-    /// against an explicit allowlist (SELECT, INSERT, UPDATE, DELETE) and no forbidden admin privileges.
+    /// against an explicit allowlist (SELECT, INSERT, UPDATE, DELETE) and no forbidden privileges (CREATE, TEMP, TRUNCATE, TRIGGER, REFERENCES).
     pub async fn verify_effective_privileges(
         &self,
         schema_name: &str,
@@ -130,6 +141,28 @@ impl PgAuthorityPools {
         .await?;
 
         if !has_connect {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
+        // Assert schema CREATE is FALSE
+        let has_schema_create: bool =
+            sqlx::query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'CREATE')")
+                .bind(schema_name)
+                .fetch_one(&self.admin_pool)
+                .await?;
+
+        if has_schema_create {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
+        // Assert database TEMP is FALSE
+        let has_db_temp: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege('app_runtime', current_database(), 'TEMP')",
+        )
+        .fetch_one(&self.admin_pool)
+        .await?;
+
+        if has_db_temp {
             return Err(PgAuthorityError::SecurityViolation);
         }
 
@@ -265,9 +298,23 @@ impl PgAuthorityPools {
                     let qual = qual_expr.ok_or(PgAuthorityError::SecurityViolation)?;
                     let check = check_expr.ok_or(PgAuthorityError::SecurityViolation)?;
 
-                    if !qual.contains("app.organization_id")
-                        || !check.contains("app.organization_id")
-                    {
+                    // Verify exact normalized SQL expressions per table
+                    if table == "organizations" {
+                        if !qual.contains("id = NULLIF(current_setting('app.organization_id'")
+                            || qual.contains("app.branch_id")
+                        {
+                            return Err(PgAuthorityError::SecurityViolation);
+                        }
+                    } else if table == "branches" || table == "tenant_resources" {
+                        if !qual.contains(
+                            "organization_id = NULLIF(current_setting('app.organization_id'",
+                        ) || !qual.contains("app.branch_id")
+                        {
+                            return Err(PgAuthorityError::SecurityViolation);
+                        }
+                    }
+
+                    if check != qual {
                         return Err(PgAuthorityError::SecurityViolation);
                     }
                 }
