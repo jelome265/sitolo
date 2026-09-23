@@ -393,7 +393,8 @@ async fn setup_test_context() -> TestContext {
     .bind(&branch_b1_id_str)
     .bind(&org_b_id_str)
     .execute(&pools.admin_pool)
-    .await {
+    .await
+    {
         guard.teardown().await;
         panic!("Failed to seed branches: {err:?}");
     }
@@ -415,7 +416,8 @@ async fn setup_test_context() -> TestContext {
     .bind(&org_b_id_str)
     .bind(&branch_b1_id_str)
     .execute(&pools.admin_pool)
-    .await {
+    .await
+    {
         guard.teardown().await;
         panic!("Failed to seed tenant resources: {err:?}");
     }
