@@ -74,7 +74,7 @@ impl PgAuthorityPools {
     /// has zero role memberships in `pg_auth_members`, rolinherit = false, and does NOT own protected relations.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
         let row = sqlx::query(
-            "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit
+            "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolreplication
              FROM pg_roles
              WHERE rolname = 'app_runtime'",
         )
@@ -86,8 +86,9 @@ impl PgAuthorityPools {
         let createrole: bool = row.get("rolcreaterole");
         let createdb: bool = row.get("rolcreatedb");
         let inherit: bool = row.get("rolinherit");
+        let replication: bool = row.get("rolreplication");
 
-        if superuser || bypassrls || createrole || createdb || inherit {
+        if superuser || bypassrls || createrole || createdb || inherit || replication {
             return Err(PgAuthorityError::SecurityViolation);
         }
 
