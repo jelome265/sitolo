@@ -65,11 +65,6 @@ impl PgAuthorityPools {
         &self.runtime_pool
     }
 
-    /// Read-only accessor for admin pool (test-only/internal).
-    pub fn admin_pool(&self) -> &PgPool {
-        &self.admin_pool
-    }
-
     /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
     /// has zero role memberships in `pg_auth_members`, rolinherit = false, rolreplication = false, and does NOT own protected relations.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
@@ -289,18 +284,34 @@ impl PgAuthorityPools {
                     let check = check_expr.ok_or(PgAuthorityError::SecurityViolation)?;
 
                     // Verify exact normalized SQL expressions per table
-                    if table == "organizations" {
-                        if !qual.contains("app.organization_id") || qual.contains("app.branch_id") {
-                            return Err(PgAuthorityError::SecurityViolation);
-                        }
-                    } else if (table == "branches" || table == "tenant_resources")
-                        && (!qual.contains("app.organization_id")
-                            || !qual.contains("app.branch_id"))
-                    {
-                        return Err(PgAuthorityError::SecurityViolation);
+                    fn normalize_expr(s: &str) -> String {
+                        s.chars()
+                            .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+                            .collect::<String>()
+                            .to_lowercase()
                     }
 
-                    if check != qual {
+                    let norm_qual = normalize_expr(&qual);
+                    let norm_check = normalize_expr(&check);
+
+                    let expected_canonical_norm = match table {
+                        "organizations" => normalize_expr(
+                            "id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)",
+                        ),
+                        "branches" => normalize_expr(
+                            "(organization_id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR (id::text = current_setting('app.branch_id'::text, true)))",
+                        ),
+                        "tenant_resources" => normalize_expr(
+                            "(organization_id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR (branch_id::text = current_setting('app.branch_id'::text, true)))",
+                        ),
+                        _ => return Err(PgAuthorityError::SecurityViolation),
+                    };
+
+                    if norm_qual != expected_canonical_norm || norm_check != expected_canonical_norm
+                    {
+                        eprintln!(
+                            "RLS policy expression mismatch for table {table}:\nGot qual raw: {qual}\nGot qual norm: {norm_qual}\nExpected norm: {expected_canonical_norm}"
+                        );
                         return Err(PgAuthorityError::SecurityViolation);
                     }
                 }

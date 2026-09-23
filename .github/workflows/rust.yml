@@ -47,6 +47,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install mandatory security tooling
+        run: |
+          cargo install cargo-deny --locked || true
+          cargo install cargo-audit --locked || true
       - name: Run canonical verification
         env:
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test

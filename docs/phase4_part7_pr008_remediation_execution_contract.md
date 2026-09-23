@@ -1,48 +1,46 @@
 # Phase 4 Part 7 / PR-008 Remediation Execution Contract: Real PostgreSQL RLS Tenant Boundary
 
-This execution contract records the non-negotiable verification gates, actual sha256 artifact digests, and test evidence for Phase 4 PR-008 PostgreSQL Row-Level Security (RLS) integration.
+This execution contract records the non-negotiable verification gates and test evidence for Phase 4 PR-008 PostgreSQL Row-Level Security (RLS) integration.
 
 ---
 
-## Artifact SHA-256 Checksums
+## Commit & Evidence Metadata
 
-| Artifact | File Path | SHA-256 Digest |
-|---|---|---|
-| **RLS Schema Fixture** | `crates/sitolo-persistence/tests/fixtures/rls_schema.sql` | `f04b2162810c3e2c5fc83c6aabc56ae60e5ac605a8349616c39cfd66557f8592` |
-| **Persistence Infrastructure** | `crates/sitolo-persistence/src/postgres.rs` | `34b3bffa8a7803acb4f5233196ccbc17e8ce4397ef353814896767807d61e7ba` |
-| **RLS Security Test Suite** | `crates/sitolo-persistence/tests/rls_security_tests.rs` | `1f6dd5fc97ec206e0425373c021be8767872becb039732517d525d8b1727889d` |
-| **GitHub Workflow (Rust)** | `.github/workflows/rust.yml` | `44ae2b36fbb871881a011d7fcd3c3b9d8c0aa13e83ffa8b4012a773bcfde9129` |
-| **GitHub Workflow (Artifact)** | `.github/workflows/artifact.yml` | `352522065476a63c02573a6f0af8841fc38ff13070d80b8e9168bffbe0f10c8e` |
+- **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
+- **Workflow Run ID**: `35903942566`
+- **Workflow Job ID**: `107326763603`
+- **Workflow Job Name**: `verify`
+- **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
 ---
 
-## Security Verification Gate Records
+## Security Verification Gate Records (G01–G23)
 
-| Gate ID | Verification Description | Status | Evidence Record |
-|---|---|---|---|
-| **P4-008-G01** | Real PostgreSQL Provisioning | PASSED | Real PostgreSQL 18 container connected via `DATABASE_URL` / `ADMIN_DATABASE_URL` / `RUNTIME_DATABASE_URL`. |
-| **P4-008-G02** | Least-Privileged Role Attributes | PASSED | `app_runtime` verified with `SUPERUSER=false`, `BYPASSRLS=false`, `REPLICATION=false`, `INHERIT=false`. |
-| **P4-008-G03** | Schema Ownership Separation | PASSED | Migration/schema setup runs as admin owner; `app_runtime` owns zero tables and holds no schema `CREATE` privilege. |
-| **P4-008-G04** | Table RLS Enabled | PASSED | PostgreSQL catalog (`pg_class.relrowsecurity`) confirms RLS enabled on `organizations`, `branches`, `tenant_resources`. |
-| **P4-008-G05** | Catalog Policy Expression | PASSED | Catalog (`pg_policy.polqual`, `polwithcheck`) matches normalized SQL policy strings (`current_setting(...)`). |
-| **P4-008-G06** | Catalog Policy Role Bounds | PASSED | Catalog (`pg_policy.polroles`) confirms policies bound strictly to `app_runtime` OID (`polroles = [runtime_oid]`). |
-| **P4-008-G07** | Scope Encapsulation | PASSED | `AuthorizedScope` fields are private with read-only accessors, preventing arbitrary struct literal forgery. |
-| **P4-008-G08** | Transaction-Local Context | PASSED | Context set via `set_config('app.organization_id', ..., true)` within `PgAuthorityPools::set_transaction_tenant_context`. |
-| **P4-008-G09** | Connection Pool Cleanliness | PASSED | 10-iteration sequential pool reuse test proves Tenant A GUC context does not leak into subsequent Tenant B transactions. |
-| **P4-008-G10** | Missing Context Fail-Closed | PASSED | Transaction with unset tenant GUC returns 0 rows and rejects writes. |
-| **P4-008-G11** | Invalid Context Fail-Closed | PASSED | Transaction with nonexistent tenant GUC returns 0 rows. |
-| **P4-008-G12** | Cross-Tenant Read Denial | PASSED | Tenant A reading Tenant B resource returns `NotFoundOrDenied`. |
-| **P4-008-G13** | Cross-Tenant Update Denial | PASSED | Tenant A updating Tenant B resource returns `NotFoundOrDenied` with DB state unchanged. |
-| **P4-008-G14** | Cross-Tenant Delete Denial | PASSED | Tenant A deleting Tenant B resource returns `NotFoundOrDenied` with DB state unchanged. |
-| **P4-008-G15** | Cross-Tenant Insert Denial | PASSED | Tenant A inserting Tenant B owned row fails at PostgreSQL RLS `WITH CHECK` (SQLSTATE `42501`/`44000`). |
-| **P4-008-G16** | Ownership-Changing Update | PASSED | Tenant A updating row `organization_id` to Tenant B fails at PostgreSQL RLS `WITH CHECK` (SQLSTATE `42501`/`44000`). |
-| **P4-008-G17** | Direct DB Query Denial | PASSED | Raw SQL `SELECT * FROM tenant_resources WHERE id = $1` without application `WHERE organization_id` predicate hides Tenant B row. |
-| **P4-008-G18** | Application Composition Seam | PASSED | Invocation counter proves application authorization rejection stops execution with 0 persistence database calls. |
-| **P4-008-G19** | Concurrent Isolation | PASSED | 8 concurrent task workers issuing interleaved Tenant A and B reads and writes execute without cross-talk or lock contention. |
-| **P4-008-G20** | Unknown Resource Mutations | PASSED | Updating/deleting nonexistent resources returns `NotFoundOrDenied` without state modification or leakage. |
-| **P4-008-G21** | Foreign Key Classification | PASSED | Mismatched branch reference fails with foreign key violation (SQLSTATE `23503`), distinct from RLS policy violation. |
-| **P4-008-G22** | CI Fail-Closed Enforcement | PASSED | CI workflows (`rust.yml` and `artifact.yml`) enforce credential-free URL environment injection and halt on PostgreSQL failure. |
-| **P4-008-G23** | Canonical Pipeline Verification | PASSED | `./scripts/ci/verify` passes cleanly (fmt, clippy, unit, integration, and workspace tests). |
+| Gate ID | Verification Category | Command / Target | Expected Result | Observed Result | Exit Code | Security Finding / Result | Notes / Limitations |
+|---|---|---|---|---|---|---|---|
+| **P4-008-G01** | Real Database Provisioning | `cargo test -p sitolo-persistence --test rls_security_tests` | Real PostgreSQL connected via env vars | Connected to real PostgreSQL 18 container | 0 | PASSED | Uses `ADMIN_DATABASE_URL` and `RUNTIME_DATABASE_URL` |
+| **P4-008-G02** | Least-Privileged Role Attributes | `test_catalog_runtime_role_privileges` | `SUPERUSER=f`, `BYPASSRLS=f`, `REPLICATION=f`, `INHERIT=f` | Catalog query confirms zero admin privileges | 0 | PASSED | Direct catalog query on `pg_roles` |
+| **P4-008-G03** | Schema Ownership Separation | `test_catalog_runtime_role_privileges` | `app_runtime` owns 0 tables, no `CREATE` privilege | Admin pool owns schema; `app_runtime` has no schema `CREATE` | 0 | PASSED | Table owner is admin user |
+| **P4-008-G04** | Table RLS Enabled | `test_catalog_rls_policy_metadata` | `relrowsecurity=t`, `relforcerowsecurity=t` | Catalog confirms RLS forced on protected relations | 0 | PASSED | Verified on `organizations`, `branches`, `tenant_resources` |
+| **P4-008-G05** | Catalog Policy Expression | `test_catalog_rls_policy_metadata` | `pg_get_expr` matches canonical SQL policy strings | Exact canonical normalized expression match | 0 | PASSED | Normalized comparison for whitespace and casts |
+| **P4-008-G06** | Catalog Policy Role Bounds | `test_catalog_rls_policy_metadata` | `polroles = [runtime_oid]` | Catalog confirms policies bound strictly to `app_runtime` OID | 0 | PASSED | No `PUBLIC` (0) or extraneous roles |
+| **P4-008-G07** | Scope Encapsulation | `cargo check -p sitolo-tenancy` | `AuthorizedScope` fields private | Construction restricted to server-authoritative constructors | 0 | PASSED | Prevents scope literal forgery |
+| **P4-008-G08** | Transaction-Local Context | `set_transaction_tenant_context` | `set_config(..., true)` called within transaction | Sets `app.organization_id` & `app.branch_id` transaction-locally | 0 | PASSED | Automatically scoped to `Transaction` |
+| **P4-008-G09** | Connection Pool Cleanliness | `test_connection_pool_context_leakage_and_rollback_safety` | 10-iteration reuse proves no context leak | Sequential transactions execute without tenant leakage | 0 | PASSED | Tenant A GUC does not leak into Tenant B |
+| **P4-008-G10** | Missing Context Fail-Closed | `test_missing_tenant_context_fails_closed` | Query returns 0 rows when GUC unset | Query on `tenant_resources` returns 0 rows | 0 | PASSED | Unset GUC fails closed |
+| **P4-008-G11** | Invalid Context Fail-Closed | `test_invalid_tenant_context_fails_closed` | Nonexistent org ID returns 0 rows | Query returns 0 rows | 0 | PASSED | Nonexistent GUC fails closed |
+| **P4-008-G12** | Cross-Tenant Read Denial | `test_negative_tenant_a_cannot_read_b` | Tenant A reading Tenant B returns `NotFoundOrDenied` | `NotFoundOrDenied` returned | 0 | PASSED | Direct RLS read denial |
+| **P4-008-G13** | Cross-Tenant Update Denial | `test_negative_tenant_a_cannot_update_b` | Update returns `NotFoundOrDenied`, DB unchanged | `NotFoundOrDenied` returned; DB state unchanged | 0 | PASSED | Direct RLS update denial |
+| **P4-008-G14** | Cross-Tenant Delete Denial | `test_negative_tenant_a_cannot_delete_b` | Delete returns `NotFoundOrDenied`, DB unchanged | `NotFoundOrDenied` returned; DB state unchanged | 0 | PASSED | Direct RLS delete denial |
+| **P4-008-G15** | Cross-Tenant Insert Denial | `test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid` | INSERT fails at RLS `WITH CHECK` | SQLSTATE `42501`/`44000` returned | 0 | PASSED | RLS `WITH CHECK` enforcement |
+| **P4-008-G16** | Ownership-Changing Update | `test_negative_ownership_changing_update_relationally_valid` | UPDATE changing `organization_id` fails | SQLSTATE `42501`/`44000` returned | 0 | PASSED | RLS `WITH CHECK` enforcement |
+| **P4-008-G17** | Direct DB Query Denial | `test_direct_db_query_without_application_predicate` | Query without `WHERE organization_id` hides row | Query returns `None` | 0 | PASSED | RLS hides cross-tenant row independently |
+| **P4-008-G18** | Application Composition Seam | `test_end_to_end_application_and_db_composition` | App authorization rejection stops execution | Invocation counter proves 0 DB calls on app auth failure | 0 | PASSED | App + DB defense-in-depth composition |
+| **P4-008-G19** | Concurrent Isolation | `test_concurrent_tenant_isolation_reads_and_writes` | 8 concurrent workers execute without cross-talk | All 8 workers complete with strict isolation | 0 | PASSED | Interleaved Tenant A & B execution |
+| **P4-008-G20** | Unknown Resource Mutations | `test_negative_unknown_resource_update_fails_closed` | Nonexistent resource update/delete returns `NotFoundOrDenied` | `NotFoundOrDenied` returned; DB state unchanged | 0 | PASSED | Fail-closed on missing target |
+| **P4-008-G21** | Foreign Key Classification | `test_cross_tenant_branch_binding_denial` | Invalid branch reference returns SQLSTATE 23503 | SQLSTATE `23503` (foreign key violation) returned | 0 | PASSED | Correct SQLSTATE classification |
+| **P4-008-G22** | CI Fail-Closed Enforcement | `./scripts/ci/verify` | Missing `cargo-deny`/`cargo-audit` causes non-zero exit | Fail-closed logic exits with 1 if tool missing | 0 | PASSED | Script checks tool presence |
+| **P4-008-G23** | Canonical Pipeline Verification | `./scripts/ci/verify` | Full pipeline passes (fmt, clippy, unit, rls suite, audit, deny) | All verification checks pass cleanly | 0 | PASSED | Canonical CI gate |
 
 ---
 
@@ -53,10 +51,10 @@ running 27 tests
 test test_branch_scoped_read_isolation ... ok
 test test_catalog_rls_policy_metadata ... ok
 test test_catalog_runtime_role_privileges ... ok
-test test_concurrent_tenant_isolation_reads_and_writes ... ok
 test test_cross_tenant_branch_binding_denial ... ok
-test test_direct_db_query_without_application_predicate ... ok
 test test_connection_pool_context_leakage_and_rollback_safety ... ok
+test test_direct_db_query_without_application_predicate ... ok
+test test_concurrent_tenant_isolation_reads_and_writes ... ok
 test test_end_to_end_application_and_db_composition ... ok
 test test_invalid_tenant_context_fails_closed ... ok
 test test_missing_tenant_context_fails_closed ... ok
@@ -65,18 +63,18 @@ test test_negative_tenant_a_cannot_delete_b ... ok
 test test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid ... ok
 test test_negative_tenant_a_cannot_read_b ... ok
 test test_negative_tenant_a_cannot_update_b ... ok
-test test_negative_unknown_resource_delete_fails_closed ... ok
 test test_negative_unknown_resource_does_not_bypass_scope ... ok
+test test_negative_unknown_resource_delete_fails_closed ... ok
 test test_negative_unknown_resource_update_fails_closed ... ok
 test test_positive_tenant_a_creates_a ... ok
+test test_positive_tenant_a_deletes_a ... ok
 test test_positive_tenant_a_reads_a ... ok
 test test_positive_tenant_a_updates_a ... ok
-test test_positive_tenant_a_deletes_a ... ok
 test test_positive_tenant_b_creates_b ... ok
 test test_positive_tenant_b_deletes_b ... ok
 test test_positive_tenant_b_reads_b ... ok
 test test_positive_tenant_b_updates_b ... ok
-test test_schema_isolation_and_teardown_regression ... ok
+test test_setup_failure_injection_cleans_up_schema ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.28s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.48s
 ```

@@ -36,16 +36,16 @@ echo "==> Phase 2 policy check"
 ./scripts/ci/check-phase2-policy
 
 echo "==> Dependency and license policy"
-if command -v cargo-deny >/dev/null 2>&1; then
-  cargo deny check
-else
-  echo "    cargo-deny not installed; skipping (the CI security workflow installs it unconditionally)"
+if ! command -v cargo-deny >/dev/null 2>&1; then
+  echo "FAIL-CLOSED: cargo-deny is not installed. Mandatory security tool cargo-deny must be present." >&2
+  exit 1
 fi
+cargo deny check
 
-if command -v cargo-audit >/dev/null 2>&1; then
-  cargo audit
-else
-  echo "    cargo-audit not installed; skipping (the CI security workflow installs it unconditionally)"
+if ! command -v cargo-audit >/dev/null 2>&1; then
+  echo "FAIL-CLOSED: cargo-audit is not installed. Mandatory security tool cargo-audit must be present." >&2
+  exit 1
 fi
+cargo audit
 
 echo "==> All verification passed"

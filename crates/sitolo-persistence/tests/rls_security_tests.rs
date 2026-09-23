@@ -226,34 +226,66 @@ where
     F: FnOnce(Arc<TestContext>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let ctx = Arc::new(setup_test_context().await);
+    let ctx = match setup_test_context().await {
+        Ok(c) => Arc::new(c),
+        Err(err) => panic!("Test context setup failed: {err:?}"),
+    };
 
     // Verify explicit runtime pool user identity is strictly app_runtime
-    let current_user: String = sqlx::query_scalar("SELECT current_user")
+    let current_user_res: Result<String, sqlx::Error> = sqlx::query_scalar("SELECT current_user")
         .fetch_one(ctx.pools.runtime_pool())
-        .await
-        .expect("Failed to query current_user from runtime pool");
-    assert_eq!(
-        current_user, "app_runtime",
-        "Runtime pool connection identity must be app_runtime"
-    );
+        .await;
+
+    let current_user = match current_user_res {
+        Ok(u) => u,
+        Err(err) => {
+            ctx.guard
+                .teardown()
+                .await
+                .expect("Teardown after current_user failure failed");
+            panic!("Failed to query current_user from runtime pool: {err:?}");
+        }
+    };
+
+    if current_user != "app_runtime" {
+        ctx.guard
+            .teardown()
+            .await
+            .expect("Teardown after user identity mismatch failed");
+        panic!("Runtime pool connection identity must be app_runtime, got {current_user}");
+    }
 
     let ctx_clone = ctx.clone();
     let join_handle = tokio::spawn(AssertUnwindSafe(test_fn(ctx_clone)));
-    let res = join_handle.await;
+    let test_res = join_handle.await;
 
-    ctx.guard.teardown().await.expect("Schema teardown failed");
+    let teardown_res = ctx.guard.teardown().await;
 
-    match res {
-        Ok(()) => {}
-        Err(err) if err.is_panic() => {
-            std::panic::resume_unwind(err.into_panic());
+    match (test_res, teardown_res) {
+        (Ok(()), Ok(())) => {}
+        (Ok(()), Err(td_err)) => panic!("Schema teardown failed: {td_err:?}"),
+        (Err(join_err), Ok(())) => {
+            if join_err.is_panic() {
+                std::panic::resume_unwind(join_err.into_panic());
+            } else {
+                panic!("Test task cancelled: {join_err:?}");
+            }
         }
-        Err(err) => panic!("Test task cancelled: {err:?}"),
+        (Err(join_err), Err(td_err)) => {
+            eprintln!("PRIMARY TEST FAILURE: {join_err:?}");
+            eprintln!("SECONDARY TEARDOWN FAILURE: {td_err:?}");
+            if join_err.is_panic() {
+                std::panic::resume_unwind(join_err.into_panic());
+            } else {
+                panic!(
+                    "Test task cancelled ({join_err:?}) AND schema teardown failed ({td_err:?})"
+                );
+            }
+        }
     }
 }
 
-async fn setup_test_context() -> TestContext {
+async fn setup_test_context() -> Result<TestContext, PgAuthorityError> {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_{schema_id}");
 
@@ -276,8 +308,7 @@ async fn setup_test_context() -> TestContext {
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect_with(admin_opts.clone())
-        .await
-        .expect("FAIL-CLOSED: Real PostgreSQL database connection failed. Tests cannot run without PostgreSQL.");
+        .await?;
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
@@ -293,37 +324,44 @@ async fn setup_test_context() -> TestContext {
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
     sqlx::raw_sql(&create_schema_sql)
         .execute(&admin_pool)
-        .await
-        .expect("Failed to create isolated test schema");
+        .await?;
 
     let guard = SchemaGuard {
         schema_name: schema_name.clone(),
         admin_pool: admin_pool.clone(),
     };
 
+    let result =
+        setup_test_context_inner(&schema_name, &admin_opts, &runtime_opts, &admin_pool).await;
+
+    match result {
+        Ok(ctx) => Ok(ctx),
+        Err(setup_err) => {
+            if let Err(td_err) = guard.teardown().await {
+                eprintln!("Teardown error during setup failure cleanup: {td_err:?}");
+            }
+            Err(setup_err)
+        }
+    }
+}
+
+async fn setup_test_context_inner(
+    schema_name: &str,
+    admin_opts: &PgConnectOptions,
+    runtime_opts: &PgConnectOptions,
+    admin_pool: &sqlx::PgPool,
+) -> Result<TestContext, PgAuthorityError> {
     // Apply Part 7 schema inside search_path
     let schema_sql = include_str!("fixtures/rls_schema.sql");
-    if let Err(err) = sqlx::raw_sql(schema_sql).execute(&admin_pool).await {
-        guard.teardown().await.ok();
-        panic!("Failed to apply RLS fixture schema inside search_path: {err:?}");
-    }
+    sqlx::raw_sql(schema_sql).execute(admin_pool).await?;
 
     // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
     );
-    if let Err(err) = sqlx::raw_sql(&grant_schema_sql).execute(&admin_pool).await {
-        guard.teardown().await.ok();
-        panic!("Failed to grant schema privileges to app_runtime: {err:?}");
-    }
+    sqlx::raw_sql(&grant_schema_sql).execute(admin_pool).await?;
 
-    let pools = match PgAuthorityPools::connect_options(admin_opts, runtime_opts).await {
-        Ok(p) => p,
-        Err(err) => {
-            guard.teardown().await.ok();
-            panic!("Failed to create authority pools: {err:?}");
-        }
-    };
+    let pools = PgAuthorityPools::connect_options(admin_opts.clone(), runtime_opts.clone()).await?;
 
     let unique_id = uuid::Uuid::new_v4().simple().to_string();
     let org_a_id_str = format!("org_A_{unique_id}");
@@ -337,62 +375,64 @@ async fn setup_test_context() -> TestContext {
     let res_b1_id = format!("res_B1_{unique_id}");
 
     // Build domain objects
-    let org_a_id = OrganizationId::new(&org_a_id_str).unwrap();
-    let org_b_id = OrganizationId::new(&org_b_id_str).unwrap();
+    let org_a_id = OrganizationId::new(&org_a_id_str)?;
+    let org_b_id = OrganizationId::new(&org_b_id_str)?;
 
-    let mut org_a = Organization::provision(org_a_id.clone(), "Organization A").unwrap();
-    org_a.activate().unwrap();
+    let mut org_a = Organization::provision(org_a_id.clone(), "Organization A")?;
+    org_a.activate()?;
 
-    let mut org_b = Organization::provision(org_b_id.clone(), "Organization B").unwrap();
-    org_b.activate().unwrap();
+    let mut org_b = Organization::provision(org_b_id.clone(), "Organization B")?;
+    org_b.activate()?;
 
-    let branch_a1_id = BranchId::new(&branch_a1_id_str).unwrap();
-    let branch_a2_id = BranchId::new(&branch_a2_id_str).unwrap();
-    let branch_b1_id = BranchId::new(&branch_b1_id_str).unwrap();
+    let branch_a1_id = BranchId::new(&branch_a1_id_str)?;
+    let branch_a2_id = BranchId::new(&branch_a2_id_str)?;
+    let branch_b1_id = BranchId::new(&branch_b1_id_str)?;
 
-    let mut branch_a1 =
-        Branch::provision(branch_a1_id.clone(), org_a_id.clone(), "Branch A1").unwrap();
-    branch_a1.activate().unwrap();
+    let mut branch_a1 = Branch::provision(branch_a1_id.clone(), org_a_id.clone(), "Branch A1")?;
+    branch_a1.activate()?;
 
-    let mut branch_a2 =
-        Branch::provision(branch_a2_id.clone(), org_a_id.clone(), "Branch A2").unwrap();
-    branch_a2.activate().unwrap();
+    let mut branch_a2 = Branch::provision(branch_a2_id.clone(), org_a_id.clone(), "Branch A2")?;
+    branch_a2.activate()?;
 
-    let mut branch_b1 =
-        Branch::provision(branch_b1_id.clone(), org_b_id.clone(), "Branch B1").unwrap();
-    branch_b1.activate().unwrap();
+    let mut branch_b1 = Branch::provision(branch_b1_id.clone(), org_b_id.clone(), "Branch B1")?;
+    branch_b1.activate()?;
 
-    let mem_a_id = MembershipId::new(format!("mem_A_{unique_id}")).unwrap();
-    let mem_b_id = MembershipId::new(format!("mem_B_{unique_id}")).unwrap();
-    let user_a_id = TenantUserId::new(format!("user_A_{unique_id}")).unwrap();
-    let user_b_id = TenantUserId::new(format!("user_B_{unique_id}")).unwrap();
+    let mem_a_id = MembershipId::new(format!("mem_A_{unique_id}"))?;
+    let mem_b_id = MembershipId::new(format!("mem_B_{unique_id}"))?;
+    let user_a_id = TenantUserId::new(format!("user_A_{unique_id}"))?;
+    let user_b_id = TenantUserId::new(format!("user_B_{unique_id}"))?;
 
     let mut mem_a = Membership::invite(mem_a_id.clone(), org_a_id.clone(), user_a_id);
-    mem_a.mark_pending().unwrap();
-    mem_a.activate().unwrap();
+    mem_a.mark_pending()?;
+    mem_a.activate()?;
 
     let mut mem_b = Membership::invite(mem_b_id.clone(), org_b_id.clone(), user_b_id);
-    mem_b.mark_pending().unwrap();
-    mem_b.activate().unwrap();
+    mem_b.mark_pending()?;
+    mem_b.activate()?;
 
     // Derive AuthorizedScope via full Phase 4 scope resolution pipeline
     let req_a = RequestedOrganizationId(org_a_id.clone());
-    let _trusted_a = bind_organization(&req_a, &mem_a).unwrap();
-    let eff_a = resolve_effective_scope(&mem_a, &org_a, None).unwrap();
+    let _trusted_a =
+        bind_organization(&req_a, &mem_a).map_err(|_| PgAuthorityError::SecurityViolation)?;
+    let eff_a = resolve_effective_scope(&mem_a, &org_a, None)
+        .map_err(|_| PgAuthorityError::SecurityViolation)?;
     let org_a_scope = AuthorizedScope::from_effective(&eff_a);
 
     let req_b = RequestedOrganizationId(org_b_id.clone());
-    let _trusted_b = bind_organization(&req_b, &mem_b).unwrap();
-    let eff_b = resolve_effective_scope(&mem_b, &org_b, None).unwrap();
+    let _trusted_b =
+        bind_organization(&req_b, &mem_b).map_err(|_| PgAuthorityError::SecurityViolation)?;
+    let eff_b = resolve_effective_scope(&mem_b, &org_b, None)
+        .map_err(|_| PgAuthorityError::SecurityViolation)?;
     let org_b_scope = AuthorizedScope::from_effective(&eff_b);
 
-    let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1)).unwrap();
+    let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1))
+        .map_err(|_| PgAuthorityError::SecurityViolation)?;
     let org_a_b1_scope = AuthorizedScope::from_effective(&eff_a_b1);
 
     let repo = PgTestTenantRepository::new(pools.runtime_pool().clone());
 
     // Seed Orgs A and B via admin pool
-    if let Err(err) = sqlx::query(
+    sqlx::query(
         "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
     )
     .bind(&org_a_id_str)
@@ -403,14 +443,11 @@ async fn setup_test_context() -> TestContext {
     .bind("Organization B")
     .bind("ACTIVE")
     .bind(1i64)
-    .execute(pools.admin_pool())
-    .await {
-        guard.teardown().await.ok();
-        panic!("Failed to seed organizations: {err:?}");
-    }
+    .execute(admin_pool)
+    .await?;
 
     // Seed Branches A1, A2, B1 via admin pool
-    if let Err(err) = sqlx::query(
+    sqlx::query(
         "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES
          ($1, $2, 'Branch A1', 'ACTIVE', 1),
          ($3, $4, 'Branch A2', 'ACTIVE', 1),
@@ -422,15 +459,11 @@ async fn setup_test_context() -> TestContext {
     .bind(&org_a_id_str)
     .bind(&branch_b1_id_str)
     .bind(&org_b_id_str)
-    .execute(pools.admin_pool())
-    .await
-    {
-        guard.teardown().await.ok();
-        panic!("Failed to seed branches: {err:?}");
-    }
+    .execute(admin_pool)
+    .await?;
 
     // Seed Tenant Resources via admin pool
-    if let Err(err) = sqlx::query(
+    sqlx::query(
         "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES
          ($1, $2, $3, 'Secret Data A1'),
          ($4, $5, $6, 'Secret Data A2'),
@@ -445,18 +478,17 @@ async fn setup_test_context() -> TestContext {
     .bind(&res_b1_id)
     .bind(&org_b_id_str)
     .bind(&branch_b1_id_str)
-    .execute(pools.admin_pool())
-    .await
-    {
-        guard.teardown().await.ok();
-        panic!("Failed to seed tenant resources: {err:?}");
-    }
+    .execute(admin_pool)
+    .await?;
 
-    TestContext {
+    Ok(TestContext {
         pools,
         repo,
-        guard,
-        schema_name,
+        guard: SchemaGuard {
+            schema_name: schema_name.to_string(),
+            admin_pool: admin_pool.clone(),
+        },
+        schema_name: schema_name.to_string(),
         org_a,
         org_b,
         mem_a,
@@ -472,7 +504,7 @@ async fn setup_test_context() -> TestContext {
         branch_a1_id_str,
         _branch_a2_id_str: branch_a2_id_str,
         branch_b1_id_str,
-    }
+    })
 }
 
 // ============================================================================
@@ -1211,35 +1243,66 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_schema_isolation_and_teardown_regression() {
-    run_test_with_teardown(|ctx| async move {
-        let schema_name = ctx.schema_name.clone();
+async fn test_setup_failure_injection_cleans_up_schema() {
+    let schema_id = uuid::Uuid::new_v4().simple().to_string();
+    let schema_name = format!("test_schema_fail_inject_{schema_id}");
 
-        // 1. Verify schema exists
-        let schema_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
-                .bind(&schema_name)
-                .fetch_one(ctx.pools.admin_pool())
-                .await
-                .unwrap();
-        assert!(schema_exists, "Isolated schema must exist");
+    let admin_url = env::var("ADMIN_DATABASE_URL")
+        .or_else(|_| env::var("DATABASE_URL"))
+        .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
 
-        // 2. Verify organizations, branches, tenant_resources all exist in isolated schema
-        let protected_tables = vec!["organizations", "branches", "tenant_resources"];
-        for table in protected_tables {
-            let table_exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2)",
-            )
+    let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
+    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(admin_opts)
+        .await
+        .unwrap();
+
+    // 1. Create schema
+    let create_sql = format!("CREATE SCHEMA \"{schema_name}\"");
+    sqlx::raw_sql(&create_sql)
+        .execute(&admin_pool)
+        .await
+        .unwrap();
+
+    let guard = SchemaGuard {
+        schema_name: schema_name.clone(),
+        admin_pool: admin_pool.clone(),
+    };
+
+    // Verify schema exists
+    let exists_before: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)
-            .bind(table)
-            .fetch_one(ctx.pools.admin_pool())
+            .fetch_one(&admin_pool)
             .await
             .unwrap();
-            assert!(
-                table_exists,
-                "Table {table} must exist in isolated schema"
-            );
-        }
-    })
-    .await;
+    assert!(
+        exists_before,
+        "Schema must exist before setup failure injection"
+    );
+
+    // 2. Inject intentional failure inside search_path
+    let invalid_sql = "CREATE TABLE invalid_table (id INT PRIMARY KEY, val INVALID_TYPE_NAME_XYZ)";
+
+    let setup_result = sqlx::raw_sql(invalid_sql).execute(&admin_pool).await;
+    assert!(setup_result.is_err(), "Intentional setup step must fail");
+
+    // Execute setup error cleanup path
+    guard
+        .teardown()
+        .await
+        .expect("Teardown must succeed on setup failure cleanup");
+
+    // 3. Prove schema no longer exists in PostgreSQL catalog
+    let exists_after: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+            .bind(&schema_name)
+            .fetch_one(&admin_pool)
+            .await
+            .unwrap();
+    assert!(
+        !exists_after,
+        "Schema must be CASCADE dropped after setup failure cleanup"
+    );
 }
