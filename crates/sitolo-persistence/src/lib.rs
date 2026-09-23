@@ -7,6 +7,7 @@
 
 mod memory;
 mod ports;
+#[doc(hidden)]
 pub mod postgres;
 mod runtime;
 mod tenancy;

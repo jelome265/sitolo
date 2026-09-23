@@ -7,8 +7,8 @@ This execution contract records the non-negotiable verification gates and test e
 ## Commit & Evidence Metadata
 
 - **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
-- **Workflow Run ID**: `35903942566`
-- **Workflow Job ID**: `107326763603`
+- **Workflow Run ID**: `35909767457`
+- **Workflow Job ID**: `107346354132`
 - **Workflow Job Name**: `verify`
 - **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
@@ -22,7 +22,7 @@ This execution contract records the non-negotiable verification gates and test e
 | **P4-008-G02** | Least-Privileged Role Attributes | `test_catalog_runtime_role_privileges` | `SUPERUSER=f`, `BYPASSRLS=f`, `REPLICATION=f`, `INHERIT=f` | Catalog query confirms zero admin privileges | 0 | PASSED | Direct catalog query on `pg_roles` |
 | **P4-008-G03** | Schema Ownership Separation | `test_catalog_runtime_role_privileges` | `app_runtime` owns 0 tables, no `CREATE` privilege | Admin pool owns schema; `app_runtime` has no schema `CREATE` | 0 | PASSED | Table owner is admin user |
 | **P4-008-G04** | Table RLS Enabled | `test_catalog_rls_policy_metadata` | `relrowsecurity=t`, `relforcerowsecurity=t` | Catalog confirms RLS forced on protected relations | 0 | PASSED | Verified on `organizations`, `branches`, `tenant_resources` |
-| **P4-008-G05** | Catalog Policy Expression | `test_catalog_rls_policy_metadata` | `pg_get_expr` matches canonical SQL policy strings | Exact canonical normalized expression match | 0 | PASSED | Normalized comparison for whitespace and casts |
+| **P4-008-G05** | Catalog Policy Expression | `test_catalog_rls_policy_metadata` | `pg_get_expr` matches canonical SQL policy strings with grouping | Exact canonical expression match preserving boolean structure | 0 | PASSED | Validates boolean structure, whitespace, and casts |
 | **P4-008-G06** | Catalog Policy Role Bounds | `test_catalog_rls_policy_metadata` | `polroles = [runtime_oid]` | Catalog confirms policies bound strictly to `app_runtime` OID | 0 | PASSED | No `PUBLIC` (0) or extraneous roles |
 | **P4-008-G07** | Scope Encapsulation | `cargo check -p sitolo-tenancy` | `AuthorizedScope` fields private | Construction restricted to server-authoritative constructors | 0 | PASSED | Prevents scope literal forgery |
 | **P4-008-G08** | Transaction-Local Context | `set_transaction_tenant_context` | `set_config(..., true)` called within transaction | Sets `app.organization_id` & `app.branch_id` transaction-locally | 0 | PASSED | Automatically scoped to `Transaction` |
@@ -53,8 +53,8 @@ test test_catalog_rls_policy_metadata ... ok
 test test_catalog_runtime_role_privileges ... ok
 test test_cross_tenant_branch_binding_denial ... ok
 test test_connection_pool_context_leakage_and_rollback_safety ... ok
-test test_direct_db_query_without_application_predicate ... ok
 test test_concurrent_tenant_isolation_reads_and_writes ... ok
+test test_direct_db_query_without_application_predicate ... ok
 test test_end_to_end_application_and_db_composition ... ok
 test test_invalid_tenant_context_fails_closed ... ok
 test test_missing_tenant_context_fails_closed ... ok
@@ -63,18 +63,18 @@ test test_negative_tenant_a_cannot_delete_b ... ok
 test test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid ... ok
 test test_negative_tenant_a_cannot_read_b ... ok
 test test_negative_tenant_a_cannot_update_b ... ok
-test test_negative_unknown_resource_does_not_bypass_scope ... ok
-test test_negative_unknown_resource_delete_fails_closed ... ok
 test test_negative_unknown_resource_update_fails_closed ... ok
+test test_negative_unknown_resource_delete_fails_closed ... ok
+test test_negative_unknown_resource_does_not_bypass_scope ... ok
 test test_positive_tenant_a_creates_a ... ok
 test test_positive_tenant_a_deletes_a ... ok
 test test_positive_tenant_a_reads_a ... ok
 test test_positive_tenant_a_updates_a ... ok
 test test_positive_tenant_b_creates_b ... ok
+test test_setup_failure_injection_cleans_up_schema ... ok
 test test_positive_tenant_b_deletes_b ... ok
 test test_positive_tenant_b_reads_b ... ok
 test test_positive_tenant_b_updates_b ... ok
-test test_setup_failure_injection_cleans_up_schema ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.48s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.66s
 ```

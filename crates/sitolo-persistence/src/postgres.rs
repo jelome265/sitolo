@@ -284,9 +284,10 @@ impl PgAuthorityPools {
                     let check = check_expr.ok_or(PgAuthorityError::SecurityViolation)?;
 
                     // Verify exact normalized SQL expressions per table
+                    // Normalizes whitespace, quotes, and case without stripping parentheses (boolean grouping structure)
                     fn normalize_expr(s: &str) -> String {
                         s.chars()
-                            .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+                            .filter(|c| !c.is_whitespace() && *c != '"')
                             .collect::<String>()
                             .to_lowercase()
                     }
@@ -296,13 +297,13 @@ impl PgAuthorityPools {
 
                     let expected_canonical_norm = match table {
                         "organizations" => normalize_expr(
-                            "id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)",
+                            "((id)::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text))",
                         ),
                         "branches" => normalize_expr(
-                            "(organization_id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR (id::text = current_setting('app.branch_id'::text, true)))",
+                            "(((organization_id)::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR ((id)::text = current_setting('app.branch_id'::text, true))))",
                         ),
                         "tenant_resources" => normalize_expr(
-                            "(organization_id::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR (branch_id::text = current_setting('app.branch_id'::text, true)))",
+                            "(((organization_id)::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text)) AND ((NULLIF(current_setting('app.branch_id'::text, true), ''::text) IS NULL) OR ((branch_id)::text = current_setting('app.branch_id'::text, true))))",
                         ),
                         _ => return Err(PgAuthorityError::SecurityViolation),
                     };
