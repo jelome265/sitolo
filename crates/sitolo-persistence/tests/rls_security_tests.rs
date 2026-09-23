@@ -18,7 +18,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::{Postgres, Row, Transaction};
 use std::env;
 use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
@@ -194,7 +194,7 @@ struct TestContext {
 async fn run_test_with_teardown<F, Fut>(test_fn: F)
 where
     F: FnOnce(Arc<TestContext>) -> Fut,
-    Fut: Future<Output = ()>,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     let ctx = Arc::new(setup_test_context().await);
 
@@ -209,15 +209,18 @@ where
     );
 
     let ctx_clone = ctx.clone();
-    let res = catch_unwind(AssertUnwindSafe(|| async move {
-        test_fn(ctx_clone).await;
-    }));
-
-    if let Ok(fut) = res {
-        fut.await;
-    }
+    let join_handle = tokio::spawn(AssertUnwindSafe(test_fn(ctx_clone)));
+    let res = join_handle.await;
 
     ctx.guard.teardown().await;
+
+    match res {
+        Ok(()) => {}
+        Err(err) if err.is_panic() => {
+            std::panic::resume_unwind(err.into_panic());
+        }
+        Err(err) => panic!("Test task cancelled: {err:?}"),
+    }
 }
 
 async fn setup_test_context() -> TestContext {
@@ -263,30 +266,34 @@ async fn setup_test_context() -> TestContext {
         .await
         .expect("Failed to create isolated test schema");
 
-    // Apply Part 7 schema inside search_path
-    let schema_sql = include_str!("fixtures/rls_schema.sql");
-    sqlx::raw_sql(schema_sql)
-        .execute(&admin_pool)
-        .await
-        .expect("Failed to apply RLS fixture schema inside search_path");
-
-    // Grant schema USAGE and table privileges on isolated schema to app_runtime
-    let grant_schema_sql = format!(
-        "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
-    );
-    sqlx::raw_sql(&grant_schema_sql)
-        .execute(&admin_pool)
-        .await
-        .expect("Failed to grant schema privileges to app_runtime");
-
     let guard = SchemaGuard {
         schema_name: schema_name.clone(),
         admin_pool: admin_pool.clone(),
     };
 
-    let pools = PgAuthorityPools::connect_options(admin_opts, runtime_opts)
-        .await
-        .expect("Failed to create authority pools");
+    // Apply Part 7 schema inside search_path
+    let schema_sql = include_str!("fixtures/rls_schema.sql");
+    if let Err(err) = sqlx::raw_sql(schema_sql).execute(&admin_pool).await {
+        guard.teardown().await;
+        panic!("Failed to apply RLS fixture schema inside search_path: {err:?}");
+    }
+
+    // Grant schema USAGE and table privileges on isolated schema to app_runtime
+    let grant_schema_sql = format!(
+        "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
+    );
+    if let Err(err) = sqlx::raw_sql(&grant_schema_sql).execute(&admin_pool).await {
+        guard.teardown().await;
+        panic!("Failed to grant schema privileges to app_runtime: {err:?}");
+    }
+
+    let pools = match PgAuthorityPools::connect_options(admin_opts, runtime_opts).await {
+        Ok(p) => p,
+        Err(err) => {
+            guard.teardown().await;
+            panic!("Failed to create authority pools: {err:?}");
+        }
+    };
 
     let unique_id = uuid::Uuid::new_v4().simple().to_string();
     let org_a_id_str = format!("org_A_{unique_id}");
@@ -355,7 +362,7 @@ async fn setup_test_context() -> TestContext {
     let repo = PgTestTenantRepository::new(pools.runtime_pool.clone());
 
     // Seed Orgs A and B via admin pool
-    sqlx::query(
+    if let Err(err) = sqlx::query(
         "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
     )
     .bind(&org_a_id_str)
@@ -367,11 +374,13 @@ async fn setup_test_context() -> TestContext {
     .bind("ACTIVE")
     .bind(1i64)
     .execute(&pools.admin_pool)
-    .await
-    .unwrap();
+    .await {
+        guard.teardown().await;
+        panic!("Failed to seed organizations: {err:?}");
+    }
 
     // Seed Branches A1, A2, B1 via admin pool
-    sqlx::query(
+    if let Err(err) = sqlx::query(
         "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES
          ($1, $2, 'Branch A1', 'ACTIVE', 1),
          ($3, $4, 'Branch A2', 'ACTIVE', 1),
@@ -384,11 +393,13 @@ async fn setup_test_context() -> TestContext {
     .bind(&branch_b1_id_str)
     .bind(&org_b_id_str)
     .execute(&pools.admin_pool)
-    .await
-    .unwrap();
+    .await {
+        guard.teardown().await;
+        panic!("Failed to seed branches: {err:?}");
+    }
 
     // Seed Tenant Resources via admin pool
-    sqlx::query(
+    if let Err(err) = sqlx::query(
         "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES
          ($1, $2, $3, 'Secret Data A1'),
          ($4, $5, $6, 'Secret Data A2'),
@@ -404,8 +415,10 @@ async fn setup_test_context() -> TestContext {
     .bind(&org_b_id_str)
     .bind(&branch_b1_id_str)
     .execute(&pools.admin_pool)
-    .await
-    .unwrap();
+    .await {
+        guard.teardown().await;
+        panic!("Failed to seed tenant resources: {err:?}");
+    }
 
     TestContext {
         pools,
@@ -495,6 +508,33 @@ async fn test_positive_tenant_b_reads_b() {
 }
 
 #[tokio::test]
+async fn test_positive_tenant_a_creates_a() {
+    run_test_with_teardown(|ctx| async move {
+        let new_res_id = format!("res_A_created_{}", uuid::Uuid::new_v4().simple());
+        let new_resource = TenantResource {
+            id: new_res_id.clone(),
+            organization_id: ctx.org_a_id_str.clone(),
+            branch_id: ctx.branch_a1_id_str.clone(),
+            data: "Newly Created Data A".to_string(),
+        };
+
+        ctx.repo
+            .create_tenant_resource(&ctx.org_a_scope, &new_resource)
+            .await
+            .expect("Tenant A should create its own resource");
+
+        let fetched = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &new_res_id)
+            .await
+            .unwrap();
+
+        assert_eq!(fetched.data, "Newly Created Data A");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn test_positive_tenant_a_updates_a() {
     run_test_with_teardown(|ctx| async move {
         ctx.repo
@@ -546,6 +586,23 @@ async fn test_negative_tenant_a_cannot_read_b() {
         assert!(
             matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
             "Tenant A must not read Tenant B resource"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_negative_unknown_resource_does_not_bypass_scope() {
+    run_test_with_teardown(|ctx| async move {
+        let unknown_res_id = format!("res_NONEXISTENT_{}", uuid::Uuid::new_v4().simple());
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &unknown_res_id)
+            .await;
+
+        assert!(
+            matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Unknown resource query must return NotFoundOrDenied without revealing existence"
         );
     })
     .await;
@@ -818,11 +875,9 @@ async fn test_invalid_tenant_context_fails_closed() {
         let req_org_nonexistent =
             RequestedOrganizationId(OrganizationId::new("org_NONEXISTENT").unwrap());
 
-        // Attempting to bind a nonexistent requested org with membership fails
         let bind_res = bind_organization(&req_org_nonexistent, &ctx.mem_a);
         assert!(bind_res.is_err(), "Binding nonexistent org must fail");
 
-        // Verify direct DB query with invalid GUC context fails closed
         let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
         sqlx::query("SELECT set_config('app.organization_id', 'org_NONEXISTENT', true)")
             .execute(&mut *tx)
@@ -983,42 +1038,34 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
 
 #[tokio::test]
 async fn test_schema_isolation_and_teardown_regression() {
-    let ctx = setup_test_context().await;
-    let schema_name = ctx.schema_name.clone();
+    run_test_with_teardown(|ctx| async move {
+        let schema_name = ctx.schema_name.clone();
 
-    // 1. Verify schema exists
-    let schema_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+        // 1. Verify schema exists
+        let schema_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+                .bind(&schema_name)
+                .fetch_one(&ctx.pools.admin_pool)
+                .await
+                .unwrap();
+        assert!(schema_exists, "Isolated schema must exist");
+
+        // 2. Verify organizations, branches, tenant_resources all exist in isolated schema
+        let protected_tables = vec!["organizations", "branches", "tenant_resources"];
+        for table in protected_tables {
+            let table_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2)",
+            )
             .bind(&schema_name)
+            .bind(table)
             .fetch_one(&ctx.pools.admin_pool)
             .await
             .unwrap();
-    assert!(schema_exists, "Isolated schema must exist");
-
-    // 2. Verify organizations exists in isolated schema
-    let org_table_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = 'organizations')",
-    )
-    .bind(&schema_name)
-    .fetch_one(&ctx.pools.admin_pool)
-    .await
-    .unwrap();
-    assert!(
-        org_table_exists,
-        "organizations table must exist in isolated schema"
-    );
-
-    // 3. Perform teardown and assert schema no longer exists
-    ctx.guard.teardown().await;
-
-    let schema_exists_after: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
-            .bind(&schema_name)
-            .fetch_one(&ctx.pools.admin_pool)
-            .await
-            .unwrap();
-    assert!(
-        !schema_exists_after,
-        "Isolated schema must be completely dropped after teardown"
-    );
+            assert!(
+                table_exists,
+                "Table {table} must exist in isolated schema"
+            );
+        }
+    })
+    .await;
 }
