@@ -102,20 +102,18 @@ pub struct EffectiveScope {
 /// tenant predicate that repositories must use as `WHERE organization_id = $1`
 /// even where RLS exists (§27.1); version fields enable cache invalidation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct AuthorizedScope {
-    pub organization_id: OrganizationId,
-    pub membership_id: MembershipId,
-    pub branch_id: Option<BranchId>,
-    pub organization_version: u64,
-    pub membership_version: u64,
+    organization_id: OrganizationId,
+    membership_id: MembershipId,
+    branch_id: Option<BranchId>,
+    organization_version: u64,
+    membership_version: u64,
 }
 
 impl AuthorizedScope {
     /// Derives a repository scope from an already-resolved `EffectiveScope`.
     /// The effective scope itself was built from server-loaded records, so
     /// this conversion preserves the tenant predicate without re-proving it.
-    #[allow(dead_code)]
     #[must_use]
     pub fn from_effective(scope: &EffectiveScope) -> Self {
         AuthorizedScope {
@@ -132,7 +130,6 @@ impl AuthorizedScope {
     /// have already called `bind_organization` and `resolve_effective_scope`
     /// — this constructor merely erases the branch detail while retaining the
     /// tenant predicate.
-    #[allow(dead_code)]
     #[must_use]
     pub fn from_trusted(trusted: &TrustedOrganizationId, membership: &Membership) -> Self {
         debug_assert_eq!(&trusted.0, &membership.organization_id);
@@ -143,6 +140,36 @@ impl AuthorizedScope {
             organization_version: membership.state_version,
             membership_version: membership.state_version,
         }
+    }
+
+    /// Read-only accessor for the trusted organization ID.
+    #[must_use]
+    pub fn organization_id(&self) -> &OrganizationId {
+        &self.organization_id
+    }
+
+    /// Read-only accessor for the trusted membership ID.
+    #[must_use]
+    pub fn membership_id(&self) -> &MembershipId {
+        &self.membership_id
+    }
+
+    /// Read-only accessor for the optional branch ID.
+    #[must_use]
+    pub fn branch_id(&self) -> Option<&BranchId> {
+        self.branch_id.as_ref()
+    }
+
+    /// Read-only accessor for the organization version.
+    #[must_use]
+    pub fn organization_version(&self) -> u64 {
+        self.organization_version
+    }
+
+    /// Read-only accessor for the membership version.
+    #[must_use]
+    pub fn membership_version(&self) -> u64 {
+        self.membership_version
     }
 }
 
@@ -165,8 +192,6 @@ pub fn resolve_effective_scope(
     organization: &Organization,
     branch: Option<&Branch>,
 ) -> Result<EffectiveScope, ScopeError> {
-    // Membership must belong to the resolved organization. A caller cannot
-    // combine Membership(U, A) with Organization B (section 5.1).
     if membership.organization_id != organization.id {
         return Err(ScopeError::OrganizationDenied);
     }
@@ -179,8 +204,6 @@ pub fn resolve_effective_scope(
     let branch_id = match branch {
         None => None,
         Some(branch) => {
-            // Branch A authority never implies Branch B authority, even
-            // within one organization (sections 14, 15).
             if branch.organization_id != organization.id {
                 return Err(ScopeError::BranchDenied);
             }
@@ -260,15 +283,12 @@ mod tests {
 
     #[test]
     fn cross_tenant_access_is_denied() {
-        // Membership(U, A) = ACTIVE, object owned by B: READ/WRITE denied
-        // (section 5.1 negative invariant).
         let membership = membership("m1", "org-a", "u1");
         let other = org("org-b");
         assert_eq!(
             resolve_effective_scope(&membership, &other, None),
             Err(ScopeError::OrganizationDenied)
         );
-        // Binding a foreign requested selector is denied without disclosure.
         let requested = RequestedOrganizationId(OrganizationId::new("org-b").unwrap());
         assert_eq!(
             bind_organization(&requested, &membership),
@@ -280,7 +300,6 @@ mod tests {
 
     #[test]
     fn cross_branch_access_is_denied() {
-        // Branch B1 (org A) authority never implies Branch B2 (org B).
         let membership = membership("m1", "org-a", "u1");
         let organization = org("org-a");
         let foreign = branch("branch-b1", "org-b");
@@ -315,7 +334,6 @@ mod tests {
             resolve_effective_scope(&revoked_member, &organization, None),
             Err(ScopeError::MembershipNotActive)
         );
-        // A revoked membership cannot launder authority through a live branch.
         assert_eq!(
             resolve_effective_scope(&revoked_member, &organization, Some(&branch)),
             Err(ScopeError::MembershipNotActive)
@@ -328,7 +346,6 @@ mod tests {
             Err(ScopeError::BranchNotActive)
         );
 
-        // Expired invitations carry no authority.
         let mut expired = Membership::invite(
             MembershipId::new("m9").unwrap(),
             OrganizationId::new("org-a").unwrap(),
@@ -375,13 +392,16 @@ mod tests {
         let organization = org("org-a");
         let effective = resolve_effective_scope(&membership, &organization, None).unwrap();
         let via_effective = AuthorizedScope::from_effective(&effective);
-        assert_eq!(via_effective.organization_id.as_str(), "org-a");
-        assert_eq!(via_effective.membership_id.as_str(), "m1");
+        assert_eq!(via_effective.organization_id().as_str(), "org-a");
+        assert_eq!(via_effective.membership_id().as_str(), "m1");
 
         let requested = RequestedOrganizationId(OrganizationId::new("org-a").unwrap());
         let trusted = bind_organization(&requested, &membership).unwrap();
         let via_trusted = AuthorizedScope::from_trusted(&trusted, &membership);
-        assert_eq!(via_trusted.organization_id, via_effective.organization_id);
-        assert_eq!(via_trusted.membership_id, via_effective.membership_id);
+        assert_eq!(
+            via_trusted.organization_id(),
+            via_effective.organization_id()
+        );
+        assert_eq!(via_trusted.membership_id(), via_effective.membership_id());
     }
 }

@@ -180,7 +180,7 @@ impl PgAuthorityPools {
     }
 
     /// Verifies via PostgreSQL catalogs (`pg_policy`, `pg_class`, `pg_namespace`) that RLS is enabled, forced,
-    /// polroles targets app_runtime/PUBLIC, polcmd = '*', and exact USING/WITH CHECK expressions exist.
+    /// polroles strictly equals `[runtime_oid]`, polcmd = '*', and exact USING/WITH CHECK expressions exist.
     pub async fn verify_rls_catalog_metadata(
         &self,
         schema_name: &str,
@@ -251,17 +251,14 @@ impl PgAuthorityPools {
                         return Err(PgAuthorityError::SecurityViolation);
                     }
 
-                    // Verify polroles strictly targets app_runtime role or PUBLIC (0)
+                    // Verify polroles strictly targets app_runtime role (and NOT 0/PUBLIC, nor empty)
                     let runtime_oid: i64 = sqlx::query_scalar(
                         "SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'",
                     )
                     .fetch_one(&self.admin_pool)
                     .await?;
 
-                    if !polroles.is_empty()
-                        && !polroles.contains(&0)
-                        && !polroles.contains(&runtime_oid)
-                    {
+                    if polroles != vec![runtime_oid] {
                         return Err(PgAuthorityError::SecurityViolation);
                     }
 
@@ -291,11 +288,11 @@ pub async fn set_transaction_tenant_context(
     scope: &AuthorizedScope,
 ) -> Result<(), PgAuthorityError> {
     sqlx::query("SELECT set_config('app.organization_id', $1, true)")
-        .bind(scope.organization_id.as_str())
+        .bind(scope.organization_id().as_str())
         .execute(&mut **tx)
         .await?;
 
-    if let Some(branch_id) = &scope.branch_id {
+    if let Some(branch_id) = scope.branch_id() {
         sqlx::query("SELECT set_config('app.branch_id', $1, true)")
             .bind(branch_id.as_str())
             .execute(&mut **tx)

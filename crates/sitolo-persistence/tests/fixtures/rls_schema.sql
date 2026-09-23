@@ -30,10 +30,6 @@ CREATE TABLE IF NOT EXISTS tenant_resources (
     CONSTRAINT fk_tenant_resources_branch FOREIGN KEY (branch_id, organization_id) REFERENCES branches(id, organization_id) ON DELETE RESTRICT
 );
 
--- Grant table privileges to runtime role
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
-
 -- 4. Enable and Force Row Level Security (RLS)
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organizations FORCE ROW LEVEL SECURITY;

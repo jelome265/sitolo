@@ -17,6 +17,8 @@ use sitolo_tenancy::{
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{Postgres, Row, Transaction};
 use std::env;
+use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
@@ -84,7 +86,7 @@ impl PgTestTenantRepository {
              WHERE id = $1 AND organization_id = $2",
         )
         .bind(resource_id)
-        .bind(scope.organization_id.as_str())
+        .bind(scope.organization_id().as_str())
         .fetch_optional(&mut *tx)
         .await?;
 
@@ -115,7 +117,7 @@ impl PgTestTenantRepository {
         )
         .bind(new_data)
         .bind(resource_id)
-        .bind(scope.organization_id.as_str())
+        .bind(scope.organization_id().as_str())
         .execute(&mut *tx)
         .await?;
 
@@ -139,7 +141,7 @@ impl PgTestTenantRepository {
              WHERE id = $1 AND organization_id = $2",
         )
         .bind(result_id_str(resource_id))
-        .bind(scope.organization_id.as_str())
+        .bind(scope.organization_id().as_str())
         .execute(&mut *tx)
         .await?;
 
@@ -189,6 +191,35 @@ struct TestContext {
     branch_b1_id_str: String,
 }
 
+async fn run_test_with_teardown<F, Fut>(test_fn: F)
+where
+    F: FnOnce(Arc<TestContext>) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let ctx = Arc::new(setup_test_context().await);
+
+    // Verify explicit runtime pool user identity is strictly app_runtime
+    let current_user: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&ctx.pools.runtime_pool)
+        .await
+        .expect("Failed to query current_user from runtime pool");
+    assert_eq!(
+        current_user, "app_runtime",
+        "Runtime pool connection identity must be app_runtime"
+    );
+
+    let ctx_clone = ctx.clone();
+    let res = catch_unwind(AssertUnwindSafe(|| async move {
+        test_fn(ctx_clone).await;
+    }));
+
+    if let Ok(fut) = res {
+        fut.await;
+    }
+
+    ctx.guard.teardown().await;
+}
+
 async fn setup_test_context() -> TestContext {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_{schema_id}");
@@ -222,11 +253,6 @@ async fn setup_test_context() -> TestContext {
                 .execute(&admin_pool)
                 .await
                 .expect("Failed to initialize app_runtime role");
-
-            if let Ok(runtime_pass) = env::var("APP_RUNTIME_PASSWORD") {
-                let alter_sql = format!("ALTER ROLE app_runtime WITH PASSWORD '{runtime_pass}';");
-                sqlx::raw_sql(&alter_sql).execute(&admin_pool).await.ok();
-            }
         })
         .await;
 
@@ -407,27 +433,29 @@ async fn setup_test_context() -> TestContext {
 
 #[tokio::test]
 async fn test_catalog_runtime_role_privileges() {
-    let ctx = setup_test_context().await;
-    ctx.pools
-        .verify_runtime_role(&ctx.schema_name)
-        .await
-        .expect("app_runtime role privileges failed catalog verification");
+    run_test_with_teardown(|ctx| async move {
+        ctx.pools
+            .verify_runtime_role(&ctx.schema_name)
+            .await
+            .expect("app_runtime role privileges failed catalog verification");
 
-    ctx.pools
-        .verify_effective_privileges(&ctx.schema_name)
-        .await
-        .expect("app_runtime effective privileges failed catalog verification");
-    ctx.guard.teardown().await;
+        ctx.pools
+            .verify_effective_privileges(&ctx.schema_name)
+            .await
+            .expect("app_runtime effective privileges failed catalog verification");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_catalog_rls_policy_metadata() {
-    let ctx = setup_test_context().await;
-    ctx.pools
-        .verify_rls_catalog_metadata(&ctx.schema_name)
-        .await
-        .expect("RLS catalog metadata failed verification");
-    ctx.guard.teardown().await;
+    run_test_with_teardown(|ctx| async move {
+        ctx.pools
+            .verify_rls_catalog_metadata(&ctx.schema_name)
+            .await
+            .expect("RLS catalog metadata failed verification");
+    })
+    .await;
 }
 
 // ============================================================================
@@ -436,67 +464,71 @@ async fn test_catalog_rls_policy_metadata() {
 
 #[tokio::test]
 async fn test_positive_tenant_a_reads_a() {
-    let ctx = setup_test_context().await;
-    let res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
-        .await
-        .expect("Tenant A should read its own resource res_A1");
+    run_test_with_teardown(|ctx| async move {
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await
+            .expect("Tenant A should read its own resource res_A1");
 
-    assert_eq!(res.id, ctx.res_a1_id);
-    assert_eq!(res.organization_id, ctx.org_a_id_str);
-    assert_eq!(res.data, "Secret Data A1");
-    ctx.guard.teardown().await;
+        assert_eq!(res.id, ctx.res_a1_id);
+        assert_eq!(res.organization_id, ctx.org_a_id_str);
+        assert_eq!(res.data, "Secret Data A1");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_positive_tenant_b_reads_b() {
-    let ctx = setup_test_context().await;
-    let res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
-        .await
-        .expect("Tenant B should read its own resource res_B1");
+    run_test_with_teardown(|ctx| async move {
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
+            .await
+            .expect("Tenant B should read its own resource res_B1");
 
-    assert_eq!(res.id, ctx.res_b1_id);
-    assert_eq!(res.organization_id, ctx.org_b_id_str);
-    assert_eq!(res.data, "Secret Data B1");
-    ctx.guard.teardown().await;
+        assert_eq!(res.id, ctx.res_b1_id);
+        assert_eq!(res.organization_id, ctx.org_b_id_str);
+        assert_eq!(res.data, "Secret Data B1");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_positive_tenant_a_updates_a() {
-    let ctx = setup_test_context().await;
-    ctx.repo
-        .update_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id, "Updated Data A1")
-        .await
-        .expect("Tenant A should update its own resource res_A1");
+    run_test_with_teardown(|ctx| async move {
+        ctx.repo
+            .update_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id, "Updated Data A1")
+            .await
+            .expect("Tenant A should update its own resource res_A1");
 
-    let res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
-        .await
-        .unwrap();
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await
+            .unwrap();
 
-    assert_eq!(res.data, "Updated Data A1");
-    ctx.guard.teardown().await;
+        assert_eq!(res.data, "Updated Data A1");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_positive_tenant_a_deletes_a() {
-    let ctx = setup_test_context().await;
-    ctx.repo
-        .delete_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
-        .await
-        .expect("Tenant A should delete its own resource res_A1");
+    run_test_with_teardown(|ctx| async move {
+        ctx.repo
+            .delete_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await
+            .expect("Tenant A should delete its own resource res_A1");
 
-    let fetch_res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
-        .await;
+        let fetch_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await;
 
-    assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
-    ctx.guard.teardown().await;
+        assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
+    })
+    .await;
 }
 
 // ============================================================================
@@ -505,147 +537,143 @@ async fn test_positive_tenant_a_deletes_a() {
 
 #[tokio::test]
 async fn test_negative_tenant_a_cannot_read_b() {
-    let ctx = setup_test_context().await;
-    let res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id)
-        .await;
+    run_test_with_teardown(|ctx| async move {
+        let res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id)
+            .await;
 
-    assert!(
-        matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
-        "Tenant A must not read Tenant B resource"
-    );
-    ctx.guard.teardown().await;
+        assert!(
+            matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Tenant A must not read Tenant B resource"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_negative_tenant_a_cannot_update_b() {
-    let ctx = setup_test_context().await;
-    let update_res = ctx
-        .repo
-        .update_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id, "Hacked Data")
-        .await;
+    run_test_with_teardown(|ctx| async move {
+        let update_res = ctx
+            .repo
+            .update_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id, "Hacked Data")
+            .await;
 
-    assert!(
-        matches!(update_res, Err(PgAuthorityError::NotFoundOrDenied)),
-        "Tenant A must not update Tenant B resource"
-    );
+        assert!(
+            matches!(update_res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Tenant A must not update Tenant B resource"
+        );
 
-    // Verify DB state remains unchanged via Tenant B read
-    let b_res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
-        .await
-        .unwrap();
+        let b_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
+            .await
+            .unwrap();
 
-    assert_eq!(b_res.data, "Secret Data B1");
-    ctx.guard.teardown().await;
+        assert_eq!(b_res.data, "Secret Data B1");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_negative_tenant_a_cannot_delete_b() {
-    let ctx = setup_test_context().await;
-    let delete_res = ctx
-        .repo
-        .delete_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id)
-        .await;
+    run_test_with_teardown(|ctx| async move {
+        let delete_res = ctx
+            .repo
+            .delete_tenant_resource(&ctx.org_a_scope, &ctx.res_b1_id)
+            .await;
 
-    assert!(
-        matches!(delete_res, Err(PgAuthorityError::NotFoundOrDenied)),
-        "Tenant A must not delete Tenant B resource"
-    );
+        assert!(
+            matches!(delete_res, Err(PgAuthorityError::NotFoundOrDenied)),
+            "Tenant A must not delete Tenant B resource"
+        );
 
-    // Verify DB state remains unchanged via Tenant B read
-    let b_res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
-        .await;
+        let b_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &ctx.res_b1_id)
+            .await;
 
-    assert!(b_res.is_ok());
-    ctx.guard.teardown().await;
+        assert!(b_res.is_ok());
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid() {
-    let ctx = setup_test_context().await;
-    let res_malicious_id = format!("res_malicious_{}", uuid::Uuid::new_v4().simple());
+    run_test_with_teardown(|ctx| async move {
+        let res_malicious_id = format!("res_malicious_{}", uuid::Uuid::new_v4().simple());
 
-    // Relationally valid fixture: Branch B1 belongs to Org B (FK constraint is 100% satisfied!)
-    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
+        let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-    let raw_res = sqlx::query(
-        "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(&res_malicious_id)
-    .bind(&ctx.org_b_id_str)
-    .bind(&ctx.branch_b1_id_str)
-    .bind("Malicious Insert Data")
-    .execute(&mut *tx)
-    .await;
-
-    assert!(raw_res.is_err(), "Raw INSERT must fail");
-    let err = raw_res.unwrap_err();
-    let pg_err = err.as_database_error().expect("Must be database error");
-
-    // Assert SQLSTATE 42501 (insufficient_privilege) or 44000 (check_violation) proving denial is strictly from RLS WITH CHECK, NOT FK
-    let code = pg_err.code().unwrap_or_default();
-    assert!(
-        code == "42501" || code == "44000",
-        "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
-    );
-
-    tx.rollback().await.unwrap();
-
-    // Verify denial was strictly caused by RLS WITH CHECK, and DB state is unchanged
-    let fetch_res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_b_scope, &res_malicious_id)
+        let raw_res = sqlx::query(
+            "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&res_malicious_id)
+        .bind(&ctx.org_b_id_str)
+        .bind(&ctx.branch_b1_id_str)
+        .bind("Malicious Insert Data")
+        .execute(&mut *tx)
         .await;
 
-    assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
-    ctx.guard.teardown().await;
+        assert!(raw_res.is_err(), "Raw INSERT must fail");
+        let err = raw_res.unwrap_err();
+        let pg_err = err.as_database_error().expect("Must be database error");
+
+        let code = pg_err.code().unwrap_or_default();
+        assert!(
+            code == "42501" || code == "44000",
+            "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
+        );
+
+        tx.rollback().await.unwrap();
+
+        let fetch_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_b_scope, &res_malicious_id)
+            .await;
+
+        assert!(matches!(fetch_res, Err(PgAuthorityError::NotFoundOrDenied)));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_negative_ownership_changing_update_relationally_valid() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-    // Relationally valid mutation target: Change organization_id to Org B AND branch_id to Branch B1 (belonging to Org B).
-    // The foreign key constraint is 100% valid! The ONLY constraint denying this update is PostgreSQL RLS WITH CHECK!
-    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
+        let update_res = sqlx::query(
+            "UPDATE tenant_resources
+             SET organization_id = $1, branch_id = $2
+             WHERE id = $3",
+        )
+        .bind(&ctx.org_b_id_str)
+        .bind(&ctx.branch_b1_id_str)
+        .bind(&ctx.res_a1_id)
+        .execute(&mut *tx)
+        .await;
 
-    let update_res = sqlx::query(
-        "UPDATE tenant_resources
-         SET organization_id = $1, branch_id = $2
-         WHERE id = $3",
-    )
-    .bind(&ctx.org_b_id_str)
-    .bind(&ctx.branch_b1_id_str)
-    .bind(&ctx.res_a1_id)
-    .execute(&mut *tx)
+        assert!(update_res.is_err(), "Ownership update must fail");
+        let err = update_res.unwrap_err();
+        let pg_err = err.as_database_error().expect("Must be database error");
+
+        let code = pg_err.code().unwrap_or_default();
+        assert!(
+            code == "42501" || code == "44000",
+            "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
+        );
+
+        tx.rollback().await.unwrap();
+
+        let fetch_res = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
+            .await
+            .unwrap();
+
+        assert_eq!(fetch_res.organization_id, ctx.org_a_id_str);
+    })
     .await;
-
-    assert!(update_res.is_err(), "Ownership update must fail");
-    let err = update_res.unwrap_err();
-    let pg_err = err.as_database_error().expect("Must be database error");
-
-    let code = pg_err.code().unwrap_or_default();
-    assert!(
-        code == "42501" || code == "44000",
-        "Must be SQLSTATE 42501 (RLS policy violation) or 44000 from PostgreSQL RLS WITH CHECK, observed: {code}"
-    );
-
-    tx.rollback().await.unwrap();
-
-    // Verify DB state remains unchanged (res_A1 still owned by org_A)
-    let fetch_res = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_scope, &ctx.res_a1_id)
-        .await
-        .unwrap();
-
-    assert_eq!(fetch_res.organization_id, ctx.org_a_id_str);
-    ctx.guard.teardown().await;
 }
 
 // ============================================================================
@@ -654,48 +682,42 @@ async fn test_negative_ownership_changing_update_relationally_valid() {
 
 #[tokio::test]
 async fn test_end_to_end_application_and_db_composition() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let req_org_a = RequestedOrganizationId(OrganizationId::new(&ctx.org_a_id_str).unwrap());
+        let _trusted_a = bind_organization(&req_org_a, &ctx.mem_a)
+            .expect("Application binding succeeds for authorized membership");
+        let eff_scope_a = resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None)
+            .expect("Scope resolution succeeds");
+        let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
 
-    // 1. AUTHORIZED PATH
-    // Principal A -> Org A binding -> Scope Resolution -> AuthorizedScope -> DB Context -> DB Query
-    let req_org_a = RequestedOrganizationId(OrganizationId::new(&ctx.org_a_id_str).unwrap());
-    let _trusted_a = bind_organization(&req_org_a, &ctx.mem_a)
-        .expect("Application binding succeeds for authorized membership");
-    let eff_scope_a =
-        resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None).expect("Scope resolution succeeds");
-    let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
+        let res_a = ctx
+            .repo
+            .get_tenant_resource(&authorized_scope_a, &ctx.res_a1_id)
+            .await
+            .expect("Authorized end-to-end operation succeeds");
+        assert_eq!(res_a.data, "Secret Data A1");
 
-    let res_a = ctx
-        .repo
-        .get_tenant_resource(&authorized_scope_a, &ctx.res_a1_id)
-        .await
-        .expect("Authorized end-to-end operation succeeds");
-    assert_eq!(res_a.data, "Secret Data A1");
+        let req_org_b = RequestedOrganizationId(OrganizationId::new(&ctx.org_b_id_str).unwrap());
+        let tamper_res = bind_organization(&req_org_b, &ctx.mem_a);
+        assert!(
+            tamper_res.is_err(),
+            "Application layer must reject cross-tenant binding attempt before DB layer"
+        );
 
-    // 2. APPLICATION TAMPER PATH
-    // Principal A attempts to bind to Org B without membership -> Application rejects before DB call
-    let req_org_b = RequestedOrganizationId(OrganizationId::new(&ctx.org_b_id_str).unwrap());
-    let tamper_res = bind_organization(&req_org_b, &ctx.mem_a);
-    assert!(
-        tamper_res.is_err(),
-        "Application layer must reject cross-tenant binding attempt before DB layer"
-    );
+        let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
+        let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
+            .bind(&ctx.res_b1_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap();
 
-    // 3. DATABASE INDEPENDENCE PATH
-    // Tenant A DB context active -> deliberately issue broad raw DB query without app tenant predicate -> PostgreSQL independently blocks Tenant B rows
-    let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
-    let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
-        .bind(&ctx.res_b1_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .unwrap();
-
-    assert!(
-        row_b.is_none(),
-        "PostgreSQL RLS independently blocks Tenant B row even when raw query lacks WHERE organization_id predicate"
-    );
-    tx.commit().await.unwrap();
-    ctx.guard.teardown().await;
+        assert!(
+            row_b.is_none(),
+            "PostgreSQL RLS independently blocks Tenant B row even when raw query lacks WHERE organization_id predicate"
+        );
+        tx.commit().await.unwrap();
+    })
+    .await;
 }
 
 // ============================================================================
@@ -704,23 +726,23 @@ async fn test_end_to_end_application_and_db_composition() {
 
 #[tokio::test]
 async fn test_direct_db_query_without_application_predicate() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-    let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
+        let row = sqlx::query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
+            .bind(&ctx.res_b1_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .unwrap();
 
-    let row = sqlx::query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
-        .bind(&ctx.res_b1_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .unwrap();
+        assert!(
+            row.is_none(),
+            "PostgreSQL RLS must independently hide res_B1 even when application query lacks a tenant predicate"
+        );
 
-    assert!(
-        row.is_none(),
-        "PostgreSQL RLS must independently hide res_B1 even when application query lacks a tenant predicate"
-    );
-
-    tx.commit().await.unwrap();
-    ctx.guard.teardown().await;
+        tx.commit().await.unwrap();
+    })
+    .await;
 }
 
 // ============================================================================
@@ -729,43 +751,43 @@ async fn test_direct_db_query_without_application_predicate() {
 
 #[tokio::test]
 async fn test_branch_scoped_read_isolation() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let res1 = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a1_id)
+            .await;
+        assert!(res1.is_ok());
 
-    let res1 = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a1_id)
-        .await;
-    assert!(res1.is_ok());
-
-    let res2 = ctx
-        .repo
-        .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a2_id)
-        .await;
-    assert!(matches!(res2, Err(PgAuthorityError::NotFoundOrDenied)));
-    ctx.guard.teardown().await;
+        let res2 = ctx
+            .repo
+            .get_tenant_resource(&ctx.org_a_b1_scope, &ctx.res_a2_id)
+            .await;
+        assert!(matches!(res2, Err(PgAuthorityError::NotFoundOrDenied)));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_cross_tenant_branch_binding_denial() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let invalid_resource = TenantResource {
+            id: format!("res_cross_branch_{}", uuid::Uuid::new_v4().simple()),
+            organization_id: ctx.org_b_id_str.clone(),
+            branch_id: ctx.branch_a1_id_str.clone(),
+            data: "Cross Branch Invalid".to_string(),
+        };
 
-    let invalid_resource = TenantResource {
-        id: format!("res_cross_branch_{}", uuid::Uuid::new_v4().simple()),
-        organization_id: ctx.org_b_id_str.clone(),
-        branch_id: ctx.branch_a1_id_str.clone(),
-        data: "Cross Branch Invalid".to_string(),
-    };
+        let insert_res = ctx
+            .repo
+            .create_tenant_resource(&ctx.org_b_scope, &invalid_resource)
+            .await;
 
-    let insert_res = ctx
-        .repo
-        .create_tenant_resource(&ctx.org_b_scope, &invalid_resource)
-        .await;
-
-    assert!(
-        insert_res.is_err(),
-        "Foreign key / RLS constraint must deny referencing a branch belonging to another organization"
-    );
-    ctx.guard.teardown().await;
+        assert!(
+            insert_res.is_err(),
+            "Foreign key / RLS constraint must deny referencing a branch belonging to another organization"
+        );
+    })
+    .await;
 }
 
 // ============================================================================
@@ -774,44 +796,50 @@ async fn test_cross_tenant_branch_binding_denial() {
 
 #[tokio::test]
 async fn test_missing_tenant_context_fails_closed() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
 
-    let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        count, 0,
-        "Unset / missing tenant context must return 0 rows (fail closed)"
-    );
-    ctx.guard.teardown().await;
+        assert_eq!(
+            count, 0,
+            "Unset / missing tenant context must return 0 rows (fail closed)"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_invalid_tenant_context_fails_closed() {
-    let ctx = setup_test_context().await;
+    run_test_with_teardown(|ctx| async move {
+        let req_org_nonexistent =
+            RequestedOrganizationId(OrganizationId::new("org_NONEXISTENT").unwrap());
 
-    let invalid_scope = AuthorizedScope {
-        organization_id: OrganizationId::new("org_NONEXISTENT").unwrap(),
-        membership_id: MembershipId::new("mem_NONEXISTENT").unwrap(),
-        branch_id: None,
-        organization_version: 1,
-        membership_version: 1,
-    };
+        // Attempting to bind a nonexistent requested org with membership fails
+        let bind_res = bind_organization(&req_org_nonexistent, &ctx.mem_a);
+        assert!(bind_res.is_err(), "Binding nonexistent org must fail");
 
-    let res = ctx
-        .repo
-        .get_tenant_resource(&invalid_scope, &ctx.res_a1_id)
-        .await;
+        // Verify direct DB query with invalid GUC context fails closed
+        let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('app.organization_id', 'org_NONEXISTENT', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
 
-    assert!(
-        matches!(res, Err(PgAuthorityError::NotFoundOrDenied)),
-        "Nonexistent tenant context must fail closed"
-    );
-    ctx.guard.teardown().await;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            count, 0,
+            "Nonexistent tenant GUC context must return 0 rows (fail closed)"
+        );
+    })
+    .await;
 }
 
 // ============================================================================
@@ -820,55 +848,55 @@ async fn test_invalid_tenant_context_fails_closed() {
 
 #[tokio::test]
 async fn test_connection_pool_context_leakage_and_rollback_safety() {
-    let ctx = setup_test_context().await;
-
-    for _ in 0..10 {
-        {
-            let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
-            set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
-                .await
-                .unwrap();
-
-            let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
-                    .bind(&ctx.res_a1_id)
-                    .fetch_one(&mut *tx)
+    run_test_with_teardown(|ctx| async move {
+        for _ in 0..10 {
+            {
+                let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+                set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
                     .await
                     .unwrap();
 
-            assert_eq!(count, 1);
-            tx.rollback().await.unwrap();
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                        .bind(&ctx.res_a1_id)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .unwrap();
+
+                assert_eq!(count, 1);
+                tx.rollback().await.unwrap();
+            }
+
+            {
+                let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
+                set_transaction_tenant_context(&mut tx, &ctx.org_b_scope)
+                    .await
+                    .unwrap();
+
+                let count_b: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                        .bind(&ctx.res_b1_id)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .unwrap();
+                assert_eq!(count_b, 1);
+
+                let count_a: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                        .bind(&ctx.res_a1_id)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .unwrap();
+                assert_eq!(
+                    count_a, 0,
+                    "Tenant A context must not leak into Tenant B transaction"
+                );
+
+                tx.commit().await.unwrap();
+            }
         }
-
-        {
-            let mut tx = ctx.pools.runtime_pool.begin().await.unwrap();
-            set_transaction_tenant_context(&mut tx, &ctx.org_b_scope)
-                .await
-                .unwrap();
-
-            let count_b: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
-                    .bind(&ctx.res_b1_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .unwrap();
-            assert_eq!(count_b, 1);
-
-            let count_a: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
-                    .bind(&ctx.res_a1_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .unwrap();
-            assert_eq!(
-                count_a, 0,
-                "Tenant A context must not leak into Tenant B transaction"
-            );
-
-            tx.commit().await.unwrap();
-        }
-    }
-    ctx.guard.teardown().await;
+    })
+    .await;
 }
 
 // ============================================================================
@@ -877,75 +905,76 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
 
 #[tokio::test]
 async fn test_concurrent_tenant_isolation_reads_and_writes() {
-    let ctx = Arc::new(setup_test_context().await);
-    let mut set = JoinSet::new();
+    run_test_with_teardown(|ctx| async move {
+        let mut set = JoinSet::new();
 
-    for i in 0..8 {
-        let ctx_clone = ctx.clone();
-        set.spawn(async move {
-            let item_id = format!("res_concurrent_{i}_{}", uuid::Uuid::new_v4().simple());
-            if i % 2 == 0 {
-                let res_a = TenantResource {
-                    id: item_id.clone(),
-                    organization_id: ctx_clone.org_a_id_str.clone(),
-                    branch_id: ctx_clone.branch_a1_id_str.clone(),
-                    data: format!("Concurrent Data A {i}"),
-                };
-                ctx_clone
-                    .repo
-                    .create_tenant_resource(&ctx_clone.org_a_scope, &res_a)
-                    .await
-                    .unwrap();
+        for i in 0..8 {
+            let ctx_clone = ctx.clone();
+            set.spawn(async move {
+                let item_id = format!("res_concurrent_{i}_{}", uuid::Uuid::new_v4().simple());
+                if i % 2 == 0 {
+                    let res_a = TenantResource {
+                        id: item_id.clone(),
+                        organization_id: ctx_clone.org_a_id_str.clone(),
+                        branch_id: ctx_clone.branch_a1_id_str.clone(),
+                        data: format!("Concurrent Data A {i}"),
+                    };
+                    ctx_clone
+                        .repo
+                        .create_tenant_resource(&ctx_clone.org_a_scope, &res_a)
+                        .await
+                        .unwrap();
 
-                let read_a = ctx_clone
-                    .repo
-                    .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
-                    .await;
-                assert!(read_a.is_ok());
+                    let read_a = ctx_clone
+                        .repo
+                        .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
+                        .await;
+                    assert!(read_a.is_ok());
 
-                let read_b_denied = ctx_clone
-                    .repo
-                    .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
-                    .await;
-                assert!(matches!(
-                    read_b_denied,
-                    Err(PgAuthorityError::NotFoundOrDenied)
-                ));
-            } else {
-                let res_b = TenantResource {
-                    id: item_id.clone(),
-                    organization_id: ctx_clone.org_b_id_str.clone(),
-                    branch_id: ctx_clone.branch_b1_id_str.clone(),
-                    data: format!("Concurrent Data B {i}"),
-                };
-                ctx_clone
-                    .repo
-                    .create_tenant_resource(&ctx_clone.org_b_scope, &res_b)
-                    .await
-                    .unwrap();
+                    let read_b_denied = ctx_clone
+                        .repo
+                        .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
+                        .await;
+                    assert!(matches!(
+                        read_b_denied,
+                        Err(PgAuthorityError::NotFoundOrDenied)
+                    ));
+                } else {
+                    let res_b = TenantResource {
+                        id: item_id.clone(),
+                        organization_id: ctx_clone.org_b_id_str.clone(),
+                        branch_id: ctx_clone.branch_b1_id_str.clone(),
+                        data: format!("Concurrent Data B {i}"),
+                    };
+                    ctx_clone
+                        .repo
+                        .create_tenant_resource(&ctx_clone.org_b_scope, &res_b)
+                        .await
+                        .unwrap();
 
-                let read_b = ctx_clone
-                    .repo
-                    .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
-                    .await;
-                assert!(read_b.is_ok());
+                    let read_b = ctx_clone
+                        .repo
+                        .get_tenant_resource(&ctx_clone.org_b_scope, &item_id)
+                        .await;
+                    assert!(read_b.is_ok());
 
-                let read_a_denied = ctx_clone
-                    .repo
-                    .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
-                    .await;
-                assert!(matches!(
-                    read_a_denied,
-                    Err(PgAuthorityError::NotFoundOrDenied)
-                ));
-            }
-        });
-    }
+                    let read_a_denied = ctx_clone
+                        .repo
+                        .get_tenant_resource(&ctx_clone.org_a_scope, &item_id)
+                        .await;
+                    assert!(matches!(
+                        read_a_denied,
+                        Err(PgAuthorityError::NotFoundOrDenied)
+                    ));
+                }
+            });
+        }
 
-    while let Some(res) = set.join_next().await {
-        res.expect("Concurrent task panicked");
-    }
-    ctx.guard.teardown().await;
+        while let Some(res) = set.join_next().await {
+            res.expect("Concurrent task panicked");
+        }
+    })
+    .await;
 }
 
 // ============================================================================

@@ -6,7 +6,7 @@ This document serves as the authoritative, immutable evidence record for the man
 - **PostgreSQL Target Baseline:** `18-alpine` (Real PostgreSQL engine in CI and local integration execution)
 - **Runtime Role:** `app_runtime` (`NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEROLE`, `NOCREATEDB`)
 - **Authority Separation:** Admin/Migration authority connects as database owner; application operations connect exclusively via least-privileged `app_runtime` pool.
-- **Trusted Scope Origin:** `AuthorizedScope` strictly produced via application authorization (`bind_organization` -> `resolve_effective_scope`).
+- **Trusted Scope Origin:** `AuthorizedScope` strictly produced via application authorization (`bind_organization` -> `resolve_effective_scope`). Encapsulated with private fields and read-only accessors.
 
 ---
 
@@ -14,9 +14,9 @@ This document serves as the authoritative, immutable evidence record for the man
 
 | Category | Issue Identified | Remediation Applied | Status |
 | :--- | :--- | :--- | :--- |
-| **Credential Hardcoding** | Reusable database passwords and URL string replacements in source | Eliminated URL replacements; added support for injected environment variables (`ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, `APP_RUNTIME_PASSWORD`) with structured `PgConnectOptions`. Workflow YAML updated to use `POSTGRES_HOST_AUTH_METHOD: trust`. | **RESOLVED** |
-| **Deterministic Teardown** | Lack of isolated schema cleanup on test failure | Implemented RAII `SchemaGuard` with `DROP SCHEMA ... CASCADE` on Drop for test-isolated schemas (`test_schema_<uuid>`). | **RESOLVED** |
-| **Catalog Policy Metadata** | Simple substring check on policy text | Catalog verification asserts exact `pg_policy` metadata (`polcmd = '*'`), `polroles`, `USING`, and `WITH CHECK` expressions referencing `app.organization_id`. | **RESOLVED** |
+| **Credential Hardcoding** | Reusable database passwords and URL string replacements in source | Eliminated URL replacements and `ALTER ROLE ... PASSWORD` interpolation. Injected configuration supported. Workflow YAML updated to use `POSTGRES_HOST_AUTH_METHOD: trust`. | **RESOLVED** |
+| **Deterministic Teardown** | Lack of isolated schema cleanup on test failure | Implemented panic-safe `run_test_with_teardown` wrapper with `DROP SCHEMA ... CASCADE` on Drop for test-isolated schemas (`test_schema_<uuid>`). | **RESOLVED** |
+| **Catalog Policy Metadata** | Simple substring check on policy text | Catalog verification asserts exact `pg_policy` metadata (`polcmd = '*'`), `polroles` strictly equals `[runtime_oid]`, `USING`, and `WITH CHECK` expressions referencing `app.organization_id`. | **RESOLVED** |
 | **Privilege Allowlist** | Role attributes check without privilege allowlist or inheritance proof | Checked `pg_auth_members` for zero role inheritance, explicit CONNECT, USAGE, SELECT, INSERT, UPDATE, DELETE grants, and verified absence of administrative privileges. | **RESOLVED** |
 | **App + DB Composition** | DB tests operating directly on hand-crafted scopes | Added end-to-end composition test verifying Principal Membership -> Phase 4 Resolver -> `AuthorizedScope` -> DB Context -> RLS Isolation. | **RESOLVED** |
 | **WITH CHECK Proofs** | `is_err()` check without database code verification | Asserted SQLSTATE database error codes (`42501` or `44000`) for relationally valid cross-tenant write denials, proving RLS enforcement. | **RESOLVED** |
@@ -158,7 +158,7 @@ ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_rls_policy_metadata --locked
 TEST_TARGET: test_catalog_rls_policy_metadata
-EXPECTED: Policy command scope = '*' (ALL); expressions reference app.organization_id.
+EXPECTED: Policy command scope = '*' (ALL); polroles strictly equals app_runtime OID; expressions reference app.organization_id.
 OBSERVED: Exact catalog verification passed for all protected relations.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
