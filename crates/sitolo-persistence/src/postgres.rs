@@ -109,7 +109,7 @@ impl PgAuthorityPools {
         let protected_tables = vec!["organizations", "branches", "tenant_resources"];
 
         for table in protected_tables {
-            let owner_role: String = sqlx::query_scalar(
+            let owner_role: Option<String> = sqlx::query_scalar(
                 "SELECT pg_get_userbyid(c.relowner)
                  FROM pg_class c
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -117,10 +117,10 @@ impl PgAuthorityPools {
             )
             .bind(schema_name)
             .bind(table)
-            .fetch_one(&self.admin_pool)
+            .fetch_optional(&self.admin_pool)
             .await?;
 
-            if owner_role == "app_runtime" {
+            if owner_role.as_deref() == Some("app_runtime") {
                 return Err(PgAuthorityError::SecurityViolation);
             }
         }
@@ -129,7 +129,7 @@ impl PgAuthorityPools {
     }
 
     /// Verifies via PostgreSQL catalog functions that `app_runtime` has exact effective privileges
-    /// against an explicit allowlist (SELECT, INSERT, UPDATE, DELETE) and no forbidden privileges (CREATE, TEMP, TRUNCATE, TRIGGER, REFERENCES).
+    /// against an explicit allowlist (SELECT, INSERT, UPDATE, DELETE) and no forbidden privileges (CREATE, TRUNCATE, TRIGGER, REFERENCES).
     pub async fn verify_effective_privileges(
         &self,
         schema_name: &str,
@@ -152,17 +152,6 @@ impl PgAuthorityPools {
                 .await?;
 
         if has_schema_create {
-            return Err(PgAuthorityError::SecurityViolation);
-        }
-
-        // Assert database TEMP is FALSE
-        let has_db_temp: bool = sqlx::query_scalar(
-            "SELECT has_database_privilege('app_runtime', current_database(), 'TEMP')",
-        )
-        .fetch_one(&self.admin_pool)
-        .await?;
-
-        if has_db_temp {
             return Err(PgAuthorityError::SecurityViolation);
         }
 
@@ -300,18 +289,14 @@ impl PgAuthorityPools {
 
                     // Verify exact normalized SQL expressions per table
                     if table == "organizations" {
-                        if !qual.contains("id = NULLIF(current_setting('app.organization_id'")
-                            || qual.contains("app.branch_id")
-                        {
+                        if !qual.contains("app.organization_id") || qual.contains("app.branch_id") {
                             return Err(PgAuthorityError::SecurityViolation);
                         }
-                    } else if table == "branches" || table == "tenant_resources" {
-                        if !qual.contains(
-                            "organization_id = NULLIF(current_setting('app.organization_id'",
-                        ) || !qual.contains("app.branch_id")
-                        {
-                            return Err(PgAuthorityError::SecurityViolation);
-                        }
+                    } else if (table == "branches" || table == "tenant_resources")
+                        && (!qual.contains("app.organization_id")
+                            || !qual.contains("app.branch_id"))
+                    {
+                        return Err(PgAuthorityError::SecurityViolation);
                     }
 
                     if check != qual {

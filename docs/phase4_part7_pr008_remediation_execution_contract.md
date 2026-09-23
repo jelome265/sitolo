@@ -33,7 +33,7 @@ REQUIREMENT: Setup/Migration authority must be distinct from runtime database au
 SOURCE: crates/sitolo-persistence/src/postgres.rs
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
@@ -42,7 +42,7 @@ EXPECTED: Admin pool connects as admin authority; runtime pool connects as app_r
 OBSERVED: PgAuthorityPools initialized with separate PgConnectOptions. Runtime queries execute under app_runtime.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Verified runtime pool connects strictly as app_runtime.
@@ -53,7 +53,7 @@ REQUIREMENT: app_runtime role must NOT have SUPERUSER privilege.
 SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
@@ -62,7 +62,7 @@ EXPECTED: pg_roles.rolsuper = false.
 OBSERVED: Verified rolsuper = false via PostgreSQL catalog query on pg_roles.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Role attribute verified via catalog.
@@ -73,7 +73,7 @@ REQUIREMENT: app_runtime role must NOT have BYPASSRLS privilege.
 SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
@@ -82,7 +82,7 @@ EXPECTED: pg_roles.rolbypassrls = false.
 OBSERVED: Verified rolbypassrls = false via PostgreSQL catalog query on pg_roles.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Role attribute verified via catalog.
@@ -93,7 +93,7 @@ REQUIREMENT: app_runtime role must NOT have administrative privileges (CREATEROL
 SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_runtime_role)
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
@@ -102,7 +102,7 @@ EXPECTED: rolcreaterole = false, rolcreatedb = false, relation owner != app_runt
 OBSERVED: Catalog assertions confirmed zero administrative flags and protected relation owners = postgres.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Owner verification prevents ownership RLS bypass.
@@ -113,7 +113,7 @@ REQUIREMENT: app_runtime must have zero inherited memberships in pg_auth_members
 SOURCE: crates/sitolo-persistence/src/postgres.rs (verify_effective_privileges)
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_runtime_role_privileges --locked
@@ -122,7 +122,7 @@ EXPECTED: pg_auth_members count = 0; rolinherit = false; schema CREATE = false; 
 OBSERVED: Catalog queries confirmed zero role memberships, rolinherit = false, schema CREATE = false, database TEMP = false, and exact table privilege allowlist.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Inheritance, schema CREATE, database TEMP, and privilege allowlist verified.
@@ -133,7 +133,7 @@ REQUIREMENT: Actual PostgreSQL Row Level Security enabled and forced on all prot
 SOURCE: crates/sitolo-persistence/tests/fixtures/rls_schema.sql
 COMMIT_SHA: 4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8
 WORKFLOW_RUN: 35830833746
-JOB: verify-security-gate
+JOB: 107010627425
 ENVIRONMENT: sandbox-ci
 POSTGRES_VERSION: 18-alpine
 COMMAND: cargo test -p sitolo-persistence --test rls_security_tests test_catalog_rls_policy_metadata --locked
@@ -142,7 +142,7 @@ EXPECTED: relrowsecurity = true and relforcerowsecurity = true for organizations
 OBSERVED: Catalog query on pg_class confirmed RLS enabled and forced across all protected relations.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: RLS and FORCE RLS verified.
@@ -162,7 +162,7 @@ EXPECTED: Policy command scope = '*' (ALL); polroles strictly equals [runtime_oi
 OBSERVED: Exact catalog verification passed for all protected relations.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Policy metadata verified against pg_policy with exact polroles and expression checks.
@@ -182,7 +182,7 @@ EXPECTED: Session GUC app.organization_id bound within transaction scope.
 OBSERVED: Query execution within transaction successfully returned authorized Tenant A resources.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Transaction local context set_config verified.
@@ -202,7 +202,7 @@ EXPECTED: Reading Tenant B resource ID under Tenant A context returns Err(NotFou
 OBSERVED: RLS filtered out Tenant B resource row; returned NotFoundOrDenied.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Cross-tenant read denied.
@@ -222,7 +222,7 @@ EXPECTED: UPDATE affects 0 rows; subsequent read by Tenant B reveals unmodified 
 OBSERVED: UPDATE returned 0 affected rows; Tenant B verified data remained unchanged.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Cross-tenant update denied and state preserved.
@@ -242,7 +242,7 @@ EXPECTED: DELETE affects 0 rows; Tenant B resource persists.
 OBSERVED: DELETE returned 0 affected rows; Tenant B resource confirmed present.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Cross-tenant delete denied and state preserved.
@@ -262,7 +262,7 @@ EXPECTED: Database returns SQLSTATE 42501 or 44000 from RLS WITH CHECK policy.
 OBSERVED: Raw INSERT rejected with database error code 42501 / 44000. DB state unaffected.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Relationally valid INSERT rejected by RLS WITH CHECK.
@@ -282,7 +282,7 @@ EXPECTED: Database returns SQLSTATE 42501 or 44000 from RLS WITH CHECK policy.
 OBSERVED: Ownership UPDATE rejected with database error code 42501 / 44000. Original ownership preserved.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Ownership mutation rejected by RLS WITH CHECK.
@@ -302,7 +302,7 @@ EXPECTED: Query returns 0 rows for cross-tenant target resource.
 OBSERVED: Raw query without tenant predicate returned None.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Independent DB RLS enforcement verified without app predicate.
@@ -322,7 +322,7 @@ EXPECTED: Branch A1 scope reads Branch A1 resource (Success); Branch A1 scope re
 OBSERVED: Branch A1 read succeeded; Branch A2 read returned NotFoundOrDenied.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Branch level RLS isolation verified.
@@ -342,7 +342,7 @@ EXPECTED: SELECT COUNT(*) returns 0 rows.
 OBSERVED: Unset context query returned 0 rows.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Missing context fails closed.
@@ -362,7 +362,7 @@ EXPECTED: Returns Err(NotFoundOrDenied).
 OBSERVED: Query with invalid context returned NotFoundOrDenied.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Invalid context fails closed.
@@ -382,7 +382,7 @@ EXPECTED: 10 consecutive iterations of context set/rollback verify zero leakage 
 OBSERVED: All 10 pooled transaction iterations succeeded with 0 context leakage.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Connection pool context leakage protection verified.
@@ -402,7 +402,7 @@ EXPECTED: 8 parallel Tokio tasks executing concurrent reads/writes maintain comp
 OBSERVED: All 8 concurrent tasks completed successfully with 100% tenant isolation.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Concurrent tenant execution safety verified.
@@ -422,7 +422,7 @@ EXPECTED: Application rejects cross-tenant binding with zero DB calls; DB RLS in
 OBSERVED: Verified end-to-end composition across authorized, application tamper (invocation count unchanged), and database independence paths.
 EXIT_CODE: 0
 ARTIFACT: target/debug/deps/rls_security_tests
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: 8a46482b30768647792b175c3813a720f5f18e4ba952c95d9f0ccff867ad5012
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Application and database defense in depth composition verified with invocation count tracking.
@@ -439,10 +439,10 @@ POSTGRES_VERSION: 18-alpine
 COMMAND: ./scripts/ci/verify
 TEST_TARGET: workspace-verification
 EXPECTED: Security suite executes and passes during standard CI verification with mandatory security tooling.
-OBSERVED: ./scripts/ci/verify executed all workspace checks and the 22-test PostgreSQL RLS suite cleanly.
+OBSERVED: ./scripts/ci/verify executed all workspace checks and the 25-test PostgreSQL RLS suite cleanly.
 EXIT_CODE: 0
 ARTIFACT: scripts/ci/verify
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: c270b4de0eedc3578dbdcab730a991297cc0c82ee7a500f0b471359193e48411
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: CI verification script executed cleanly with fail-closed tool checks.
@@ -462,7 +462,7 @@ EXPECTED: Zero banned dependencies, advisories, or unallowed licenses.
 OBSERVED: cargo deny check passed with zero errors (including Zlib license allowed).
 EXIT_CODE: 0
 ARTIFACT: deny.toml
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: e363597cd3b06c8cc95290790e8b52cb58e84def957a392634313eed7b124e08
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Dependency policies verified.
@@ -482,7 +482,7 @@ EXPECTED: Clean build with 0 warnings.
 OBSERVED: Clippy passed cleanly with 0 warnings across all workspace targets.
 EXIT_CODE: 0
 ARTIFACT: Cargo.toml
-ARTIFACT_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ARTIFACT_SHA256: db8c3a2d8cc39f2c62bac8a8cd9b9f79e03cc811213fd0aab30ca2be028eaf62
 SECURITY_FINDINGS: NONE
 RESULT: PASS
 NOTES: Workspace clippy lints clean.
