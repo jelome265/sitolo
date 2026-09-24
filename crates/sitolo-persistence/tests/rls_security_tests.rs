@@ -366,10 +366,6 @@ async fn setup_test_context_inner(
     let schema_sql = include_str!("fixtures/rls_schema.sql");
     sqlx::raw_sql(schema_sql).execute(admin_pool).await?;
 
-    if INJECT_SETUP_FAILURE.try_with(|v| *v).unwrap_or(false) {
-        return Err(PgAuthorityError::SecurityViolation);
-    }
-
     // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
@@ -495,6 +491,10 @@ async fn setup_test_context_inner(
     .bind(&branch_b1_id_str)
     .execute(admin_pool)
     .await?;
+
+    if INJECT_SETUP_FAILURE.try_with(|b| *b).unwrap_or(false) {
+        return Err(PgAuthorityError::SecurityViolation);
+    }
 
     Ok(TestContext {
         pools,
@@ -1299,7 +1299,7 @@ async fn test_setup_failure_injection_cleans_up_schema() {
         .await
         .unwrap();
 
-    // Verify schema does not exist before
+    // Verify schema does not exist prior to setup
     let exists_before: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)
@@ -1308,16 +1308,17 @@ async fn test_setup_failure_injection_cleans_up_schema() {
             .unwrap();
     assert!(!exists_before, "Schema must not exist before setup");
 
-    // Execute setup error path which creates schema and executes cleanup on error
+    // Execute real setup_test_context with INJECT_SETUP_FAILURE seam active
     let setup_res = INJECT_SETUP_FAILURE
         .scope(true, async { setup_test_context(Some(&schema_name)).await })
         .await;
+
     assert!(
         setup_res.is_err(),
         "Failing setup context must return setup error"
     );
 
-    // Prove schema no longer exists in PostgreSQL catalog after setup cleanup
+    // Prove schema no longer exists in PostgreSQL catalog after setup_test_context error handling
     let exists_after: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)

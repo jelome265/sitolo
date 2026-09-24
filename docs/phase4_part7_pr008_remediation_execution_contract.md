@@ -7,8 +7,8 @@ This execution contract records the non-negotiable verification gates and test e
 ## Commit & Evidence Metadata
 
 - **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
-- **Workflow Run ID**: `35926529780`
-- **Workflow Job ID**: `107402831779`
+- **Workflow Run ID**: `35961345937`
+- **Workflow Job ID**: `107510382280`
 - **Workflow Job Name**: `verify`
 - **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
@@ -39,7 +39,7 @@ This execution contract records the non-negotiable verification gates and test e
 | **P4-008-G19** | Concurrent Isolation | `test_concurrent_tenant_isolation_reads_and_writes` | 8 concurrent workers execute without cross-talk | All 8 workers complete with strict isolation | 0 | PASSED | Interleaved Tenant A & B execution |
 | **P4-008-G20** | Unknown Resource Mutations | `test_negative_unknown_resource_update_fails_closed` | Nonexistent resource update/delete returns `NotFoundOrDenied` | `NotFoundOrDenied` returned; DB state unchanged | 0 | PASSED | Fail-closed on missing target |
 | **P4-008-G21** | Foreign Key Classification | `test_cross_tenant_branch_binding_denial` | Invalid branch reference returns SQLSTATE 23503 | SQLSTATE `23503` (foreign key violation) returned | 0 | PASSED | Correct SQLSTATE classification |
-| **P4-008-G22** | CI Fail-Closed Enforcement | `./scripts/ci/verify` | Missing `cargo-deny`/`cargo-audit` causes non-zero exit | Fail-closed logic checks tool presence and exits 1 if missing | 0 | PASSED | Verified fail-closed check logic |
+| **P4-008-G22** | CI Fail-Closed Enforcement | `./scripts/ci/verify` | Missing `cargo-deny`/`cargo-audit` causes non-zero exit | Script contains tool existence check and fails closed if missing | 0 | PASSED | Verified fail-closed check logic |
 | **P4-008-G23** | Canonical Pipeline Verification | `./scripts/ci/verify` | Full pipeline passes (fmt, clippy, unit, rls suite, audit, deny) | All verification checks pass cleanly | 0 | PASSED | Canonical CI gate |
 
 ---
@@ -53,28 +53,28 @@ test test_catalog_rls_policy_metadata ... ok
 test test_catalog_runtime_role_privileges ... ok
 test test_cross_tenant_branch_binding_denial ... ok
 test test_connection_pool_context_leakage_and_rollback_safety ... ok
-test test_concurrent_tenant_isolation_reads_and_writes ... ok
 test test_direct_db_query_without_application_predicate ... ok
+test test_concurrent_tenant_isolation_reads_and_writes ... ok
+test test_end_to_end_application_and_db_composition ... ok
 test test_missing_tenant_context_fails_closed ... ok
 test test_invalid_tenant_context_fails_closed ... ok
-test test_end_to_end_application_and_db_composition ... ok
 test test_negative_ownership_changing_update_relationally_valid ... ok
 test test_negative_tenant_a_cannot_delete_b ... ok
 test test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid ... ok
 test test_negative_tenant_a_cannot_read_b ... ok
 test test_negative_tenant_a_cannot_update_b ... ok
+test test_negative_unknown_resource_update_fails_closed ... ok
 test test_negative_unknown_resource_delete_fails_closed ... ok
 test test_negative_unknown_resource_does_not_bypass_scope ... ok
-test test_negative_unknown_resource_update_fails_closed ... ok
 test test_positive_tenant_a_creates_a ... ok
 test test_positive_tenant_a_deletes_a ... ok
 test test_positive_tenant_a_reads_a ... ok
 test test_positive_tenant_a_updates_a ... ok
 test test_positive_tenant_b_creates_b ... ok
-test test_positive_tenant_b_reads_b ... ok
 test test_positive_tenant_b_deletes_b ... ok
-test test_setup_failure_injection_cleans_up_schema ... ok
+test test_positive_tenant_b_reads_b ... ok
 test test_positive_tenant_b_updates_b ... ok
+test test_setup_failure_injection_cleans_up_schema ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.06s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.44s
 ```
