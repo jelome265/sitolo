@@ -10,6 +10,8 @@ default = []
 test-support = []
 
 [dependencies]
+chrono = { workspace = true }
+serde_json = { workspace = true }
 async-trait.workspace = true
 sha2.workspace = true
 sitolo-auth.workspace = true

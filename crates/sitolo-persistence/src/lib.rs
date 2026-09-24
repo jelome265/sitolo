@@ -27,3 +27,6 @@ pub use tenancy::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores,
 };
+
+pub mod audit_repository;
+pub mod outbox_repository;
