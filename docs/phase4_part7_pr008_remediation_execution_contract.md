@@ -7,8 +7,8 @@ This execution contract records the non-negotiable verification gates and test e
 ## Commit & Evidence Metadata
 
 - **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
-- **Workflow Run ID**: `35909767457`
-- **Workflow Job ID**: `107346354132`
+- **Workflow Run ID**: `35926529780`
+- **Workflow Job ID**: `107402831779`
 - **Workflow Job Name**: `verify`
 - **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
@@ -39,7 +39,7 @@ This execution contract records the non-negotiable verification gates and test e
 | **P4-008-G19** | Concurrent Isolation | `test_concurrent_tenant_isolation_reads_and_writes` | 8 concurrent workers execute without cross-talk | All 8 workers complete with strict isolation | 0 | PASSED | Interleaved Tenant A & B execution |
 | **P4-008-G20** | Unknown Resource Mutations | `test_negative_unknown_resource_update_fails_closed` | Nonexistent resource update/delete returns `NotFoundOrDenied` | `NotFoundOrDenied` returned; DB state unchanged | 0 | PASSED | Fail-closed on missing target |
 | **P4-008-G21** | Foreign Key Classification | `test_cross_tenant_branch_binding_denial` | Invalid branch reference returns SQLSTATE 23503 | SQLSTATE `23503` (foreign key violation) returned | 0 | PASSED | Correct SQLSTATE classification |
-| **P4-008-G22** | CI Fail-Closed Enforcement | `./scripts/ci/verify` | Missing `cargo-deny`/`cargo-audit` causes non-zero exit | Fail-closed logic exits with 1 if tool missing | 0 | PASSED | Script checks tool presence |
+| **P4-008-G22** | CI Fail-Closed Enforcement | `./scripts/ci/verify` | Missing `cargo-deny`/`cargo-audit` causes non-zero exit | Fail-closed logic checks tool presence and exits 1 if missing | 0 | PASSED | Verified fail-closed check logic |
 | **P4-008-G23** | Canonical Pipeline Verification | `./scripts/ci/verify` | Full pipeline passes (fmt, clippy, unit, rls suite, audit, deny) | All verification checks pass cleanly | 0 | PASSED | Canonical CI gate |
 
 ---

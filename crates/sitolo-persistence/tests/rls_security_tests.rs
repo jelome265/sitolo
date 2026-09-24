@@ -337,11 +337,10 @@ async fn setup_test_context() -> Result<TestContext, PgAuthorityError> {
         Ok(ctx) => Ok(ctx),
         Err(setup_err) => match guard.teardown().await {
             Ok(()) => Err(setup_err),
-            Err(td_err) => {
-                eprintln!("PRIMARY SETUP ERROR: {setup_err:?}");
-                eprintln!("SECONDARY TEARDOWN ERROR DURING SETUP CLEANUP: {td_err:?}");
-                Err(setup_err)
-            }
+            Err(td_err) => Err(PgAuthorityError::ComposedSetupAndTeardownError {
+                setup_error: Box::new(setup_err),
+                teardown_error: Box::new(td_err),
+            }),
         },
     }
 }
@@ -1278,67 +1277,21 @@ async fn test_setup_failure_injection_cleans_up_schema() {
         .or_else(|_| env::var("DATABASE_URL"))
         .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
 
-    let runtime_url =
-        env::var("RUNTIME_DATABASE_URL").expect("Required RUNTIME_DATABASE_URL not provided");
-
-    let mut admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
-    let mut runtime_opts: PgConnectOptions =
-        runtime_url.parse().expect("Invalid runtime database URL");
-
-    admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
-    runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
-
+    let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(admin_opts.clone())
+        .connect_with(admin_opts)
         .await
         .unwrap();
 
-    // 1. Create schema directly
-    let create_sql = format!("CREATE SCHEMA \"{schema_name}\"");
-    sqlx::raw_sql(&create_sql)
-        .execute(&admin_pool)
-        .await
-        .unwrap();
-
-    // Verify schema exists
-    let exists_before: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
-            .bind(&schema_name)
-            .fetch_one(&admin_pool)
-            .await
-            .unwrap();
-    assert!(
-        exists_before,
-        "Schema must exist before setup failure injection"
-    );
-
-    // 2. Invoke real setup_test_context_inner with broken schema fixture (intentional error)
-    let invalid_schema_opts = admin_opts.clone();
-    let setup_res = setup_test_context_inner_failing(
-        &schema_name,
-        &invalid_schema_opts,
-        &runtime_opts,
-        &admin_pool,
-    )
-    .await;
-
+    // Execute setup error path which creates schema and executes cleanup on error
+    let setup_res = setup_test_context_failing(&schema_name).await;
     assert!(
         setup_res.is_err(),
-        "Setup inner must fail on invalid schema injection"
+        "Failing setup context must return setup error"
     );
 
-    // Manually trigger guard cleanup path as setup_test_context would
-    let guard = SchemaGuard {
-        schema_name: schema_name.clone(),
-        admin_pool: admin_pool.clone(),
-    };
-    guard
-        .teardown()
-        .await
-        .expect("Teardown must succeed on setup failure cleanup");
-
-    // 3. Prove schema no longer exists in PostgreSQL catalog
+    // Prove schema no longer exists in PostgreSQL catalog after setup cleanup
     let exists_after: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)
@@ -1347,8 +1300,54 @@ async fn test_setup_failure_injection_cleans_up_schema() {
             .unwrap();
     assert!(
         !exists_after,
-        "Schema must be CASCADE dropped after setup failure cleanup"
+        "Schema must be CASCADE dropped by setup_test_context error handling"
     );
+}
+
+async fn setup_test_context_failing(schema_name: &str) -> Result<TestContext, PgAuthorityError> {
+    let admin_url = env::var("ADMIN_DATABASE_URL")
+        .or_else(|_| env::var("DATABASE_URL"))
+        .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
+
+    let runtime_url =
+        env::var("RUNTIME_DATABASE_URL").expect("Required RUNTIME_DATABASE_URL not provided");
+
+    let mut admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
+    let mut runtime_opts: PgConnectOptions =
+        runtime_url.parse().expect("Invalid runtime database URL");
+
+    admin_opts = admin_opts.options([("search_path", schema_name)]);
+    runtime_opts = runtime_opts.options([("search_path", schema_name)]);
+
+    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(admin_opts.clone())
+        .await?;
+
+    let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
+    sqlx::raw_sql(&create_schema_sql)
+        .execute(&admin_pool)
+        .await?;
+
+    let guard = SchemaGuard {
+        schema_name: schema_name.to_string(),
+        admin_pool: admin_pool.clone(),
+    };
+
+    let result =
+        setup_test_context_inner_failing(schema_name, &admin_opts, &runtime_opts, &admin_pool)
+            .await;
+
+    match result {
+        Ok(ctx) => Ok(ctx),
+        Err(setup_err) => match guard.teardown().await {
+            Ok(()) => Err(setup_err),
+            Err(td_err) => Err(PgAuthorityError::ComposedSetupAndTeardownError {
+                setup_error: Box::new(setup_err),
+                teardown_error: Box::new(td_err),
+            }),
+        },
+    }
 }
 
 async fn setup_test_context_inner_failing(

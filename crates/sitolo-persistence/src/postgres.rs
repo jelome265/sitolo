@@ -20,6 +20,13 @@ pub enum PgAuthorityError {
     Domain(#[from] TenancyError),
     #[error("not found or denied by RLS boundary")]
     NotFoundOrDenied,
+    #[error(
+        "setup failed with {setup_error:?} and secondary cleanup teardown also failed with {teardown_error:?}"
+    )]
+    ComposedSetupAndTeardownError {
+        setup_error: Box<PgAuthorityError>,
+        teardown_error: Box<PgAuthorityError>,
+    },
 }
 
 impl From<sqlx::Error> for PgAuthorityError {
