@@ -21,7 +21,10 @@ use sitolo_tenancy::{
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
+use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
+
+static MIGRATIONS_INIT: OnceCell<()> = OnceCell::const_new();
 
 struct SchemaGuard {
     schema_name: String,
@@ -114,8 +117,15 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
         .connect_with(admin_opts.clone())
         .await?;
 
-    let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
-    sqlx::raw_sql(role_sql).execute(&admin_pool).await?;
+    MIGRATIONS_INIT
+        .get_or_init(|| async {
+            let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
+            sqlx::raw_sql(role_sql)
+                .execute(&admin_pool)
+                .await
+                .expect("Failed to initialize app_runtime role");
+        })
+        .await;
 
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
     sqlx::raw_sql(&create_schema_sql)
@@ -271,7 +281,9 @@ fn sample_outbox_event(id: &str, dedup_key: &str, org_id: &str) -> OutboxEvent {
 async fn test_atomicity_commit_all_succeeds() {
     run_audit_outbox_test(|ctx| async move {
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
 
         // 1. Business state mutation
         let res_id = format!("res_atomicity_ok_{}", uuid::Uuid::new_v4().simple());
@@ -287,7 +299,10 @@ async fn test_atomicity_commit_all_succeeds() {
         // 2. Audit write
         let audit_id = format!("evt_audit_ok_{}", uuid::Uuid::new_v4().simple());
         let audit = sample_audit_event(&audit_id, &ctx.org_a_id_str);
-        ctx.store.record_iam_audit_tx(&mut tx, &audit).await.unwrap();
+        ctx.store
+            .record_iam_audit_tx(&mut tx, &audit)
+            .await
+            .unwrap();
 
         // 3. Outbox write
         let outbox_id = format!("evt_outbox_ok_{}", uuid::Uuid::new_v4().simple());
@@ -300,27 +315,32 @@ async fn test_atomicity_commit_all_succeeds() {
 
         // Verify all 3 records are durably present
         let mut read_tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut read_tx, &ctx.org_a_scope).await.unwrap();
-
-        let resource_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
-            .bind(&res_id)
-            .fetch_one(&mut *read_tx)
+        set_transaction_tenant_context(&mut read_tx, &ctx.org_a_scope)
             .await
             .unwrap();
+
+        let resource_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
+                .bind(&res_id)
+                .fetch_one(&mut *read_tx)
+                .await
+                .unwrap();
         assert!(resource_exists);
 
-        let audit_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM iam_audit_records WHERE event_id = $1)")
-            .bind(&audit_id)
-            .fetch_one(&mut *read_tx)
-            .await
-            .unwrap();
+        let audit_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM iam_audit_records WHERE event_id = $1)")
+                .bind(&audit_id)
+                .fetch_one(&mut *read_tx)
+                .await
+                .unwrap();
         assert!(audit_exists);
 
-        let outbox_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM outbox_events WHERE event_id = $1)")
-            .bind(&outbox_id)
-            .fetch_one(&mut *read_tx)
-            .await
-            .unwrap();
+        let outbox_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM outbox_events WHERE event_id = $1)")
+                .bind(&outbox_id)
+                .fetch_one(&mut *read_tx)
+                .await
+                .unwrap();
         assert!(outbox_exists);
 
         read_tx.commit().await.unwrap();
@@ -335,14 +355,21 @@ async fn test_atomicity_rollback_when_audit_fails() {
 
         // Pre-seed the audit ID
         let mut seed_tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut seed_tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut seed_tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
         let seed_audit = sample_audit_event(&duplicate_audit_id, &ctx.org_a_id_str);
-        ctx.store.record_iam_audit_tx(&mut seed_tx, &seed_audit).await.unwrap();
+        ctx.store
+            .record_iam_audit_tx(&mut seed_tx, &seed_audit)
+            .await
+            .unwrap();
         seed_tx.commit().await.unwrap();
 
         // Now start authoritative transaction that tries to re-insert the same audit ID
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
 
         let res_id = format!("res_atomicity_fail_{}", uuid::Uuid::new_v4().simple());
         sqlx::query("INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)")
@@ -364,15 +391,21 @@ async fn test_atomicity_rollback_when_audit_fails() {
 
         // Verify business resource was NOT committed
         let mut check_tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut check_tx, &ctx.org_a_scope).await.unwrap();
-
-        let resource_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
-            .bind(&res_id)
-            .fetch_one(&mut *check_tx)
+        set_transaction_tenant_context(&mut check_tx, &ctx.org_a_scope)
             .await
             .unwrap();
 
-        assert!(!resource_exists, "Business mutation MUST roll back when audit write fails");
+        let resource_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
+                .bind(&res_id)
+                .fetch_one(&mut *check_tx)
+                .await
+                .unwrap();
+
+        assert!(
+            !resource_exists,
+            "Business mutation MUST roll back when audit write fails"
+        );
         check_tx.commit().await.unwrap();
     })
     .await;
@@ -385,18 +418,25 @@ async fn test_atomicity_rollback_when_outbox_fails() {
 
         // Pre-seed an outbox event with this deduplication key
         let mut seed_tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut seed_tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut seed_tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
         let seed_outbox = sample_outbox_event(
             &format!("evt_seed_{}", uuid::Uuid::new_v4().simple()),
             &duplicate_dedup_key,
             &ctx.org_a_id_str,
         );
-        ctx.store.enqueue_outbox_tx(&mut seed_tx, &seed_outbox).await.unwrap();
+        ctx.store
+            .enqueue_outbox_tx(&mut seed_tx, &seed_outbox)
+            .await
+            .unwrap();
         seed_tx.commit().await.unwrap();
 
         // Transaction attempts business mutation + audit + duplicate outbox deduplication key
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
 
         let res_id = format!("res_outbox_fail_{}", uuid::Uuid::new_v4().simple());
         sqlx::query("INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)")
@@ -410,7 +450,10 @@ async fn test_atomicity_rollback_when_outbox_fails() {
 
         let audit_id = format!("evt_audit_outbox_fail_{}", uuid::Uuid::new_v4().simple());
         let audit = sample_audit_event(&audit_id, &ctx.org_a_id_str);
-        ctx.store.record_iam_audit_tx(&mut tx, &audit).await.unwrap();
+        ctx.store
+            .record_iam_audit_tx(&mut tx, &audit)
+            .await
+            .unwrap();
 
         let dup_outbox = sample_outbox_event(
             &format!("evt_outbox_fail_{}", uuid::Uuid::new_v4().simple()),
@@ -419,27 +462,40 @@ async fn test_atomicity_rollback_when_outbox_fails() {
         );
         let outbox_res = ctx.store.enqueue_outbox_tx(&mut tx, &dup_outbox).await;
 
-        assert!(outbox_res.is_err(), "Duplicate deduplication key must fail outbox enqueue");
+        assert!(
+            outbox_res.is_err(),
+            "Duplicate deduplication key must fail outbox enqueue"
+        );
 
         tx.rollback().await.unwrap();
 
         // Verify business resource AND audit record are both absent
         let mut check_tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut check_tx, &ctx.org_a_scope).await.unwrap();
-
-        let res_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
-            .bind(&res_id)
-            .fetch_one(&mut *check_tx)
+        set_transaction_tenant_context(&mut check_tx, &ctx.org_a_scope)
             .await
             .unwrap();
-        assert!(!res_exists, "Business mutation MUST roll back when outbox write fails");
 
-        let audit_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM iam_audit_records WHERE event_id = $1)")
-            .bind(&audit_id)
-            .fetch_one(&mut *check_tx)
-            .await
-            .unwrap();
-        assert!(!audit_exists, "Audit write MUST roll back when outbox write fails");
+        let res_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tenant_resources WHERE id = $1)")
+                .bind(&res_id)
+                .fetch_one(&mut *check_tx)
+                .await
+                .unwrap();
+        assert!(
+            !res_exists,
+            "Business mutation MUST roll back when outbox write fails"
+        );
+
+        let audit_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM iam_audit_records WHERE event_id = $1)")
+                .bind(&audit_id)
+                .fetch_one(&mut *check_tx)
+                .await
+                .unwrap();
+        assert!(
+            !audit_exists,
+            "Audit write MUST roll back when outbox write fails"
+        );
 
         check_tx.commit().await.unwrap();
     })

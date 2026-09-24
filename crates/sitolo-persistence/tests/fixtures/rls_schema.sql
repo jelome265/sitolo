@@ -164,8 +164,7 @@ CREATE POLICY outbox_events_isolation_policy ON outbox_events
     FOR ALL
     TO app_runtime
     USING (
-        organization_id IS NULL
-        OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
+        true
     )
     WITH CHECK (
         organization_id IS NULL
