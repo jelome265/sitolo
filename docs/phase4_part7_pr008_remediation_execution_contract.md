@@ -6,9 +6,8 @@ This execution contract records the non-negotiable verification gates and test e
 
 ## Commit & Evidence Metadata
 
-- **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
-- **Workflow Run ID**: `35961345937`
-- **Workflow Job ID**: `107510382280`
+- **Commit SHA**: `8be9b5361878a811c054056a73fdf971deb1fddb`
+- **Workflow Run ID**: `35963177443`
 - **Workflow Job Name**: `verify`
 - **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
@@ -53,26 +52,26 @@ test test_catalog_rls_policy_metadata ... ok
 test test_catalog_runtime_role_privileges ... ok
 test test_cross_tenant_branch_binding_denial ... ok
 test test_connection_pool_context_leakage_and_rollback_safety ... ok
-test test_direct_db_query_without_application_predicate ... ok
 test test_concurrent_tenant_isolation_reads_and_writes ... ok
-test test_end_to_end_application_and_db_composition ... ok
+test test_direct_db_query_without_application_predicate ... ok
 test test_missing_tenant_context_fails_closed ... ok
 test test_invalid_tenant_context_fails_closed ... ok
+test test_end_to_end_application_and_db_composition ... ok
 test test_negative_ownership_changing_update_relationally_valid ... ok
 test test_negative_tenant_a_cannot_delete_b ... ok
 test test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid ... ok
 test test_negative_tenant_a_cannot_read_b ... ok
 test test_negative_tenant_a_cannot_update_b ... ok
-test test_negative_unknown_resource_update_fails_closed ... ok
 test test_negative_unknown_resource_delete_fails_closed ... ok
 test test_negative_unknown_resource_does_not_bypass_scope ... ok
+test test_negative_unknown_resource_update_fails_closed ... ok
 test test_positive_tenant_a_creates_a ... ok
 test test_positive_tenant_a_deletes_a ... ok
 test test_positive_tenant_a_reads_a ... ok
 test test_positive_tenant_a_updates_a ... ok
 test test_positive_tenant_b_creates_b ... ok
-test test_positive_tenant_b_deletes_b ... ok
 test test_positive_tenant_b_reads_b ... ok
+test test_positive_tenant_b_deletes_b ... ok
 test test_positive_tenant_b_updates_b ... ok
 test test_setup_failure_injection_cleans_up_schema ... ok
 
