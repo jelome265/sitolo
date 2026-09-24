@@ -5,15 +5,14 @@
 //! semantic boundary that application code depends on (§51).
 #![forbid(unsafe_code)]
 
+pub mod audit_outbox;
 mod memory;
 mod ports;
-#[cfg(any(test, feature = "test-support"))]
 pub mod postgres;
-#[cfg(not(any(test, feature = "test-support")))]
-pub(crate) mod postgres;
 mod runtime;
 mod tenancy;
 
+pub use audit_outbox::{AuditOutboxDatabase, AuditOutboxStore, PgAuditOutboxStore};
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,

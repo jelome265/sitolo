@@ -10,3 +10,12 @@ name = "sitolo-worker"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
+sitolo-audit = { path = "../../crates/sitolo-audit" }
+sitolo-events = { path = "../../crates/sitolo-events" }
+sitolo-persistence = { path = "../../crates/sitolo-persistence" }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

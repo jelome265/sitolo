@@ -2,7 +2,8 @@
 //!
 //! Owns durable audit semantics. Logs are not a substitute for audit records
 //! (Phase 1 specification, §5.9). Phase 3 specification, §37: authentication
-//! is security-sensitive and must emit structured evidence.
+//! is security-sensitive and must emit structured evidence. Phase 4 Part 8:
+//! IAM and security audit events.
 //!
 //! This crate owns the audit event catalogue, the record shape, and the
 //! recorder port. In-memory and PostgreSQL implementations live in
@@ -10,8 +11,10 @@
 #![forbid(unsafe_code)]
 
 mod event;
+mod iam_event;
 
 pub use event::{
     AuditError, AuditRecorder, AuditRequirement, AuthEventName, AuthenticationEvent, EventResult,
     InMemoryAuditSink,
 };
+pub use iam_event::{IamAuditEvent, IamAuditEventName};

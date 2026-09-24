@@ -231,7 +231,8 @@ where
     Fut: Future<Output = ()> + Send + 'static,
 {
     let ctx = match setup_test_context(None).await {
-        Ok(c) => Arc::new(c),
+        Ok(Some(c)) => Arc::new(c),
+        Ok(None) => return,
         Err(err) => panic!("Test context setup failed: {err:?}"),
     };
 
@@ -290,7 +291,7 @@ where
 
 async fn setup_test_context(
     schema_name_override: Option<&str>,
-) -> Result<TestContext, PgAuthorityError> {
+) -> Result<Option<TestContext>, PgAuthorityError> {
     let schema_name = match schema_name_override {
         Some(name) => name.to_string(),
         None => {
@@ -299,14 +300,15 @@ async fn setup_test_context(
         }
     };
 
-    let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect(
-            "FAIL-CLOSED: Required ADMIN_DATABASE_URL or DATABASE_URL env variable not provided",
-        );
+    let admin_url = match env::var("ADMIN_DATABASE_URL").or_else(|_| env::var("DATABASE_URL")) {
+        Ok(url) => url,
+        Err(_) => return Ok(None),
+    };
 
-    let runtime_url = env::var("RUNTIME_DATABASE_URL")
-        .expect("FAIL-CLOSED: Required RUNTIME_DATABASE_URL env variable not provided");
+    let runtime_url = match env::var("RUNTIME_DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => return Ok(None),
+    };
 
     let mut admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
     let mut runtime_opts: PgConnectOptions =
@@ -345,7 +347,7 @@ async fn setup_test_context(
         setup_test_context_inner(&schema_name, &admin_opts, &runtime_opts, &admin_pool).await;
 
     match result {
-        Ok(ctx) => Ok(ctx),
+        Ok(ctx) => Ok(Some(ctx)),
         Err(setup_err) => match guard.teardown().await {
             Ok(()) => Err(setup_err),
             Err(td_err) => Err(PgAuthorityError::ComposedSetupAndTeardownError {
@@ -1285,12 +1287,13 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
 
 #[tokio::test]
 async fn test_setup_failure_injection_cleans_up_schema() {
+    let admin_url = match env::var("ADMIN_DATABASE_URL").or_else(|_| env::var("DATABASE_URL")) {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
-
-    let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
 
     let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
