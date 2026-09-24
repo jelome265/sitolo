@@ -26,6 +26,10 @@ use tokio::task::JoinSet;
 
 static MIGRATIONS_INIT: OnceCell<()> = OnceCell::const_new();
 
+tokio::task_local! {
+    static INJECT_SETUP_FAILURE: bool;
+}
+
 /// Test-harness tenant resource entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantResource {
@@ -226,7 +230,7 @@ where
     F: FnOnce(Arc<TestContext>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let ctx = match setup_test_context().await {
+    let ctx = match setup_test_context(None).await {
         Ok(c) => Arc::new(c),
         Err(err) => panic!("Test context setup failed: {err:?}"),
     };
@@ -284,9 +288,16 @@ where
     }
 }
 
-async fn setup_test_context() -> Result<TestContext, PgAuthorityError> {
-    let schema_id = uuid::Uuid::new_v4().simple().to_string();
-    let schema_name = format!("test_schema_{schema_id}");
+async fn setup_test_context(
+    schema_name_override: Option<&str>,
+) -> Result<TestContext, PgAuthorityError> {
+    let schema_name = match schema_name_override {
+        Some(name) => name.to_string(),
+        None => {
+            let schema_id = uuid::Uuid::new_v4().simple().to_string();
+            format!("test_schema_{schema_id}")
+        }
+    };
 
     let admin_url = env::var("ADMIN_DATABASE_URL")
         .or_else(|_| env::var("DATABASE_URL"))
@@ -354,6 +365,10 @@ async fn setup_test_context_inner(
     // Apply Part 7 schema inside search_path
     let schema_sql = include_str!("fixtures/rls_schema.sql");
     sqlx::raw_sql(schema_sql).execute(admin_pool).await?;
+
+    if INJECT_SETUP_FAILURE.try_with(|v| *v).unwrap_or(false) {
+        return Err(PgAuthorityError::SecurityViolation);
+    }
 
     // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
@@ -1284,8 +1299,19 @@ async fn test_setup_failure_injection_cleans_up_schema() {
         .await
         .unwrap();
 
+    // Verify schema does not exist before
+    let exists_before: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+            .bind(&schema_name)
+            .fetch_one(&admin_pool)
+            .await
+            .unwrap();
+    assert!(!exists_before, "Schema must not exist before setup");
+
     // Execute setup error path which creates schema and executes cleanup on error
-    let setup_res = setup_test_context_failing(&schema_name).await;
+    let setup_res = INJECT_SETUP_FAILURE.scope(true, async {
+        setup_test_context(Some(&schema_name)).await
+    }).await;
     assert!(
         setup_res.is_err(),
         "Failing setup context must return setup error"
@@ -1302,61 +1328,4 @@ async fn test_setup_failure_injection_cleans_up_schema() {
         !exists_after,
         "Schema must be CASCADE dropped by setup_test_context error handling"
     );
-}
-
-async fn setup_test_context_failing(schema_name: &str) -> Result<TestContext, PgAuthorityError> {
-    let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
-
-    let runtime_url =
-        env::var("RUNTIME_DATABASE_URL").expect("Required RUNTIME_DATABASE_URL not provided");
-
-    let mut admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
-    let mut runtime_opts: PgConnectOptions =
-        runtime_url.parse().expect("Invalid runtime database URL");
-
-    admin_opts = admin_opts.options([("search_path", schema_name)]);
-    runtime_opts = runtime_opts.options([("search_path", schema_name)]);
-
-    let admin_pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
-        .connect_with(admin_opts.clone())
-        .await?;
-
-    let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
-    sqlx::raw_sql(&create_schema_sql)
-        .execute(&admin_pool)
-        .await?;
-
-    let guard = SchemaGuard {
-        schema_name: schema_name.to_string(),
-        admin_pool: admin_pool.clone(),
-    };
-
-    let result =
-        setup_test_context_inner_failing(schema_name, &admin_opts, &runtime_opts, &admin_pool)
-            .await;
-
-    match result {
-        Ok(ctx) => Ok(ctx),
-        Err(setup_err) => match guard.teardown().await {
-            Ok(()) => Err(setup_err),
-            Err(td_err) => Err(PgAuthorityError::ComposedSetupAndTeardownError {
-                setup_error: Box::new(setup_err),
-                teardown_error: Box::new(td_err),
-            }),
-        },
-    }
-}
-
-async fn setup_test_context_inner_failing(
-    _schema_name: &str,
-    _admin_opts: &PgConnectOptions,
-    _runtime_opts: &PgConnectOptions,
-    admin_pool: &sqlx::PgPool,
-) -> Result<TestContext, PgAuthorityError> {
-    let invalid_sql = "CREATE TABLE invalid_table (id INT PRIMARY KEY, val INVALID_TYPE_NAME_XYZ)";
-    sqlx::raw_sql(invalid_sql).execute(admin_pool).await?;
-    Err(PgAuthorityError::SecurityViolation)
 }
