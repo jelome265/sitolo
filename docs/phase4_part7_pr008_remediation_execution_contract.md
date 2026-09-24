@@ -6,9 +6,10 @@ This execution contract records the non-negotiable verification gates and test e
 
 ## Commit & Evidence Metadata
 
-- **Commit SHA**: `4ea642b3163ed8f0cce87482b0bcb1f7b7017cd8`
-- **Workflow Run ID**: `35926529780`
-- **Workflow Job ID**: `107402831779`
+- **Commit SHA (PR Implementation Head)**: `fca2417cc5594db201eafb02d255f4070d46fae7`
+- **Workflow Merge Ref**: `2cad50062111e6fb3c7c042f82e4433233467ed9` (Merge commit of `fca2417` into PR base)
+- **Workflow Run ID**: `35954086334`
+- **Workflow Job ID**: `107488579244`
 - **Workflow Job Name**: `verify`
 - **Workflow Artifact Status**: No release artifacts were configured or uploaded for the verification build; test execution and catalog proofs run dynamically inside isolated PostgreSQL schemas.
 
