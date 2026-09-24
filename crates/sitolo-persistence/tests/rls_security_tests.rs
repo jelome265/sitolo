@@ -30,7 +30,6 @@ tokio::task_local! {
     static INJECT_SETUP_FAILURE: bool;
 }
 
-
 /// Test-harness tenant resource entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantResource {
@@ -289,7 +288,9 @@ where
     }
 }
 
-async fn setup_test_context(schema_name_override: Option<&str>) -> Result<TestContext, PgAuthorityError> {
+async fn setup_test_context(
+    schema_name_override: Option<&str>,
+) -> Result<TestContext, PgAuthorityError> {
     let schema_name = match schema_name_override {
         Some(name) => name.to_string(),
         None => {
