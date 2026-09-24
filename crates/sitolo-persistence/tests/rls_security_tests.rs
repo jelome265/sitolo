@@ -26,10 +26,6 @@ use tokio::task::JoinSet;
 
 static MIGRATIONS_INIT: OnceCell<()> = OnceCell::const_new();
 
-tokio::task_local! {
-    static INJECT_SETUP_FAILURE: bool;
-}
-
 /// Test-harness tenant resource entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantResource {
@@ -230,7 +226,7 @@ where
     F: FnOnce(Arc<TestContext>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let ctx = match setup_test_context(None).await {
+    let ctx = match setup_test_context().await {
         Ok(c) => Arc::new(c),
         Err(err) => panic!("Test context setup failed: {err:?}"),
     };
@@ -288,16 +284,9 @@ where
     }
 }
 
-async fn setup_test_context(
-    schema_name_override: Option<&str>,
-) -> Result<TestContext, PgAuthorityError> {
-    let schema_name = match schema_name_override {
-        Some(name) => name.to_string(),
-        None => {
-            let schema_id = uuid::Uuid::new_v4().simple().to_string();
-            format!("test_schema_{schema_id}")
-        }
-    };
+async fn setup_test_context() -> Result<TestContext, PgAuthorityError> {
+    let schema_id = uuid::Uuid::new_v4().simple().to_string();
+    let schema_name = format!("test_schema_{schema_id}");
 
     let admin_url = env::var("ADMIN_DATABASE_URL")
         .or_else(|_| env::var("DATABASE_URL"))
@@ -365,10 +354,6 @@ async fn setup_test_context_inner(
     // Apply Part 7 schema inside search_path
     let schema_sql = include_str!("fixtures/rls_schema.sql");
     sqlx::raw_sql(schema_sql).execute(admin_pool).await?;
-
-    if INJECT_SETUP_FAILURE.try_with(|v| *v).unwrap_or(false) {
-        return Err(PgAuthorityError::SecurityViolation);
-    }
 
     // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
