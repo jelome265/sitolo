@@ -27,11 +27,32 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: sitolo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install mandatory security tooling
+        run: |
+          cargo install cargo-deny --locked || true
+          cargo install cargo-audit --locked || true
       - name: Run canonical verification
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
+          RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
         run: ./scripts/ci/verify

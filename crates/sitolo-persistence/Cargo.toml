@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 async-trait.workspace = true
 sha2.workspace = true
@@ -14,7 +18,10 @@ sitolo-authz = { path = "../sitolo-authz" }
 sitolo-config.workspace = true
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-security.workspace = true
+sitolo-tenancy = { path = "../sitolo-tenancy" }
+sqlx.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+uuid.workspace = true
