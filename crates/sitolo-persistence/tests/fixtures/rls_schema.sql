@@ -151,10 +151,12 @@ CREATE POLICY iam_audit_records_isolation_policy ON iam_audit_records
     TO app_runtime
     USING (
         organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
         OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
     )
     WITH CHECK (
         organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
         OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
     );
 
@@ -168,5 +170,6 @@ CREATE POLICY outbox_events_isolation_policy ON outbox_events
     )
     WITH CHECK (
         organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
         OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
     );
