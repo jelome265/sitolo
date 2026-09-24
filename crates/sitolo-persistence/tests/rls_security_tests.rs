@@ -1309,9 +1309,9 @@ async fn test_setup_failure_injection_cleans_up_schema() {
     assert!(!exists_before, "Schema must not exist before setup");
 
     // Execute setup error path which creates schema and executes cleanup on error
-    let setup_res = INJECT_SETUP_FAILURE.scope(true, async {
-        setup_test_context(Some(&schema_name)).await
-    }).await;
+    let setup_res = INJECT_SETUP_FAILURE
+        .scope(true, async { setup_test_context(Some(&schema_name)).await })
+        .await;
     assert!(
         setup_res.is_err(),
         "Failing setup context must return setup error"
