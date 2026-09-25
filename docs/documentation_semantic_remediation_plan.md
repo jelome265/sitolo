@@ -50,14 +50,14 @@ The inventory must distinguish a true missing target from a reference that is in
 The repository's existing hierarchy remains the governing order:
 
 ```text
-1. Applicable law / regulator requirement
-2. Current external provider contract
-3. Approved product / business decision
-4. Security architecture and security implementation contract
-5. Domain model
-6. Database / API / integration specifications
-7. Testing / observability / deployment specifications
-8. ADRs
+1. Applicable law and regulatory requirements
+2. Signed external-provider contracts and current provider behavior
+3. Security architecture invariants
+4. System architecture invariants
+5. Domain model decisions
+6. Database design decisions
+7. Product requirements
+8. UI assumptions
 9. Implementation convenience
 ```
 
