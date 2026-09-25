@@ -6,9 +6,9 @@ One job: produce reproducible evidence that the approved implementation and re-a
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Latest audit | ../06-audit/output/ | Latest report | Required findings state |
-| Remediation | ../07-remediate/output/ | Latest report when remediation occurred | Corrections and proof |
-| Implementation | ../05-implement/output/ | Implementation report | Claimed change |
+| Latest audit | ../06-audit/output/[run-slug]-audit.md | Full file | Required findings state |
+| Remediation | ../07-remediate/output/[run-slug]-remediation.md | Full file when remediation occurred | Corrections and proof |
+| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Claimed change |
 | Governance | ../../../../agent.md | Definitions of done | Verification requirements |
 | Project docs | ../../../../docs/README.md | Applicable testing/deployment docs | Required evidence |
 | Verification guide | references/verification.md | Full file | Gate selection |
