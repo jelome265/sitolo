@@ -1,6 +1,7 @@
 ---
 type: object
 status: verified
+universe: live
 cluster: platform
 source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
 source: crates/sitolo-config/src/lib.rs
