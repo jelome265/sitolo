@@ -6,9 +6,9 @@ One job: turn selected requirements and investigation evidence into an implement
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/ | Approved brief | Scope |
-| Research | ../02-research/output/ | Research memo | External constraints |
-| Investigation | ../03-investigate/output/ | Findings | Existing-state evidence |
+| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Approved brief |
+| Research | ../02-research/output/[run-slug]-research.md | Full file | Research memo |
+| Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state evidence |
 | Governance | ../../../../agent.md | Relevant definitions of done and rules | Non-negotiable constraints |
 | Project docs | ../../../../docs/README.md | Documents identified by investigation | Design authority |
 | Plan guide | references/plan-contract.md | Full file | Plan structure |
