@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Validate relative Markdown links and document references.
+
+Scope is intentionally conservative: explicit Markdown links are always checked;
+backtick .md references are checked only from files under docs/ where the corpus
+uses document-local/root-relative filenames as contracts.
+"""
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+DOCS = ROOT / "docs"
+SKIP_PARTS = {".git", "target"}
+MD = re.compile(r"(?<![\w])([A-Za-z0-9_.-]+\.md)(?![\w])")
+LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
+
+errors: list[str] = []
+
+
+def ignored(path: pathlib.Path) -> bool:
+    return any(part in SKIP_PARTS for part in path.parts)
+
+
+def resolve(source: pathlib.Path, ref: str) -> pathlib.Path | None:
+    if not ref or ref.startswith(("http://", "https://", "mailto:", "#")):
+        return None
+    if ref.startswith("/"):
+        return ROOT / ref.lstrip("/")
+    return (source.parent / ref).resolve()
+
+
+for source in ROOT.rglob("*.md"):
+    if ignored(source):
+        continue
+    text = source.read_text(encoding="utf-8", errors="replace")
+
+    for ref in LINK.findall(text):
+        target = resolve(source, ref)
+        if target is not None and not target.exists():
+            errors.append(f"{source.relative_to(ROOT)}: broken Markdown link -> {ref}")
+
+    # The docs corpus uses bare filenames as internal contract references.
+    # Root-level governance files use prose names without path semantics, so do
+    # not reinterpret those as filesystem references.
+    if source.is_relative_to(DOCS):
+        for ref in sorted(set(MD.findall(text))):
+            if ref in {source.name}:
+                continue
+            target = (source.parent / ref).resolve()
+            if not target.exists():
+                # Also accept docs-root references from nested commercial docs
+                # only when an explicit ../ path is used; bare names are local.
+                errors.append(f"{source.relative_to(ROOT)}: missing document reference -> {ref}")
+
+if errors:
+    print("DOCUMENT REFERENCE CHECK FAILED")
+    for error in errors:
+        print(f"- {error}")
+    sys.exit(1)
+
+print("DOCUMENT REFERENCE CHECK PASSED")
