@@ -113,12 +113,12 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
     admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
     runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
 
-    let mut worker_opts: sqlx::postgres::PgConnectOptions = runtime_url.parse().expect("Invalid runtime database URL");
+    let mut worker_opts: sqlx::postgres::PgConnectOptions =
+        runtime_url.parse().expect("Invalid runtime database URL");
     worker_opts = worker_opts
         .username("app_worker")
         .password("test")
         .options([("search_path", schema_name.as_str())]);
-
 
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -271,7 +271,6 @@ fn sample_audit_event(id: &str, org_id: &str) -> IamAuditEvent {
         metadata: None,
     }
 }
-
 
 async fn application_activate_organization(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -698,19 +697,31 @@ async fn test_lease_race_and_reclaim() {
     run_audit_outbox_test(|ctx| async move {
         // Enqueue an event
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope).await.unwrap();
+        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
+            .await
+            .unwrap();
 
         let audit_id = format!("evt_race_{}", uuid::Uuid::new_v4().simple());
         let outbox_id = format!("evt_outbox_race_{}", uuid::Uuid::new_v4().simple());
         
-        application_activate_organization(&mut tx, &ctx.store, &ctx.org_a_id_str, &audit_id, &outbox_id)
-            .await
-            .unwrap();
+        application_activate_organization(
+            &mut tx,
+            &ctx.store,
+            &ctx.org_a_id_str,
+            &audit_id,
+            &outbox_id,
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
 
         // Worker A claims the event
         let now = std::time::SystemTime::now();
-        let claimed = ctx.store.claim_outbox_events(1, std::time::Duration::from_secs(1), now).await.unwrap();
+        let claimed = ctx
+            .store
+            .claim_outbox_events(1, std::time::Duration::from_secs(1), now)
+            .await
+            .unwrap();
         assert_eq!(claimed.len(), 1);
         let token_a = claimed[0].claim_token.clone().unwrap();
 
@@ -719,17 +730,28 @@ async fn test_lease_race_and_reclaim() {
 
         // Worker B claims the same event (stale lease recovery)
         let now2 = std::time::SystemTime::now();
-        let claimed_b = ctx.store.claim_outbox_events(1, std::time::Duration::from_secs(60), now2).await.unwrap();
+        let claimed_b = ctx
+            .store
+            .claim_outbox_events(1, std::time::Duration::from_secs(60), now2)
+            .await
+            .unwrap();
         assert_eq!(claimed_b.len(), 1);
         let token_b = claimed_b[0].claim_token.clone().unwrap();
         
         assert_ne!(token_a, token_b, "Worker B should get a new claim token");
 
         // Worker A tries to mark published with stale token
-        let stale_res = ctx.store.mark_published(&claimed[0].event_id, &token_a, now2).await;
+        let stale_res = ctx
+            .store
+            .mark_published(&claimed[0].event_id, &token_a, now2)
+            .await;
         assert!(stale_res.is_err(), "Stale worker A should be rejected");
 
         // Worker B marks published with valid token
-        ctx.store.mark_published(&claimed_b[0].event_id, &token_b, now2).await.unwrap();
-    }).await;
+        ctx.store
+            .mark_published(&claimed_b[0].event_id, &token_b, now2)
+            .await
+            .unwrap();
+    })
+    .await;
 }
