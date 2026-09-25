@@ -1,3 +1,9 @@
+---
+artifact_type: implementation-report
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Implementation Report
 
 ## Implemented
@@ -17,3 +23,4 @@
 ## Operational impact
 
 ## Known limitations
+
