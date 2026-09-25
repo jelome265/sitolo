@@ -35,7 +35,9 @@ A filename resolving successfully does not establish authority.
 Reference integrity includes:
 
 1. explicit Markdown links resolve from the referring file;
-2. path-qualified document references resolve deterministically;
+2. Markdown reference-style links and wikilinks resolve deterministically;
+3. HTML `href`/`src` Markdown references are checked when present;
+4. path-qualified document references resolve deterministically;
 3. bare document names resolve locally or to exactly one repository-wide basename;
 4. ambiguous bare basenames are rejected;
 5. references escaping the repository are rejected;
@@ -56,7 +58,7 @@ python3 scripts/ci/check-doc-references
 python3 scripts/ci/check-doc-references --inventory
 ```
 
-The checker is a reference-integrity gate, not an authority engine.
+The checker is a reference-integrity gate, not an authority engine. CI must fail if the generated inventory file is empty or lacks the inventory summary line.
 
 ## Semantic audit rule
 
