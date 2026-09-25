@@ -75,7 +75,8 @@ Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical impleme
 |---|---|
 | [`phase4_part8_audit_outbox_implementation_contract.md`](phase4_part8_audit_outbox_implementation_contract.md) | Binding Part 8 audit/outbox target contract |
 | [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) | Current PR-009 implementation/status snapshot |
-| [`phase4_part8_pr009_remediation_execution_contract.md`](phase4_part8_pr009_remediation_execution_contract.md) | Detailed dated PR-009 remediation execution snapshot |
+| [`phase4_part8_pr009_remediation_implementation_instructions.md`](phase4_part8_pr009_remediation_implementation_instructions.md) | Superseded historical PR-009 review |
+| [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) | Current PR-009 implementation/status snapshot |
 
 ## External standards
 
