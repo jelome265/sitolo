@@ -8,7 +8,7 @@
 **Primary clients:** Mobile application + desktop application; web is a supporting acquisition/administration surface, not the primary operating product
 
 **Document status:** Enterprise business-model target; release scope is staged; all commercial assumptions remain hypotheses until validated
-**Commercial validation:** operationalized by [Commercial Validation Plan](commercial_validation_plan.md); no segment, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
+**Commercial validation:** operationalized by [Commercial Validation Plan](../02_validation/commercial_validation_plan.md); no segment, pricing, channel, retention, or PMF assumption is treated as validated without observed evidence.
 **Segment strategy:** formalized in [Universal Segment Strategy, Duka Economics & Market Coverage Doctrine](segment_strategy_and_duka_economics.md); product scope remains Duka-to-enterprise while commercial learning remains segment-aware.
 
 **Prepared:** 2026-09-03
@@ -4985,7 +4985,7 @@ ACQUISITION -50%
 
 A business model that survives only the base case is fragile.
 
-Detailed PMF and economic thresholds are defined in [Commercial Validation Plan](commercial_validation_plan.md).
+Detailed PMF and economic thresholds are defined in [Commercial Validation Plan](../02_validation/commercial_validation_plan.md).
 
 ---
 
@@ -5447,7 +5447,7 @@ Never present a scenario as a forecast or a roadmap item as a current feature.
 
 The commercial assumptions register remains a hypothesis register.
 
-The first validation portfolio is now operationalized by [Commercial Validation Plan](commercial_validation_plan.md):
+The first validation portfolio is now operationalized by [Commercial Validation Plan](../02_validation/commercial_validation_plan.md):
 
 1. Trial structure affects conversion economics.
 2. Price materially affects conversion and contribution.
@@ -5492,7 +5492,7 @@ DECISION
 FOLLOW_UP
 ~~~
 
-The full operating contract is defined in [Commercial Validation Plan](commercial_validation_plan.md).
+The full operating contract is defined in [Commercial Validation Plan](../02_validation/commercial_validation_plan.md).
 
 No “successful” label without evidence against the pre-registered pass criteria.
 
@@ -5517,7 +5517,7 @@ The 12 experiments remain the canonical first validation portfolio:
 | CV-11 | Premium support | Will customers pay for higher service levels above incremental cost? |
 | CV-12 | Enterprise pilot economics | Can enterprise sales convert without destructive custom work? |
 
-Sample sizes, experimental cells, thresholds, CAC accounting, and PMF gates are defined in [Commercial Validation Plan](commercial_validation_plan.md).
+Sample sizes, experimental cells, thresholds, CAC accounting, and PMF gates are defined in [Commercial Validation Plan](../02_validation/commercial_validation_plan.md).
 
 ---
 
@@ -6275,7 +6275,7 @@ The governing commercial discipline remains:
 
 > **Win with operations. Retain with control. Expand with complexity. Monetize enterprise needs. Build financial partnerships only after the software business is strong.**
 
-The executable evidence contract is [Commercial Validation Plan](commercial_validation_plan.md).
+The executable evidence contract is [Commercial Validation Plan](../02_validation/commercial_validation_plan.md).
 
 ---
 
@@ -7958,7 +7958,7 @@ Avoid over-serving this segment with capabilities that create more cost than val
 
 The business model remains the strategic commercial baseline.
 
-The next commercial source of truth is [Commercial Validation Plan](commercial_validation_plan.md), which converts the business model's assumptions into measurable experiments and PMF gates.
+The next commercial source of truth is [Commercial Validation Plan](../02_validation/commercial_validation_plan.md), which converts the business model's assumptions into measurable experiments and PMF gates.
 
 The architecture must support commercial flexibility without hard-coding unvalidated pricing, ICP, or channel assumptions.
 
