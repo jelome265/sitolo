@@ -21,7 +21,8 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Historical dated correction record; re-verify external facts before using them as current |
 | [`phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`](phase4_part5_to_phase0_enterprise_audit_remediation_plan.md) | Historical Phase 4 Part 5 remediation artifact |
 | [`phase0-2_implementation_audit_and_remediation.md`](phase0-2_implementation_audit_and_remediation.md) | Historical Phase 0–2 / Phase 3-readiness audit |
-| [`phase4_part8_pr009_remediation_implementation_instructions.md`](phase4_part8_pr009_remediation_implementation_instructions.md) | Superseded PR-009 review; use the newer execution contract |
+| [`phase4_part8_pr009_remediation_implementation_instructions.md`](phase4_part8_pr009_remediation_implementation_instructions.md) | Superseded PR-009 review; historical evidence only |
+| [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) | Current PR-009 status pointer and closure gates |
 | [`business_model_design.md`](business_model_design.md) | Compatibility entry only; canonical business model lives in `commercial/01_strategy/business_model_design.md` |
 
 ## Core design corpus
@@ -66,7 +67,7 @@ Phase documents are normative requirements and implementation sequencing artifac
 | [`phase9_inventory_ledger_implementation.md`](phase9_inventory_ledger_implementation.md) | Inventory ledger target/implementation contract |
 | [`phase10_pos_sales_implementation.md`](phase10_pos_sales_implementation.md) | POS/sales target/implementation contract |
 
-Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence.
+Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence. PR-specific review documents are snapshots and must be checked against the current PR head.
 
 ## External integrations
 
