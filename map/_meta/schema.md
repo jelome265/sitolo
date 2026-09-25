@@ -10,6 +10,7 @@ Every object card uses YAML frontmatter:
 ---
 type: object
 status: stub | verified | stale
+universe: live | leftover | ghost
 cluster: <cluster>
 source_revision: <commit or dated revision>
 source: <repository path>
@@ -27,7 +28,7 @@ Required body sections:
 - Surfaces;
 - See.
 
-`status: verified` requires a current source revision and source citation. `stub` is the safe default when executable source evidence is insufficient.
+`status: verified` requires a current source revision and source citation. `stub` is the safe default when executable source evidence is insufficient. `universe: ghost` means the noun/process is named or filed but not wired into the current executable path.
 
 ## Process cards
 
@@ -37,6 +38,7 @@ Every process card uses YAML frontmatter:
 ---
 type: process
 status: stub | verified | stale
+universe: live | leftover | ghost
 source_revision: <commit or dated revision>
 source: <repository path or governing document>
 ---
