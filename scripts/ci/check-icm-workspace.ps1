@@ -67,7 +67,7 @@ for ($i = 0; $i -lt $STAGES.Count; $i++) {
       $fail = $true
     }
   }
-  if ($body -match "|s+../[^|]+/output/s+|") {
+  if ($body -match '\|\s+\.\./[^|]+/output/\s+\|') {
     Write-Error "ICM WORKSPACE VIOLATION: stage handoff must name exact artifact path: $context"
     $fail = $true
   }
