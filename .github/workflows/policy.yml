@@ -33,6 +33,11 @@ jobs:
         run: ./scripts/ci/check-workflow-policy
       - name: ICM workspace policy check
         run: bash ./scripts/ci/check-icm-workspace
+      - name: System Map generated-file check
+        run: |
+          bash ./scripts/ci/generate-system-map-routing
+          python3 ./scripts/ci/generate-system-map-index
+          git diff --exit-code -- map/AGENTS.md map/routing.md map/objects/_index.md
       - name: Documentation reference check
         run: python3 ./scripts/ci/check-doc-references
       - name: Documentation reference inventory
