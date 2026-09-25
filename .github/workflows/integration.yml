@@ -19,7 +19,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Run boundary and contract tests
-        run: cargo test --workspace --all-targets --all-features --locked
+        run: cargo test --workspace --all-targets --all-features --locked --exclude sitolo-persistence
       # F-018 scope-exception governance. This textual record is backed by
       # docs/testing_strategy.md ("PostgreSQL integration exception
       # SCOPE-EXC-001"), which names the owner, scope, review date, and the
