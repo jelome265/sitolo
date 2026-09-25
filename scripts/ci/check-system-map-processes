@@ -121,7 +121,7 @@ for process in "${process_files[@]}"; do
       continue
     }
     while IFS= read -r link; do
-      target="$(printf '%s' "$link" | sed -n 's/.*](\(.*\))/\1/p')"
+      target="$(printf '%s' "$link" | sed -n 's|.*](\(\.\./objects/[^)]*\.md\))|\1|p')"
       [[ -f "map/processes/$target" ]] || {
         echo "SYSTEM MAP PROCESS VIOLATION: broken object link: $process -> $target" >&2
         fail=1
