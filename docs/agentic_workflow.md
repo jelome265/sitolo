@@ -6,7 +6,7 @@ Reference: https://github.com/RinDig/Interpretable-Context-Methodology
 
 ## Instruction entry points
 
-Claude Code uses `CLAUDE.md` for repository guidance. Codex uses `AGENTS.md` as its discovered repository instruction file. Sitolo keeps `CLAUDE.md` as the canonical ICM router and `AGENTS.md` as the Codex entry point that routes into that same canonical policy. OpenAI's current Codex documentation confirms automatic `AGENTS.md` discovery and root-to-leaf instruction loading. citeturn830571view2turn830571view3
+Claude Code uses the repository root `../CLAUDE.md` for guidance. Codex uses the repository root `../AGENTS.md` as its discovered instruction file. Sitolo keeps `CLAUDE.md` as the canonical ICM router and `AGENTS.md` as the Codex entry point that routes into that same canonical policy. OpenAI's current Codex documentation confirms automatic `AGENTS.md` discovery and root-to-leaf instruction loading. citeturn830571view2turn830571view3
 
 ## Product phase vs ICM stage
 
