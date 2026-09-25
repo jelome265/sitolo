@@ -39,6 +39,8 @@ required=(
   "map/objects/_index.md"
   "map/processes/CONTEXT.md"
   "map/effects/CONTEXT.md"
+  "scripts/ci/generate-system-map-routing"
+  "scripts/ci/generate-system-map-index"
 )
 
 for path in "${required[@]}"; do
