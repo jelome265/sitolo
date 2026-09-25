@@ -6,11 +6,11 @@ One job: prepare the verified change for review and controlled integration.
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/ | Selected brief | Scope |
-| Plan | ../04-plan/output/ | Approved plan | Intended result |
-| Implementation | ../05-implement/output/ | Implementation report | Change summary |
-| Audit | ../06-audit/output/ | Latest report | Findings status |
-| Verification | ../08-verify/output/ | Verification report | Evidence |
+| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Scope |
+| Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended result |
+| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Change summary |
+| Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings status |
+| Verification | ../08-verify/output/[run-slug]-verification.md | Full file | Evidence |
 | Governance | ../../../../agent.md | Git and review rules | Delivery requirements |
 | Delivery guide | references/delivery.md | Full file | Handoff format |
 
