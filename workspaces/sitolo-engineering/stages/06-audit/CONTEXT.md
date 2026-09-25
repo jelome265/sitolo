@@ -6,9 +6,9 @@ One job: independently compare the implementation with its governing contract an
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/ | Selected brief | Scope |
-| Plan | ../04-plan/output/ | Approved plan | Intended behavior |
-| Implementation | ../05-implement/output/ | Implementation report | Claimed changes |
+| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Scope |
+| Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended behavior |
+| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Claimed changes |
 | Research | ../02-research/output/ | Research memo | External constraints |
 | Governance | ../../../../agent.md | Relevant sections | Engineering authority |
 | Project docs | ../../../../docs/README.md | Applicable contracts | Requirement evidence |
