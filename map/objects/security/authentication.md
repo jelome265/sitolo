@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: security-domain
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-auth/src/lib.rs
+source_citation: crates/sitolo-auth/src/lib.rs:30
+---
 # Authentication
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: security-domain
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ API authentication boundary, application services and security tests.
 ## See
 
 docs/phase3_identity_sessions_mfa_device_identity_implementation.md
+
