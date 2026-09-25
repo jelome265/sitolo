@@ -151,14 +151,14 @@ try {
     $context = Join-Path $coldRoot "$WORKSPACE\stages\$stage\CONTEXT.md"
     $context = Join-Path $coldRoot "workspace\sitolo-engineering\stages\$stage\CONTEXT.md"
     $output = Join-Path $coldRoot "workspace\sitolo-engineering\stages\$stage\output"
-    $matches = [regex]::Matches($body, "\.\./[0-9]{2}-[^ |\r\n]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md")
-    foreach ($match in $matches) {
-      $relative = $match.Value -replace "\[run-slug\]", $coldSlug
-      $resolved = Join-Path (Split-Path $context -Parent) $relative
-      if (-not (Test-Path $resolved -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: missing handoff before ${stage}: $relative" }
+    if ($i -gt 0) {
+      $matches = [regex]::Matches($body, "\.\./[0-9]{2}-[^ |\r\n]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md")
+      foreach ($match in $matches) {
+        $relative = $match.Value -replace "\[run-slug\]", $coldSlug
+        $resolved = Join-Path (Split-Path $context -Parent) $relative
+        if (-not (Test-Path $resolved -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: missing handoff before ${stage}: $relative" }
+      }
     }
-    $target = Join-Path $output ($coldSlug + "-" + $ARTIFACTS[$i] + ".md")
-    Copy-Item (Join-Path $coldRoot "$WORKSPACE\_templates\$($TEMPLATES[$i]).md") $target -Force
     Copy-Item (Join-Path $coldRoot "workspace\sitolo-engineering\_templates\$($TEMPLATES[$i]).md") $target -Force
 $artifact = $artifact -replace 'run_slug: "\[run-slug\]"', 'run_slug: "cold-walk"'
     $artifact = $artifact -replace "(?m)^status: draft$", "status: human-approved"
