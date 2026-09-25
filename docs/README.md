@@ -62,12 +62,20 @@ Phase documents are normative requirements and implementation sequencing artifac
 | [`phase4_tenant_organization_branch_iam_implementation.md`](phase4_tenant_organization_branch_iam_implementation.md) | Tenant/org/branch/IAM |
 | [`phase5_postgresql_schema_migrations_constraints_rls_implementation.md`](phase5_postgresql_schema_migrations_constraints_rls_implementation.md) | PostgreSQL schema/migrations/constraints/RLS |
 | [`phase6_authorization_engine_policy_enforcement_implementation.md`](phase6_authorization_engine_policy_enforcement_implementation.md) | Authorization engine/policy enforcement |
-| [`phase7_security_test_framework_implementation.md`](phase7_security_test_framework_implementation.md) | Security test framework |
+| [`phase7_security_test_framework_implementation.md`](phase7_security_test_framework_implementation.md) | Security test framework target/implementation contract |
 | [`phase8_product_catalogue_implementation.md`](phase8_product_catalogue_implementation.md) | Product catalogue target-state contract |
 | [`phase9_inventory_ledger_implementation.md`](phase9_inventory_ledger_implementation.md) | Inventory ledger target/implementation contract |
 | [`phase10_pos_sales_implementation.md`](phase10_pos_sales_implementation.md) | POS/sales target/implementation contract |
 
-Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence. PR-specific review documents are snapshots and must be checked against the current PR head.
+Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical implementation records; active work is represented by the current phase/PR status documents and the Part 8 binding contract. Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence. PR-specific review documents are snapshots and must be checked against the current PR head.
+
+## Active Phase 4 Part 8 work
+
+| Document | Purpose |
+|---|---|
+| [`phase4_part8_audit_outbox_implementation_contract.md`](phase4_part8_audit_outbox_implementation_contract.md) | Binding Part 8 audit/outbox target contract |
+| [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) | Current PR-009 implementation/status snapshot |
+| [`phase4_part8_pr009_remediation_execution_contract.md`](phase4_part8_pr009_remediation_execution_contract.md) | Detailed dated PR-009 remediation execution snapshot |
 
 ## External integrations
 
