@@ -160,11 +160,11 @@ try {
     $target = Join-Path $output ($coldSlug + "-" + $ARTIFACTS[$i] + ".md")
     Copy-Item (Join-Path $coldRoot "$WORKSPACE\_templates\$($TEMPLATES[$i]).md") $target -Force
     $artifact = Get-Content $target -Raw
-    $artifact = $artifact -replace "run_slug: \"\[run-slug\]\"", "run_slug: \"cold-walk\""
+$artifact = $artifact -replace 'run_slug: "\[run-slug\]"', 'run_slug: "cold-walk"'
     $artifact = $artifact -replace "(?m)^status: draft$", "status: human-approved"
     Set-Content $target $artifact -NoNewline
     if (-not (Test-Path $target -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: artifact not created: $target" }
-    if ($artifact -notmatch "(?m)^run_slug: \"cold-walk\"$" -or $artifact -notmatch "(?m)^status: human-approved$") { $fail = $true; Write-Error "ICM COLD WALK FAILED: synthetic human gate metadata missing: $target" }
+    if ($artifact -notmatch '(?m)^run_slug: "cold-walk"$' -or $artifact -notmatch '(?m)^status: human-approved$') { $fail = $true; Write-Error "ICM COLD WALK FAILED: synthetic human gate metadata missing: $target" }
   }
   $count = (Get-ChildItem "$coldRoot\$WORKSPACE\stages" -Recurse -File | Where-Object { $_.FullName -match "\\output\\" -and $_.Name -ne ".gitkeep" }).Count
   if ($count -ne 9) { $fail = $true; Write-Error "ICM COLD WALK FAILED: expected 9 artifacts, found $count" }
