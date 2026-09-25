@@ -1,9 +1,13 @@
+---
+type: object
+status: stub
+cluster: continuity
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-sync/src/lib.rs
+source_citation: crates/sitolo-sync/src/lib.rs:1
+---
 # Synchronization
 
-- type: object
-- status: stub
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: continuity
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Future clients, sync transport, integration tests and recovery tooling.
 ## See
 
 crates/sitolo-sync/src/lib.rs
+
