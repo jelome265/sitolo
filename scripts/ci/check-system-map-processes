@@ -60,8 +60,13 @@ for process in "${process_files[@]}"; do
     echo "SYSTEM MAP PROCESS VIOLATION: source_revision must contain a concrete commit SHA: $process -> $source_revision" >&2
     fail=1
   elif ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
-    echo "SYSTEM MAP PROCESS VIOLATION: source revision does not resolve: $process -> $source_revision" >&2
-    fail=1
+    # PR jobs intentionally use shallow checkout. Fetch only the exact
+    # immutable revision named by the card instead of requiring full history.
+    git fetch --no-tags --depth=1 origin "$source_sha" >/dev/null 2>&1 || true
+    if ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
+      echo "SYSTEM MAP PROCESS VIOLATION: source revision does not resolve after targeted fetch: $process -> $source_revision" >&2
+      fail=1
+    fi
   fi
 
   [[ -n "$source" ]] || {
