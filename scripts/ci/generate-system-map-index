@@ -14,7 +14,7 @@ for path in sorted(OBJECTS.rglob("*.md")):
     if path.name in {"CONTEXT.md", "_index.md"}:
         continue
     text = path.read_text(encoding="utf-8")
-    if "- type: object" not in text:
+    if not re.search(r"^type:\s*object\s*$", text, re.MULTILINE):
         continue
 
     title_match = re.search(r"^# (.+)$", text, re.MULTILINE)
