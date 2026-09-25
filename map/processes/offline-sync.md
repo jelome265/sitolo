@@ -1,3 +1,10 @@
+---
+type: process
+status: stub
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: docs/offline-sync.md
+---
+
 # Offline Command Synchronization
 
 - type: process
@@ -34,3 +41,4 @@ Static reporting views that do not consume synchronized state.
 ## See
 
 docs/sync_protocol.md
+
