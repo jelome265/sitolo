@@ -24,16 +24,13 @@ $required = @(
   "$WORKSPACE\shared\integration-context\CONTEXT.md",
   "$WORKSPACE\shared\phase-context\CONTEXT.md",
   "$WORKSPACE\_templates\CONTEXT.md",
-  "docs\icm_reference_integrity.md","docs\documention_semantic_remediation_plan.md",
+  "docs\icm_reference_integrity.md","docs\documentation_semantic_remediation_plan.md",
   "docs\current_implementation_status.md",
   "map\CLAUDE.md","map\AGENTS.md","map\routing.md","map\CONTEXT.md",
   "map\_meta\schema.md","map\_templates\object.md","map\_templates\process.md",
   "map\objects\CONTEXT.md","map\objects\_index.md","map\processes\CONTEXT.md","map\effects\CONTEXT.md",
   "scripts\ci\generate-system-map-routing","scripts\ci\generate-system-map-index"
 )
-
-# Correct the typo in the required-path list before evaluation.
-$required[$required.IndexOf("docs\documention_semantic_remediation_plan.md")] = "docs\documentation_semantic_remediation_plan.md"
 
 foreach ($path in $required) {
   if (-not (Test-Path $path -PathType Leaf)) {
