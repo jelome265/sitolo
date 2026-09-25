@@ -2,62 +2,110 @@
 
 Source of authority: [`agent.md`](../agent.md) at the repository root. When documents conflict, apply the source hierarchy defined there.
 
-## Governing / program
+## Governing / current-state documents
 
 | Document | Purpose |
 |---|---|
 | [`agent.md`](../agent.md) | Repository-wide engineering governance contract |
+| [`enterprise_audit_and_review.md`](enterprise_audit_and_review.md) | **Current-state** enterprise architecture, security, reliability and readiness assessment |
+| [`documentation_semantic_remediation_plan.md`](documentation_semantic_remediation_plan.md) | Current semantic documentation audit/remediation plan |
+| [`icm_reference_integrity.md`](icm_reference_integrity.md) | Standing Markdown reference-integrity and authority-classification policy |
+| [`agentic_workflow.md`](agentic_workflow.md) | Filesystem-routed ICM engineering workflow |
 | [`ADR-001-025.md`](ADR-001-025.md) | Architecture decision records |
-| [`implementation_plan.md`](implementation_plan.md) | Implementation program overview and sequencing |
-| [`enterprise_audit_and_review.md`](enterprise_audit_and_review.md) | Enterprise architecture/security/readiness audit |
-| [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Verified corrections and errata |
-| [`agentic_workflow.md`](agentic_workflow.md) | ICM engineering workflow |
-| [`icm_reference_integrity.md`](icm_reference_integrity.md) | Documentation reference-integrity findings and repair policy |
+| [`implementation_plan.md`](implementation_plan.md) | Implementation program, dependency order and release posture |
 
-## Restored authority paths
+## Historical / compatibility documents
+
+| Document | Status |
+|---|---|
+| [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Historical dated correction record; re-verify external facts before using them as current |
+| [`phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`](phase4_part5_to_phase0_enterprise_audit_remediation_plan.md) | Historical Phase 4 Part 5 remediation artifact |
+| [`business_model_design.md`](business_model_design.md) | Compatibility entry only; canonical business model lives in `commercial/01_strategy/business_model_design.md` |
+
+## Core design corpus
 
 | Document | Purpose |
 |---|---|
 | [`sitolo.md`](sitolo.md) | Product/domain specification baseline |
-| [`business_model_design.md`](business_model_design.md) | Compatibility entry to the canonical commercial business model |
-| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture baseline |
-| [`auth_authorization_spec.md`](auth_authorization_spec.md) | Authentication/authorization contract |
-| [`ci_enforcement.md`](ci_enforcement.md) | CI/release enforcement contract |
-
-## Design corpus
-
-| Document | Purpose |
-|---|---|
-| [`system_architecture_design.md`](system_architecture_design.md) | System architecture invariants |
-| [`domain_model.md`](domain_model.md) | Domain model and semantics |
-| [`database_design.md`](database_design.md) | PostgreSQL schema and data design |
-| [`api_contract.md`](api_contract.md) | Public API contract |
-| [`sync_protocol.md`](sync_protocol.md) | Offline synchronization protocol |
-| [`deployment_spec.md`](deployment_spec.md) | Deployment and operations |
-| [`observability_spec.md`](observability_spec.md) | Logging, metrics, tracing |
-| [`testing_strategy.md`](testing_strategy.md) | Testing strategy |
+| [`system_architecture_design.md`](system_architecture_design.md) | Target technical architecture and implementation blueprint |
+| [`domain_model.md`](domain_model.md) | Domain semantics, aggregates, invariants and state transitions |
+| [`database_design.md`](database_design.md) | PostgreSQL schema/data design |
+| [`api_contract.md`](api_contract.md) | API target contract |
+| [`auth_authorization_spec.md`](auth_authorization_spec.md) | Authentication/authorization target contract |
+| [`sync_protocol.md`](sync_protocol.md) | Offline synchronization target contract |
+| [`deployment_spec.md`](deployment_spec.md) | Deployment and operational target contract |
+| [`observability_spec.md`](observability_spec.md) | Telemetry and observability target contract |
+| [`testing_strategy.md`](testing_strategy.md) | Verification strategy |
 
 ## Security
 
 | Document | Purpose |
 |---|---|
-| [`threat_model.md`](threat_model.md) | Threat model |
-| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture |
-| [`security_implementation_spec.md`](security_implementation_spec.md) | Security implementation |
-| [`security_test_harness.md`](security_test_harness.md) | Security test harness |
-| [`auth_authorization_spec.md`](auth_authorization_spec.md) | Identity and authorization contract |
-| [`ci_enforcement.md`](ci_enforcement.md) | CI security/release enforcement |
+| [`threat_model.md`](threat_model.md) | Threat model and security governance |
+| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture baseline |
+| [`security_implementation_spec.md`](security_implementation_spec.md) | Implementation-level security controls |
+| [`security_test_harness.md`](security_test_harness.md) | Security verification harness |
+| [`ci_enforcement.md`](ci_enforcement.md) | CI/release enforcement contract |
 
-## Phase implementation specifications
+## Phase implementation contracts
 
-The phase documents remain implementation contracts. The restored Phase 8 catalogue contract is:
+Phase documents are normative requirements and implementation sequencing artifacts. They are **not proof that the described capability exists**.
 
-- [`phase8_product_catalogue_implementation.md`](phase8_product_catalogue_implementation.md)
+| Document | Scope |
+|---|---|
+| [`phase1_repository_rust_workspace_ci_deep_implementation.md`](phase1_repository_rust_workspace_ci_deep_implementation.md) | Repository/workspace/CI foundation |
+| [`phase2_config_secrets_logging_errors_telemetry_implementation.md`](phase2_config_secrets_logging_errors_telemetry_implementation.md) | Runtime config/secrets/errors/telemetry |
+| [`phase3_identity_sessions_mfa_device_identity_implementation.md`](phase3_identity_sessions_mfa_device_identity_implementation.md) | Identity/session/MFA/device identity |
+| [`phase4_tenant_organization_branch_iam_implementation.md`](phase4_tenant_organization_branch_iam_implementation.md) | Tenant/org/branch/IAM |
+| [`phase5_postgresql_schema_migrations_constraints_rls_implementation.md`](phase5_postgresql_schema_migrations_constraints_rls_implementation.md) | PostgreSQL schema/migrations/constraints/RLS |
+| [`phase6_authorization_engine_policy_enforcement_implementation.md`](phase6_authorization_engine_policy_enforcement_implementation.md) | Authorization engine/policy enforcement |
+| [`phase7_security_test_framework_implementation.md`](phase7_security_test_framework_implementation.md) | Security test framework |
+| [`phase8_product_catalogue_implementation.md`](phase8_product_catalogue_implementation.md) | Product catalogue target-state contract |
+| [`phase9_inventory_ledger_implementation.md`](phase9_inventory_ledger_implementation.md) | Inventory ledger target/implementation contract |
+| [`phase10_pos_sales_implementation.md`](phase10_pos_sales_implementation.md) | POS/sales target/implementation contract |
 
-Existing Phase 1–7 and Phase 9–10 contracts remain listed in their respective corpus sections and must not be replaced by this index.
+Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence.
 
-## Commercial Operating Model
+## External integrations
 
-The commercial corpus is physically grouped under [`commercial/`](commercial/). The canonical business model is [`commercial/01_strategy/business_model_design.md`](commercial/01_strategy/business_model_design.md). The root `business_model_design.md` exists only for compatibility with older references.
+| Document | Purpose |
+|---|---|
+| [`payment_integration_spec.md`](payment_integration_spec.md) | Payment-provider integration contract |
+| [`mra_eis_integration_spec.md`](mra_eis_integration_spec.md) | MRA EIS integration contract |
 
-See [`commercial/README.md`](commercial/README.md) for the complete grouped-document map, scope definitions, and migration policy.
+## Commercial operating model
+
+The commercial corpus is physically grouped under [`commercial/`](commercial/). Grouping is navigation, not authority; the canonical source remains each document's declared role and the commercial governance contracts.
+
+| Group | Scope |
+|---|---|
+| [`commercial/00_governance/`](commercial/00_governance/) | Corpus authority, precision, metrics and decision governance |
+| [`commercial/01_strategy/`](commercial/01_strategy/) | Business model, operating model, segmentation, verticals and country expansion |
+| [`commercial/02_validation/`](commercial/02_validation/) | Commercial experiments and validation |
+| [`commercial/03_pricing_packaging/`](commercial/03_pricing_packaging/) | Buyer, packaging and tier migration |
+| [`commercial/04_acquisition_distribution/`](commercial/04_acquisition_distribution/) | Channels, partners, CAC and contribution economics |
+| [`commercial/05_lifecycle_service/`](commercial/05_lifecycle_service/) | Onboarding, retention, support, trust and continuity |
+| [`commercial/06_payments_finance/`](commercial/06_payments_finance/) | Subscription billing, mobile-money reconciliation, credit and lay-by |
+| [`commercial/07_trust_compliance/`](commercial/07_trust_compliance/) | Regulatory, fiscal/tax and fraud-control boundaries |
+| [`commercial/08_intelligence_defensibility/`](commercial/08_intelligence_defensibility/) | Business intelligence, actioning and defensibility |
+
+See [`commercial/README.md`](commercial/README.md) for the grouped-document map.
+
+## Repository snapshots and runbooks
+
+`release-governance-evidence.md` is a dated repository-administration snapshot and must be refreshed before production certification.
+
+`repository-topology.md` records intentional omissions from the target repository structure; absence of a listed directory is not itself a defect.
+
+Runbooks live under [`runbooks/`](runbooks/) and describe operational failure response.
+
+## Interpretation rule
+
+A document can be:
+
+- **Current**: describes the current repository or current policy.
+- **Target/Contract**: specifies required future or phase behavior.
+- **Historical**: records an earlier state or dated evidence.
+- **Compatibility**: preserves a legacy path without becoming a second source.
+
+The documentation audit must keep those states explicit.
