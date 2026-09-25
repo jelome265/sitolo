@@ -9,7 +9,9 @@ source_citation: apps/worker/src/main.rs:10
 
 # Outbox Dispatch
 
-Input: durable outbox record created with authoritative transaction state.
+## Input
+
+durable outbox record created with authoritative transaction state.
 
 ## Movement
 
