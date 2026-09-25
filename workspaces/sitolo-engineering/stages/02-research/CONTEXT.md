@@ -6,7 +6,7 @@ One job: establish whether current external evidence is required and, when requi
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/ | Selected run brief | Defines the research question |
+| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Defines the research question |
 | Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
 | Research guide | references/research-evidence.md | Full file | Evidence rules |
 
