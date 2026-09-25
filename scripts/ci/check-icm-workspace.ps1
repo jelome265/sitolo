@@ -13,7 +13,7 @@ $required = @(
   "$WORKSPACE\setup\questionnaire.md",
   "$WORKSPACE\_config\workflow-policy.md",
   "$WORKSPACE\shared\context-loading.md",
-  "$WORKSPACE\skills\engineering-review\SKILL.md"
+  "$WORKSPACE\skills\engineering-review\SKILL.md",
   "$WORKSPACE\shared\CONTEXT.md"
   "$WORKSPACE\shared\business-context\CONTEXT.md"
   "$WORKSPACE\shared\technical-context\CONTEXT.md"
