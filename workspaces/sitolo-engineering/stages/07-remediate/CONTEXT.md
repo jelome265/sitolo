@@ -6,9 +6,9 @@ One job: correct confirmed findings, or explicitly record that no remediation is
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Audit | ../06-audit/output/ | Latest audit report | Findings |
-| Implementation | ../05-implement/output/ | Implementation report | Current change |
-| Plan | ../04-plan/output/ | Approved plan | Intended state |
+| Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings |
+| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Current change |
+| Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended state |
 | Governance | ../../../../agent.md | Relevant rules | Required controls |
 | Project docs | ../../../../docs/README.md | Documents named by audit | Authority |
 | Remediation order | references/remediation-order.md | Full file | Fix priority |
