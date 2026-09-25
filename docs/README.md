@@ -20,6 +20,8 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 |---|---|
 | [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Historical dated correction record; re-verify external facts before using them as current |
 | [`phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`](phase4_part5_to_phase0_enterprise_audit_remediation_plan.md) | Historical Phase 4 Part 5 remediation artifact |
+| [`phase0-2_implementation_audit_and_remediation.md`](phase0-2_implementation_audit_and_remediation.md) | Historical Phase 0–2 / Phase 3-readiness audit |
+| [`phase4_part8_pr009_remediation_implementation_instructions.md`](phase4_part8_pr009_remediation_implementation_instructions.md) | Superseded PR-009 review; use the newer execution contract |
 | [`business_model_design.md`](business_model_design.md) | Compatibility entry only; canonical business model lives in `commercial/01_strategy/business_model_design.md` |
 
 ## Core design corpus
