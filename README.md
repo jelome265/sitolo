@@ -87,7 +87,9 @@ Duka does not require a PC. Multi-Branch does not require a PC at every branch. 
 
 ## Delivery status
 
-The repository has progressed beyond the initial engineering substrate into the tenancy and authorization foundation.
+The repository has progressed beyond the initial engineering substrate into the tenancy, authorization and PostgreSQL security-boundary work.
+
+Current product implementation position is **Phase 4 Part 8 / PR-009: durable audit evidence + transactional outbox**. The workflow/documentation architecture is maintained separately in the ICM engineering workspace.
 
 Current main-branch status includes:
 
@@ -95,7 +97,10 @@ Current main-branch status includes:
 - Phase 2 configuration, secrets, errors, telemetry, and runtime foundation;
 - Phase 3 identity/session/MFA/device-identity foundation;
 - Phase 4 organization/branch APIs and repository-scope enforcement;
-- the current Phase 4 RLS implementation contract.
+- Phase 4 PostgreSQL/RLS security-boundary implementation;
+- active Phase 4 Part 8 audit/outbox contract and implementation work.
+
+Later phase documents, including Phase 8 product catalogue, are target-state contracts and do not change the current product phase.
 
 Commercially, the product remains **pre-validation**. The business model is an enterprise-capable target model and its pricing, segment, channel, retention, Duka economics, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial/02_validation/commercial_validation_plan.md) and [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
 
