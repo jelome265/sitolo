@@ -22,7 +22,7 @@ REF_LINK = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(\S+\.md(?:#[^\s]+)?)\s*$", re.MUL
 WIKILINK = re.compile(r"\[\[([^\]|]+\.md)(?:#[^\]|]+)?(?:\|[^\]]*)?\]\]")
 HTML_MD = re.compile(r"(?:href|src)=[\"']([^\"']+\.md(?:#[^\"']*)?)[\"']")
 CODE_MD = re.compile(r"`([^`\n]*?\.md(?:#[^`]*)?)`")
-PATH_MD = re.compile(r"(?<![\w./-])((?:\.?\.?/)?(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)(?![\w.-])")
+PATH_MD = re.compile(r"(?<![\w./-])((?:\.?\.?/|(?:[A-Za-z0-9_.-]+/)+)[A-Za-z0-9_.-]+\.md)(?![\w.-])")
 
 def ignored(path: pathlib.Path) -> bool:
     return any(part in SKIP_PARTS for part in path.parts)
