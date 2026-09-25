@@ -1,10 +1,10 @@
 # ICM Reference Integrity
 
-This document records documentation-reference defects found while making the Sitolo repository walkable under ICM.
+This document is the standing policy for internal Markdown reference integrity in the Sitolo repository.
 
-## Defects addressed in this pass
+## Current state
 
-The following filenames were referenced throughout the corpus but absent from the repository tree:
+The previously missing authority paths have been restored:
 
 - `security_architecture_design.md`
 - `auth_authorization_spec.md`
@@ -13,26 +13,75 @@ The following filenames were referenced throughout the corpus but absent from th
 - `sitolo.md`
 - `business_model_design.md` at its former root `docs/` location
 
-All six have now been restored. The business-model entry is deliberately a compatibility pointer to the canonical commercial document rather than a duplicate source.
+The root business-model file is a compatibility entry to the canonical commercial document. It is not a second business-model source.
 
-## Reconstruction rule
+## Integrity classes
 
-The restored documents were derived from existing authoritative material already present in the repository: threat/security contracts, identity/IAM/authorization phases, active CI workflows/scripts, domain/API/database contracts, inventory/sales implementation contracts, and the canonical commercial corpus.
+Every document reference must be understood as one of:
 
-They are not claims that a historical lost document was recovered byte-for-byte. They are current canonical baselines that restore the missing authority paths without inventing requirements outside the existing corpus.
+| Class | Meaning |
+|---|---|
+| Canonical | Current source of truth for the subject |
+| Contract | Normative requirement for a current or future phase |
+| Evidence | Observed implementation or verification evidence |
+| Historical | Retained evidence from an earlier baseline; not current state |
+| Compatibility | Old path preserved only to route readers to the canonical source |
+| Navigation | Index/router derived from other sources |
 
-## Remaining integrity work
+A filename resolving successfully does not establish authority.
 
-Reference existence is now materially better, but existence alone is not proof of consistency. A future documentation audit must still check:
+## Required checks
 
-1. relative-path correctness from every referring document;
-2. one-home-per-fact and duplicate-source drift;
-3. precedence conflicts between historical and current phase documents;
-4. stale external standards/version references;
-5. claims that describe implementation not present in the current source tree;
-6. commercial claims that are hypotheses but are phrased as validated facts;
-7. generated indexes and routing files against the actual tree.
+Reference integrity includes:
+
+1. explicit Markdown links resolve from the referring file;
+2. path-qualified document references resolve deterministically;
+3. bare document names resolve locally or to exactly one repository-wide basename;
+4. ambiguous bare basenames are rejected;
+5. references escaping the repository are rejected;
+6. one-home-per-fact is maintained for canonical knowledge;
+7. historical documents are not routed as current implementation evidence;
+8. target-state contracts are not mistaken for implementation evidence;
+9. external version/regulatory claims carry dated verification;
+10. generated indexes and routing files remain consistent with the tree.
+
+## Automation
+
+`scripts/ci/check-doc-references` is the mechanical gate. It inventories repository Markdown files and checks explicit links, path-qualified references, bare names, missing targets and ambiguous basename resolution.
+
+Use:
+
+```text
+python3 scripts/ci/check-doc-references
+python3 scripts/ci/check-doc-references --inventory
+```
+
+The checker is a reference-integrity gate, not an authority engine.
+
+## Semantic audit rule
+
+A resolved reference can still be wrong in meaning.
+
+When a document and current implementation disagree:
+
+- classify whether the document is historical, target-state or current;
+- classify the source-of-truth level using `agent.md`'s hierarchy;
+- do not silently weaken a governing contract to match an incomplete implementation;
+- do not claim implementation completion merely because a contract exists;
+- record implementation gaps in the current audit/remediation plan.
+
+## Canonical semantic remediation
+
+The current semantic audit and repair sequence is documented in:
+
+`docs/documentation_semantic_remediation_plan.md`
+
+The current repository-wide state assessment is:
+
+`docs/enterprise_audit_and_review.md`
+
+Both are subordinate to the project's governing source hierarchy.
 
 ## Agent rule
 
-When a routed document refers to a missing path, do not synthesize a replacement silently. Record the defect, identify the nearest authoritative source, and either repair the reference or create an explicitly marked canonical compatibility/contract document with evidence.
+When encountering a missing or ambiguous reference, stop the authority chain at that point. Record the defect, identify the nearest authoritative source, and repair the path or create an explicitly identified compatibility/contract document with evidence. Never fabricate historical recovery.
