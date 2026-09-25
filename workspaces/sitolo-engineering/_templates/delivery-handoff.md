@@ -1,3 +1,9 @@
+---
+artifact_type: delivery-handoff
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Delivery Handoff
 
 ## Summary
@@ -13,3 +19,4 @@
 ## Known limitations
 
 ## Rollback or disable considerations
+
