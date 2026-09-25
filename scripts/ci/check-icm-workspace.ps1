@@ -46,6 +46,14 @@ foreach ($entry in @("CLAUDE.md","$WORKSPACE\CLAUDE.md","$WORKSPACE\CONTEXT.md",
   }
 }
 
+# Cold walk in an isolated temporary run.
+$coldRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sitolo-icm-cold-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $coldRoot -Force | Out-Null
+try {
+  Copy-Item $WORKSPACE (Join-Path $coldRoot "workspace") -Recurse -Force
+  Copy-Item "map" (Join-Path $coldRoot "map") -Recurse -Force
+  $coldSlug = "cold-walk"
+
   for ($i = 0; $i -lt $STAGES.Count; $i++) {
     $stage = $STAGES[$i]
     $context = Join-Path $coldRoot "workspace\sitolo-engineering\stages\$stage\CONTEXT.md"
