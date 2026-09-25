@@ -62,14 +62,12 @@ pub trait AuditOutboxStore: Send + Sync {
     async fn mark_published(
         &self,
         event_id: &OutboxEventId,
-        claim_token: &str,
         now: SystemTime,
     ) -> Result<(), PgAuthorityError>;
 
     async fn mark_failed_or_quarantined(
         &self,
         event_id: &OutboxEventId,
-        claim_token: &str,
         retry: RetryClassification,
         error_class: &str,
         now: SystemTime,
@@ -81,16 +79,12 @@ pub trait AuditOutboxStore: Send + Sync {
 /// PostgreSQL implementation of Audit and Outbox persistence.
 #[derive(Clone)]
 pub struct PgAuditOutboxStore {
-    runtime_pool: sqlx::PgPool,
-    worker_pool: sqlx::PgPool,
+    pool: sqlx::PgPool,
 }
 
 impl PgAuditOutboxStore {
-    pub fn new(runtime_pool: sqlx::PgPool, worker_pool: sqlx::PgPool) -> Self {
-        Self {
-            runtime_pool,
-            worker_pool,
-        }
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -117,7 +111,7 @@ impl AuditOutboxStore for PgAuditOutboxStore {
             ) VALUES (
                 $1, $2, $3, to_timestamp($4::double precision / 1000000.0),
                 $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
-            )"
+            )",
         )
         .bind(event.event_id.as_str())
         .bind(event.event_name.as_str())
@@ -156,28 +150,33 @@ impl AuditOutboxStore for PgAuditOutboxStore {
 
         sqlx::query(
             "INSERT INTO outbox_events (
-                event_id, aggregate_type, aggregate_id, aggregate_sequence, event_name, event_version,
+                event_id, aggregate_type, aggregate_id, event_name, event_version,
                 organization_id, branch_id, occurred_at, payload, status, available_at,
-                attempt_count, locked_at, published_at, last_error_class, deduplication_key, schema_version, claim_token
+                attempt_count, locked_at, published_at, last_error_class, deduplication_key, schema_version
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8,
-                to_timestamp($9::double precision / 1000000.0), $10, 'PENDING',
-                to_timestamp($11::double precision / 1000000.0), 0,
-                NULL, NULL,
-                NULL, $12, $13, NULL
-            ) ON CONFLICT (aggregate_type, aggregate_id, aggregate_sequence) DO NOTHING"
+                $1, $2, $3, $4, $5, $6, $7,
+                to_timestamp($8::double precision / 1000000.0), $9, $10,
+                to_timestamp($11::double precision / 1000000.0), $12,
+                CASE WHEN $13::bigint IS NOT NULL THEN to_timestamp($13::double precision / 1000000.0) ELSE NULL END,
+                CASE WHEN $14::bigint IS NOT NULL THEN to_timestamp($14::double precision / 1000000.0) ELSE NULL END,
+                $15, $16, $17
+            )",
         )
         .bind(event.event_id.as_str())
         .bind(&event.aggregate_type)
         .bind(&event.aggregate_id)
-        .bind(event.aggregate_sequence)
         .bind(&event.event_name)
         .bind(event.event_version as i32)
         .bind(&event.organization_id)
         .bind(&event.branch_id)
         .bind(occurred_micros)
         .bind(&event.payload)
+        .bind(event.status.as_str())
         .bind(available_micros)
+        .bind(event.attempt_count as i32)
+        .bind(locked_micros)
+        .bind(published_micros)
+        .bind(&event.last_error_class)
         .bind(&event.deduplication_key)
         .bind(event.schema_version as i32)
         .execute(&mut **tx)
@@ -195,18 +194,22 @@ impl AuditOutboxStore for PgAuditOutboxStore {
         let lease_sec = lease_duration.as_secs() as i64;
         let now_micros = system_time_to_micros(now);
 
+        // Ensure connection GUC context is cleared for worker outbox relay operations
+        sqlx::query("SELECT set_config('app.organization_id', '', true)")
+            .execute(&self.pool)
+            .await?;
+
         let rows = sqlx::query(
             "UPDATE outbox_events
              SET status = 'CLAIMED',
                  locked_at = to_timestamp($1::double precision / 1000000.0),
-                 attempt_count = attempt_count + 1,
-                 claim_token = gen_random_uuid()::text
+                 attempt_count = attempt_count + 1
              WHERE event_id IN (
                  SELECT event_id
                  FROM outbox_events
                  WHERE (status = 'PENDING' AND available_at <= to_timestamp($1::double precision / 1000000.0))
                     OR (status = 'CLAIMED' AND locked_at < to_timestamp($1::double precision / 1000000.0) - ($2 || ' seconds')::interval)
-                 ORDER BY aggregate_sequence ASC
+                 ORDER BY occurred_at ASC
                  LIMIT $3
                  FOR UPDATE SKIP LOCKED
              )
@@ -218,12 +221,12 @@ impl AuditOutboxStore for PgAuditOutboxStore {
                        attempt_count,
                        (EXTRACT(EPOCH FROM locked_at) * 1000000)::bigint AS locked_micros,
                        (EXTRACT(EPOCH FROM published_at) * 1000000)::bigint AS published_micros,
-                       last_error_class, deduplication_key, schema_version, claim_token, aggregate_sequence"
+                       last_error_class, deduplication_key, schema_version",
         )
         .bind(now_micros)
         .bind(lease_sec)
         .bind(batch_size as i64)
-        .fetch_all(&self.worker_pool)
+        .fetch_all(&self.pool)
         .await?;
 
         let mut events = Vec::new();
@@ -262,8 +265,6 @@ impl AuditOutboxStore for PgAuditOutboxStore {
                 last_error_class: row.get("last_error_class"),
                 deduplication_key: row.get("deduplication_key"),
                 schema_version: row.get::<i32, _>("schema_version") as u32,
-                claim_token: row.get("claim_token"),
-                aggregate_sequence: row.get::<i64, _>("aggregate_sequence"),
             });
         }
 
@@ -277,17 +278,20 @@ impl AuditOutboxStore for PgAuditOutboxStore {
     ) -> Result<(), PgAuthorityError> {
         let now_micros = system_time_to_micros(now);
 
+        sqlx::query("SELECT set_config('app.organization_id', '', true)")
+            .execute(&self.pool)
+            .await?;
+
         let res = sqlx::query(
             "UPDATE outbox_events
              SET status = 'PUBLISHED',
                  published_at = to_timestamp($1::double precision / 1000000.0),
                  locked_at = NULL
-             WHERE event_id = $2 AND claim_token = $3",
+             WHERE event_id = $2",
         )
         .bind(now_micros)
         .bind(event_id.as_str())
-        .bind(claim_token)
-        .execute(&self.worker_pool)
+        .execute(&self.pool)
         .await?;
 
         if res.rows_affected() == 0 {
@@ -306,10 +310,14 @@ impl AuditOutboxStore for PgAuditOutboxStore {
         max_attempts: u32,
         backoff_duration: Duration,
     ) -> Result<OutboxStatus, PgAuthorityError> {
+        sqlx::query("SELECT set_config('app.organization_id', '', true)")
+            .execute(&self.pool)
+            .await?;
+
         let current_attempts: i32 =
             sqlx::query_scalar("SELECT attempt_count FROM outbox_events WHERE event_id = $1")
                 .bind(event_id.as_str())
-                .fetch_one(&self.worker_pool)
+                .fetch_one(&self.pool)
                 .await?;
 
         let quarantine =
@@ -321,12 +329,11 @@ impl AuditOutboxStore for PgAuditOutboxStore {
                  SET status = 'QUARANTINED',
                      last_error_class = $1,
                      locked_at = NULL
-                 WHERE event_id = $2 AND claim_token = $3",
+                 WHERE event_id = $2",
             )
             .bind(error_class)
             .bind(event_id.as_str())
-            .bind(claim_token)
-            .execute(&self.worker_pool)
+            .execute(&self.pool)
             .await?;
 
             Ok(OutboxStatus::Quarantined)
@@ -338,13 +345,12 @@ impl AuditOutboxStore for PgAuditOutboxStore {
                      available_at = to_timestamp($1::double precision / 1000000.0),
                      last_error_class = $2,
                      locked_at = NULL
-                 WHERE event_id = $3 AND claim_token = $4",
+                 WHERE event_id = $3",
             )
             .bind(next_available_micros)
             .bind(error_class)
             .bind(event_id.as_str())
-            .bind(claim_token)
-            .execute(&self.worker_pool)
+            .execute(&self.pool)
             .await?;
 
             Ok(OutboxStatus::Pending)
@@ -558,13 +564,7 @@ mod tests {
         assert_eq!(claimed[0].status, OutboxStatus::Claimed);
         assert_eq!(claimed[0].attempt_count, 1);
 
-        db.mark_published(
-            &claimed[0].event_id,
-            claimed[0].claim_token.as_deref().unwrap_or(""),
-            now,
-        )
-        .await
-        .unwrap();
+        db.mark_published(&claimed[0].event_id, now).await.unwrap();
         let records = db.outbox_records();
         assert_eq!(records[0].status, OutboxStatus::Published);
     }

@@ -58,7 +58,6 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     event_id VARCHAR(128) PRIMARY KEY,
     aggregate_type VARCHAR(128) NOT NULL,
     aggregate_id VARCHAR(128) NOT NULL,
-    aggregate_sequence BIGINT NOT NULL,
     event_name VARCHAR(256) NOT NULL,
     event_version INT NOT NULL DEFAULT 1,
     organization_id VARCHAR(128),
@@ -72,11 +71,8 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     published_at TIMESTAMPTZ,
     last_error_class VARCHAR(256),
     deduplication_key VARCHAR(256) NOT NULL UNIQUE,
-    schema_version INT NOT NULL DEFAULT 1,
-    claim_token VARCHAR(128)
+    schema_version INT NOT NULL DEFAULT 1
 );
-
-ALTER TABLE outbox_events ADD CONSTRAINT outbox_events_agg_seq_unique UNIQUE (aggregate_type, aggregate_id, aggregate_sequence);
 
 -- 6. Enable and Force Row Level Security (RLS)
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
@@ -148,39 +144,32 @@ CREATE POLICY tenant_resources_isolation_policy ON tenant_resources
         )
     );
 
--- IAM Audit Records Policy (Fail closed)
+-- IAM Audit Records Policy
 DROP POLICY IF EXISTS iam_audit_records_isolation_policy ON iam_audit_records;
-CREATE POLICY iam_audit_records_insert_policy ON iam_audit_records
-    FOR INSERT
-    TO app_runtime
-    WITH CHECK (
-        organization_id IS NOT NULL
-        AND NULLIF(current_setting('app.organization_id', true), '') IS NOT NULL
-        AND organization_id = current_setting('app.organization_id', true)
-    );
-
-CREATE POLICY iam_audit_records_select_policy ON iam_audit_records
-    FOR SELECT
+CREATE POLICY iam_audit_records_isolation_policy ON iam_audit_records
+    FOR ALL
     TO app_runtime
     USING (
-        organization_id IS NOT NULL
-        AND NULLIF(current_setting('app.organization_id', true), '') IS NOT NULL
-        AND organization_id = current_setting('app.organization_id', true)
-    );
-
--- Outbox Events Policy (Fail closed, worker access)
-DROP POLICY IF EXISTS outbox_events_isolation_policy ON outbox_events;
-CREATE POLICY outbox_events_insert_policy ON outbox_events
-    FOR INSERT
-    TO app_runtime
+        organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
+        OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
+    )
     WITH CHECK (
-        organization_id IS NOT NULL
-        AND NULLIF(current_setting('app.organization_id', true), '') IS NOT NULL
-        AND organization_id = current_setting('app.organization_id', true)
+        organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
+        OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
     );
 
-CREATE POLICY outbox_events_worker_policy ON outbox_events
+-- Outbox Events Policy
+DROP POLICY IF EXISTS outbox_events_isolation_policy ON outbox_events;
+CREATE POLICY outbox_events_isolation_policy ON outbox_events
     FOR ALL
-    TO app_worker
-    USING (true)
-    WITH CHECK (true);
+    TO app_runtime
+    USING (
+        true
+    )
+    WITH CHECK (
+        organization_id IS NULL
+        OR NULLIF(current_setting('app.organization_id', true), '') IS NULL
+        OR organization_id = NULLIF(current_setting('app.organization_id', true), '')
+    );

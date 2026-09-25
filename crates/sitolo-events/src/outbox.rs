@@ -73,7 +73,6 @@ pub struct OutboxEvent {
     pub event_id: OutboxEventId,
     pub aggregate_type: String,
     pub aggregate_id: String,
-    pub aggregate_sequence: i64,
     pub event_name: String,
     pub event_version: u32,
     pub organization_id: Option<String>,
@@ -91,7 +90,6 @@ pub struct OutboxEvent {
     pub published_at: Option<SystemTime>,
     pub last_error_class: Option<String>,
     pub deduplication_key: String,
-    pub claim_token: Option<String>,
     pub schema_version: u32,
 }
 
