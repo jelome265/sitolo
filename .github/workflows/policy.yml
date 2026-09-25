@@ -14,10 +14,11 @@ on:
       - "AGENTS.md"
       - "workspaces/**"
       - "scripts/ci/check-icm-workspace"
+      - "scripts/ci/check-doc-references"
       - "scripts/ci/verify"
       - "scripts/ci/verify.ps1"
       - "scripts/agentic/**"
-      - "docs/agentic_workflow.md"
+      - "docs/**"
 
 permissions:
   contents: read
@@ -27,11 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42d0e2f0d4c3c0c1a9a9c3f1a4c0d6c9a2b1
       - name: Workflow policy check
         run: ./scripts/ci/check-workflow-policy
       - name: ICM workspace policy check
         run: bash ./scripts/ci/check-icm-workspace
+      - name: Documentation reference check
+        run: python3 ./scripts/ci/check-doc-references
       - name: Repository policy presence
         run: |
           for f in rust-toolchain.toml deny.toml Cargo.lock .github/CODEOWNERS; do
