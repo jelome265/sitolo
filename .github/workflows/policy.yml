@@ -9,6 +9,15 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      - "CLAUDE.md"
+      - "CONTEXT.md"
+      - "AGENTS.md"
+      - "workspaces/**"
+      - "scripts/ci/check-icm-workspace"
+      - "scripts/ci/verify"
+      - "scripts/ci/verify.ps1"
+      - "scripts/agentic/**"
+      - "docs/agentic_workflow.md"
 
 permissions:
   contents: read
@@ -21,6 +30,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Workflow policy check
         run: ./scripts/ci/check-workflow-policy
+      - name: ICM workspace policy check
+        run: bash ./scripts/ci/check-icm-workspace
       - name: Repository policy presence
         run: |
           for f in rust-toolchain.toml deny.toml Cargo.lock .github/CODEOWNERS; do

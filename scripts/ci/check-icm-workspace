@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+WORKSPACE="workspaces/sitolo-engineering"
+STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
+
+fail=0
+
+required=(
+  CLAUDE.md
+  CONTEXT.md
+  AGENTS.md
+  "$WORKSPACE/CLAUDE.md"
+  "$WORKSPACE/CONTEXT.md"
+  "$WORKSPACE/setup/questionnaire.md"
+  "$WORKSPACE/_config/workflow-policy.md"
+  "$WORKSPACE/shared/context-loading.md"
+  "$WORKSPACE/skills/engineering-review/SKILL.md"
+)
+
+for path in "${required[@]}"; do
+  if [[ ! -f "$path" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing required file: $path" >&2
+    fail=1
+  fi
+done
+
+for stage in "${STAGES[@]}"; do
+  context="$WORKSPACE/stages/$stage/CONTEXT.md"
+  references="$WORKSPACE/stages/$stage/references"
+  output="$WORKSPACE/stages/$stage/output"
+
+  if [[ ! -f "$context" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing stage contract: $context" >&2
+    fail=1
+  elif (( $(wc -l < "$context") > 80 )); then
+    echo "ICM WORKSPACE VIOLATION: stage contract exceeds 80 lines: $context" >&2
+    fail=1
+  fi
+
+  if [[ ! -d "$references" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing stage references directory: $references" >&2
+    fail=1
+  fi
+
+  if [[ ! -d "$output" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing stage output directory: $output" >&2
+    fail=1
+  elif [[ ! -f "$output/.gitkeep" ]]; then
+    echo "ICM WORKSPACE VIOLATION: output directory must contain .gitkeep: $output" >&2
+    fail=1
+  fi
+
+  if [[ -d "$references" ]]; then
+    while IFS= read -r ref; do
+      if (( $(wc -l < "$ref") > 200 )); then
+        echo "ICM WORKSPACE VIOLATION: reference exceeds 200 lines: $ref" >&2
+        fail=1
+      fi
+    done < <(find "$references" -type f -name '*.md' -print)
+  fi
+
+  if [[ -d "$output" ]]; then
+    while IFS= read -r artifact; do
+      if [[ "$artifact" != "$output/.gitkeep" ]]; then
+        case "$artifact" in
+          *.md) ;;
+          *)
+            echo "ICM WORKSPACE VIOLATION: stage outputs must be Markdown: $artifact" >&2
+            fail=1
+            ;;
+        esac
+      fi
+    done < <(find "$output" -type f -print)
+  fi
+done
+
+if [[ -d .codex ]]; then
+  echo "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces instead." >&2
+  fail=1
+fi
+
+if [[ -d .agents/skills || -d .agents/evals ]]; then
+  echo "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure." >&2
+  fail=1
+fi
+
+if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then
+  echo "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime." >&2
+  fail=1
+fi
+
+if ! grep -Eq 'workspaces/sitolo-engineering' AGENTS.md CLAUDE.md CONTEXT.md; then
+  echo "ICM WORKSPACE VIOLATION: root routing files must point to the Sitolo engineering workspace." >&2
+  fail=1
+fi
+
+if ! grep -Eq 'stages/01-select/CONTEXT\.md' "$WORKSPACE/CLAUDE.md"; then
+  echo "ICM WORKSPACE VIOLATION: workspace router must expose Stage 01." >&2
+  fail=1
+fi
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM workspace check FAILED" >&2
+  exit 1
+fi
+
+echo "ICM workspace check PASSED"
