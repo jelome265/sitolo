@@ -94,6 +94,115 @@ foreach ($stage in $STAGES) {
   }
 }
 
+
+# System Map object/process evidence checks.
+Get-ChildItem "map\objects" -Recurse -File -Filter *.md | Where-Object { $_.Name -notin @("CONTEXT.md", "_index.md") } | ForEach-Object {
+  $text = Get-Content $_.FullName -Raw
+  foreach ($field in @("type: object", "status:", "universe:", "source_revision:", "source:", "source_citation:")) {
+    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: object card missing $field: $($_.FullName)" }
+  }
+  if ($text -match '(?m)^status: verified -eq (Get-FileHash "map\AGENTS.md").Hash) -or -not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\routing.md").Hash)) {
+  Write-Error "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins."
+  $fail = $true
+}
+
+if (Test-Path ".codex" -PathType Container) {
+  Write-Error "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces."
+  $fail = $true
+}
+if ((Test-Path ".agents\skills" -PathType Container) -or (Test-Path ".agents\evals" -PathType Container)) {
+  Write-Error "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure."
+  $fail = $true
+}
+
+$workflowText = Get-ChildItem ".github\workflows" -File -ErrorAction SilentlyContinue | Get-Content -Raw
+$workflowText = $workflowText -join [Environment]::NewLine
+if ($workflowText -match "openai/codex-action|\[agents\.|codex-review\.yml") {
+  Write-Error "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime."
+  $fail = $true
+}
+
+if ($fail) {
+  Write-Error "ICM workspace check FAILED"
+  exit 1
+}
+
+Write-Output "ICM workspace check PASSED"
+ -and $text -notmatch '(?m)^universe: live -eq (Get-FileHash "map\AGENTS.md").Hash) -or -not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\routing.md").Hash)) {
+  Write-Error "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins."
+  $fail = $true
+}
+
+if (Test-Path ".codex" -PathType Container) {
+  Write-Error "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces."
+  $fail = $true
+}
+if ((Test-Path ".agents\skills" -PathType Container) -or (Test-Path ".agents\evals" -PathType Container)) {
+  Write-Error "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure."
+  $fail = $true
+}
+
+$workflowText = Get-ChildItem ".github\workflows" -File -ErrorAction SilentlyContinue | Get-Content -Raw
+$workflowText = $workflowText -join [Environment]::NewLine
+if ($workflowText -match "openai/codex-action|\[agents\.|codex-review\.yml") {
+  Write-Error "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime."
+  $fail = $true
+}
+
+if ($fail) {
+  Write-Error "ICM workspace check FAILED"
+  exit 1
+}
+
+Write-Output "ICM workspace check PASSED"
+) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: verified object must be universe=live: $($_.FullName)" }
+}
+
+Get-ChildItem "map\processes" -File -Filter *.md | Where-Object { $_.Name -ne "CONTEXT.md" -and $_.Name -ne "_index.md" } | ForEach-Object {
+  $text = Get-Content $_.FullName -Raw
+  foreach ($field in @("type: process", "status:", "universe:", "source_revision:", "source:", "source_citation:")) {
+    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process card missing $field: $($_.FullName)" }
+  }
+  foreach ($section in @("## Input", "## Movement", "## Output", "## Consumes", "## Produces", "## If you change this", "### Hits", "### Does not hit", "## Verification", "## See")) {
+    if ($text -notmatch [regex]::Escape($section)) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process card missing $section: $($_.FullName)" }
+  }
+  if ($text -notmatch '(?m)^\s*\d+\. ') { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process movement has no numbered steps: $($_.FullName)" }
+  foreach ($section in @("## Consumes", "## Produces")) {
+    $start = $text.IndexOf($section)
+    if ($start -ge 0) {
+      $sectionText = $text.Substring($start)
+      if ($sectionText -notmatch '\]\(\.\./objects/[^)]+\.md\)') { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: $section must link object cards: $($_.FullName)" }
+    }
+  }
+  if ($text -match '(?m)^universe: ghost -eq (Get-FileHash "map\AGENTS.md").Hash) -or -not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\routing.md").Hash)) {
+  Write-Error "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins."
+  $fail = $true
+}
+
+if (Test-Path ".codex" -PathType Container) {
+  Write-Error "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces."
+  $fail = $true
+}
+if ((Test-Path ".agents\skills" -PathType Container) -or (Test-Path ".agents\evals" -PathType Container)) {
+  Write-Error "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure."
+  $fail = $true
+}
+
+$workflowText = Get-ChildItem ".github\workflows" -File -ErrorAction SilentlyContinue | Get-Content -Raw
+$workflowText = $workflowText -join [Environment]::NewLine
+if ($workflowText -match "openai/codex-action|\[agents\.|codex-review\.yml") {
+  Write-Error "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime."
+  $fail = $true
+}
+
+if ($fail) {
+  Write-Error "ICM workspace check FAILED"
+  exit 1
+}
+
+Write-Output "ICM workspace check PASSED"
+ -and $text -notmatch 'Ghost/unwired') { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: ghost process must explain why it is unwired: $($_.FullName)" }
+}
 if (-not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\AGENTS.md").Hash) -or -not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\routing.md").Hash)) {
   Write-Error "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins."
   $fail = $true
