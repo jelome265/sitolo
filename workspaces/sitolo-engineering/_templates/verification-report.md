@@ -1,3 +1,9 @@
+---
+artifact_type: verification-report
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Verification Report
 
 ## Commands
@@ -14,3 +20,4 @@
 ## Audit status
 
 ## Completion condition
+
