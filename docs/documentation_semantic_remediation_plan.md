@@ -28,7 +28,7 @@ The source code is evidence of current implementation. It does not silently over
 
 ## 2. Reference inventory
 
-The current repository contains **86 Markdown files** across the repository, documentation corpus, governance files, and public repository guides. The reference checker must inventory:
+The initial audit snapshot contained 86 Markdown files in the scoped documentation/repository set. The current branch contains **155 Markdown files** including the ICM workspace and map. The live count must always be derived from the tree; this document must not become the inventory source. The reference checker must inventory:
 
 1. explicit Markdown links;
 2. backtick/path-qualified `.md` references;
@@ -41,7 +41,7 @@ The current repository contains **86 Markdown files** across the repository, doc
 
 The inventory must distinguish a true missing target from a reference that is intentionally routed through a compatibility entry.
 
-The current `scripts/ci/check-doc-references` implementation is too conservative for this purpose: its regex captures only bare filenames, so a path-qualified reference such as `docs/foo.md` can be reduced to `foo.md`; nested commercial documents can also be falsely treated as local-only references. The checker therefore needs a reference-resolution upgrade before the corpus can be considered mechanically complete.
+`scripts/ci/check-doc-references` has now been upgraded to resolve explicit links, path-qualified references, local bare names, unique repository-wide basenames, missing targets, and ambiguous basenames. CI runs it for documentation changes. The checker is the mechanical gate; semantic correctness still requires the authority classification below.
 
 ---
 
@@ -69,9 +69,9 @@ ICM routing documents do not change this hierarchy. They only control which sour
 
 ### DOC-001 — Historical enterprise audit is stale
 **File:** `docs/enterprise_audit_and_review.md`
-**State:** stale
-**Reason:** It still says tenancy/authz/domain/persistence/integrations/sync are empty stubs, while current source contains Phase 4 tenancy/authz/domain work and PostgreSQL authority primitives.
-**Action:** replace with a current-state enterprise audit based on the current repository baseline; preserve the older findings only as explicitly historical evidence where useful.
+**State:** fixed
+**Reason:** The document was replaced with a current-state audit tied to the repository baseline and explicitly separates current evidence from future-phase gaps.
+**Action:** keep the audit pinned to a dated source revision and refresh it when major implementation boundaries change.
 **Priority:** P0
 
 ### DOC-002 — API architecture contract vs current transport implementation
@@ -83,36 +83,35 @@ ICM routing documents do not change this hierarchy. They only control which sour
 
 ### DOC-003 — Phase 8 catalogue language is written as present-tense runtime behavior
 **File:** `docs/phase8_product_catalogue_implementation.md`
-**State:** temporal/semantic ambiguity
-**Reason:** the contract says the API exposes catalogue operations while the current API implementation does not expose a product catalogue surface.
-**Action:** change present-tense implementation claims to normative future/phase language and keep current implementation evidence separate.
+**State:** fixed
+**Reason:** The contract now explicitly identifies itself as Phase 8 target state and says catalogue runtime/API existence must be proven by source and tests.
+**Action:** promote individual requirements only when executable evidence exists.
 **Priority:** P1
 
 ### DOC-004 — Old Phase 4 enterprise remediation plan is now historical
 **File:** `docs/phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`
-**State:** historical
-**Reason:** its metadata identifies Phase 4 Part 5 / PR-005 as the current implementation position, while the repository has moved through later Phase 4 work.
-**Action:** mark it explicitly historical and prevent current workflow routing from treating it as the current baseline.
+**State:** fixed
+**Reason:** The document is now explicitly historical and points readers to the current enterprise audit.
+**Action:** retain as historical evidence only.
 **Priority:** P1
 
 ### DOC-005 — ICM reference-integrity document contains now-outdated “missing reference” framing
 **File:** `docs/icm_reference_integrity.md`
-**State:** partially stale
-**Reason:** the missing-file class has been repaired; remaining work is semantic integrity, source precedence, historical/current separation, and automated inventory.
-**Action:** update its scope to become the standing integrity policy and link this remediation plan.
+**State:** fixed
+**Reason:** It is now the standing integrity policy and routes semantic remediation through this plan.
 **Priority:** P1
 
 ### DOC-006 — ICM workflow guide still describes the missing-reference state as current
 **File:** `docs/agentic_workflow.md`
-**State:** partially stale
-**Action:** update validation/integrity language to reflect the restored authority paths and the new semantic audit stage.
+**State:** fixed
+**Action:** workflow guide now describes the restored authority paths, reference validation, and walk-test requirement.
 **Priority:** P1
 
 ### DOC-007 — MRA EIS dated transition language must remain historical
 **Files:** commercial operating model and any residual EFD/transition references
-**State:** semantic freshness
-**Evidence:** the repository already records the 2026 EIS transition as complete; the live MRA developer site continues to provide EIS API documentation.
-**Action:** current product/compliance language must describe EIS as the current integration path for affected taxpayers; old transition dates may remain only as dated historical context.
+**State:** partially addressed
+**Evidence:** current sources describe the nationwide EIS rollout from 1 May 2026, while the commercial operating model's 2026-09-22 text records earlier transition dates as dated compliance signals. The live MRA developer resources continue to expose EIS API material. citeturn297771search1turn689436search4
+**Action:** keep historical dates explicitly historical and maintain a current regulatory-facts source with verification date before external compliance claims.
 **Priority:** P1
 
 ### DOC-008 — External standards need dated verification metadata
