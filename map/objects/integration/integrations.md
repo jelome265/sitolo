@@ -1,9 +1,13 @@
+---
+type: object
+status: stub
+cluster: integration
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-integrations/src/lib.rs
+source_citation: crates/sitolo-integrations/src/lib.rs:1
+---
 # Integrations
 
-- type: object
-- status: stub
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: integration
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Worker adapters, callback endpoints, provider sandboxes and production credentia
 ## See
 
 crates/sitolo-integrations/src/lib.rs
+
