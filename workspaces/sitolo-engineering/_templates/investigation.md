@@ -1,3 +1,9 @@
+---
+artifact_type: investigation
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Investigation Findings
 
 ## Scope
@@ -17,3 +23,4 @@
 ## Contradictions
 
 ## Test and evidence gaps
+
