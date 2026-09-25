@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+cp map/CLAUDE.md map/AGENTS.md
+cp map/CLAUDE.md map/routing.md
+
+echo "System Map routing twins generated from map/CLAUDE.md"
