@@ -123,6 +123,7 @@ for object in map/objects/*/*.md; do
 done
 
 for process in map/processes/*.md; do
+  if [[ "$process" == "map/processes/CONTEXT.md" ]]; then continue; fi
   for field in "type: process" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
     grep -Eq "^$field" "$process" || { echo "ICM WORKSPACE VIOLATION: process missing $field: $process" >&2; fail=1; }
   done
