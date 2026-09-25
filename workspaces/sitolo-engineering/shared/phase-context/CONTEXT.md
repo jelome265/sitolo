@@ -26,7 +26,7 @@ Phase 4 Part 6 and Part 7 PR-specific contracts are completed implementation rec
 The older PR-009 remediation instructions and dated execution snapshot are also historical review context:
 
 - ../../../../docs/phase4_part8_pr009_remediation_implementation_instructions.md
-- ../../../../docs/phase4_part8_pr009_remediation_execution_contract.md
+- ../../../../docs/phase4_part8_pr009_remediation_implementation_instructions.md
 
 ## Rule
 
