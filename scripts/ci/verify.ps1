@@ -3,6 +3,10 @@ $ErrorActionPreference = "Continue"
 $ROOT = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $ROOT
 
+Write-Output "==> ICM workspace"
+& "$ROOT\scripts\ci\check-icm-workspace.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Output "ICM workspace check failed"; exit $LASTEXITCODE }
+
 Write-Output "==> Verify toolchain"
 rustc --version
 cargo --version

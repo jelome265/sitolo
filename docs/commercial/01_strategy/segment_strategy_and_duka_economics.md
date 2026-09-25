@@ -1,7 +1,7 @@
 
 # Sitolo — Universal Segment Strategy, Duka Economics & Market Coverage Doctrine
 
-**Document:** docs/segment_strategy_and_duka_economics.md  
+**Document:** docs/commercial/01_strategy/segment_strategy_and_duka_economics.md  
 **Status:** Canonical commercial-strategy supplement  
 **Date:** 2026-09-22  
 **Market:** Malawi first; African regionalization only after evidence and operational readiness  
@@ -9,7 +9,7 @@
 
 This document is the commercial clarification that follows the 22 September 2026 business-model review. It converts the Duka rationale, universal-market thesis, segmented pricing model, low-touch economics, acquisition model, product packaging rules, validation implications, and architectural implications into repository documentation.
 
-It supplements business_model_design.md and commercial_validation_plan.md. It does not replace law, regulator requirements, provider contracts, security architecture, domain invariants, database rules, API contracts, synchronization rules, deployment controls, or other engineering source-of-truth documents.
+It supplements business_model_design.md and ../02_validation/commercial_validation_plan.md. It does not replace law, regulator requirements, provider contracts, security architecture, domain invariants, database rules, API contracts, synchronization rules, deployment controls, or other engineering source-of-truth documents.
 
 ---
 
@@ -3428,7 +3428,7 @@ This document and the related commercial corpus are considered aligned when:
 
 - the product scope explicitly includes Duka through enterprise;
 - business_model_design.md does not imply a permanent narrow market restriction;
-- commercial_validation_plan.md uses segment-aware cohorts;
+- ../02_validation/commercial_validation_plan.md uses segment-aware cohorts;
 - Duka economics are explicit;
 - Duka acquisition is designed for low CAC;
 - Duka support economics are measurable;

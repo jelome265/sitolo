@@ -650,7 +650,7 @@ source revision
 release identifier
 ```
 
-SLSA is used as a supply-chain provenance reference; note that SLSA 1.1 is retired and current SLSA documentation identifies 1.2 as current, so implementation should use the current compatible provenance specification rather than hard-coding an obsolete version. 
+SLSA 1.2 is the approved current specification; SLSA 1.1 is retired. See `docs/external_standards_verification_register.md` for dated external-version verification.
 
 ---
 
@@ -2841,8 +2841,8 @@ RELEASE
 
 - Kubernetes documentation — production environment guidance.
 - OWASP Kubernetes Top 10 (2025).
-- NIST SP 800-218 — Secure Software Development Framework 1.1.
-- NIST SP 800-218 Rev. 1 initial public draft — SSDF 1.2 status/reference.
+- NIST SP 800-218 — Secure Software Development Framework 1.1 (final publication).
+- NIST SP 800-218 Rev. 1 initial public draft — SSDF 1.2 (draft only; not a final publication).
 - SLSA specification documentation — current version 1.2 and provenance model.
 - Sitolo `system_architecture_design.md`.
 - Sitolo `security_architecture_design.md`.

@@ -2560,7 +2560,7 @@ testing_strategy.md
 
 Threat-model changes that invalidate one of these documents require explicit reconciliation rather than allowing contradictory security assumptions to coexist.
 
-The next implementation contract is `11 — observability_spec.md`.
+The next implementation contract is `docs/observability_spec.md`.
 
 ---
 

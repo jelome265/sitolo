@@ -65,14 +65,14 @@ A lower document MUST NOT silently override a higher document.
 
 | Document | Owns | Must not own |
 |---|---|---|
-| `business_model_design.md` | business model, category, strategic scope | observed validation results |
+| `../01_strategy/business_model_design.md` | business model, category, strategic scope | observed validation results |
 | `commercial_validation_plan.md` | experiments, thresholds, evidence and validation decisions | production implementation details |
 | `commercial_operating_model.md` | end-to-end commercial operating model | claiming hypotheses are validated |
 | `unit_economics_cac_and_contribution_model.md` | economic definitions and measurement methodology | final market pricing by itself |
 | `upgrade_expansion_and_tier_migration_model.md` | tier transitions and complexity triggers | unsupported fixed thresholds |
 | `commercial_metrics_governance_and_decision_system.md` | metric definitions, cohorts and decision governance | redefining experiment hypotheses |
 | specialized commercial docs | their named commercial boundary | changing the global tier model without an approved decision |
-| `README.md` / `docs/README.md` | navigation and concise public summary | becoming a second commercial source of truth |
+| the repository README, `../../README.md`, or `../README.md` | navigation and concise public summary | becoming a second commercial source of truth |
 
 ---
 

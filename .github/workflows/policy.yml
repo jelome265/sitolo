@@ -9,6 +9,17 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      - "CLAUDE.md"
+      - "CONTEXT.md"
+      - "AGENTS.md"
+      - "workspaces/**"
+      - "scripts/ci/check-icm-workspace"
+      - "scripts/ci/check-system-map-processes"
+      - "scripts/ci/check-doc-references"
+      - "scripts/ci/verify"
+      - "scripts/ci/verify.ps1"
+      - "scripts/agentic/**"
+      - "docs/**"
 
 permissions:
   contents: read
@@ -21,6 +32,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Workflow policy check
         run: ./scripts/ci/check-workflow-policy
+      - name: ICM workspace policy check
+        run: bash ./scripts/ci/check-icm-workspace
+      - name: ICM PowerShell parity check
+        shell: pwsh
+        run: ./scripts/ci/check-icm-workspace.ps1
+      - name: System Map generated-file check
+        run: |
+          bash ./scripts/ci/generate-system-map-routing
+          python3 ./scripts/ci/generate-system-map-index
+          git diff --exit-code -- map/AGENTS.md map/routing.md map/objects/_index.md
+      - name: Documentation reference check
+        run: python3 ./scripts/ci/check-doc-references
+      - name: Documentation reference inventory
+        run: |
+          python3 ./scripts/ci/check-doc-references --inventory > documentation-reference-inventory.txt
+          test -s documentation-reference-inventory.txt
+          grep -q "^DOCUMENT REFERENCE INVENTORY:" documentation-reference-inventory.txt
+          cat documentation-reference-inventory.txt
+      - name: Upload documentation reference inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: documentation-reference-inventory-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: error
+          path: documentation-reference-inventory.txt
       - name: Repository policy presence
         run: |
           for f in rust-toolchain.toml deny.toml Cargo.lock .github/CODEOWNERS; do

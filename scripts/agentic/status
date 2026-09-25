@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+WORKSPACE="workspaces/sitolo-engineering"
+STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
+
+echo "Pipeline Status: Sitolo Engineering"
+echo
+
+for i in "${!STAGES[@]}"; do
+  stage="${STAGES[$i]}"
+  output="$WORKSPACE/stages/$stage/output"
+  artifact=""
+  if [[ -d "$output" ]]; then
+    artifact="$(find "$output" -maxdepth 1 -type f ! -name '.gitkeep' -print | sort | head -n 1)"
+  fi
+
+  if [[ -n "$artifact" ]]; then
+    status="COMPLETE"
+    name="$(basename "$artifact")"
+  else
+    status="PENDING"
+    name="-"
+  fi
+
+  if (( i < ${#STAGES[@]} - 1 )); then
+    printf "%-18s %-10s %s\n" "[$stage]" "$status" "$name  ->"
+  else
+    printf "%-18s %-10s %s\n" "[$stage]" "$status" "$name"
+  fi
+done
+
+echo
+echo "Status is derived from output-file presence. It does not prove approval or quality."

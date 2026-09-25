@@ -3,6 +3,7 @@
 This execution contract records the non-negotiable verification gates and test evidence for Phase 4 PR-008 PostgreSQL Row-Level Security (RLS) integration.
 
 ---
+> **Lifecycle classification:** Historical implementation contract. This document governed a completed PR-specific change and is retained for traceability. It is not a current implementation task. Current state must be verified against the repository source and the current phase/PR status documents.
 
 ## Commit & Evidence Metadata
 

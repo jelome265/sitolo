@@ -1,7 +1,7 @@
 # Sitolo — Implementation Plan
 
 **Document:** `implementation_plan.md`  
-**Phase:** 0 — Architecture / Contracts / ADR Freeze  
+**Program status:** Architecture/contracts implementation baseline  
 **File:** 13 of 16  
 **Status:** Implementation baseline  
 **Date:** 2026-09-05  

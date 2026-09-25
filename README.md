@@ -55,9 +55,9 @@ Start with these documents:
 
 - [Implementation plan](docs/implementation_plan.md) — phase sequencing and non-negotiable engineering rules.
 - [Business model](docs/business_model_design.md) — product scope, customers, value, and commercial constraints.
-- [Commercial validation plan](docs/commercial_validation_plan.md) — 12 concrete experiments, pricing tests, CAC economics, segment-aware PMF gates, and validation rules.
-- [Commercial Operating Model](docs/commercial_operating_model.md) — buyer/payer separation, payment collection, distribution, onboarding, trust, retention, support economics, regulatory perimeter, fiscal readiness, portability, fraud controls, verticalization, expansion, unit economics, defensibility, reconciliation, intelligence, and geographic expansion.
-- [Universal segment strategy](docs/segment_strategy_and_duka_economics.md) — Duka-to-enterprise market coverage, Duka economics, packaging, progressive complexity, acquisition, support, and segment-level commercial doctrine.
+- [Commercial validation plan](docs/commercial/02_validation/commercial_validation_plan.md) — 12 concrete experiments, pricing tests, CAC economics, segment-aware PMF gates, and validation rules.
+- [Commercial Operating Model](docs/commercial/01_strategy/commercial_operating_model.md) — buyer/payer separation, payment collection, distribution, onboarding, trust, retention, support economics, regulatory perimeter, fiscal readiness, portability, fraud controls, verticalization, expansion, unit economics, defensibility, reconciliation, intelligence, and geographic expansion.
+- [Universal segment strategy](docs/commercial/01_strategy/segment_strategy_and_duka_economics.md) — Duka-to-enterprise market coverage, Duka economics, packaging, progressive complexity, acquisition, support, and segment-level commercial doctrine.
 - [System architecture](docs/system_architecture_design.md) — runtime, module, trust, and operational boundaries.
 - [Domain model](docs/domain_model.md) — business semantics and invariants.
 - [Security implementation specification](docs/security_implementation_spec.md) and [threat model](docs/threat_model.md) — security controls and threats.
@@ -83,11 +83,13 @@ PC     → CONTROL / MANAGE
 WEB    → ADMINISTER / SUPPORT
 ~~~
 
-Duka does not require a PC. Multi-Branch does not require a PC at every branch. Enterprise is control-plane first rather than simply PC-first. Hardware remains optional at entry; the full tier, device, UI, subscriber-scenario, and economics model is documented in [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
+Duka does not require a PC. Multi-Branch does not require a PC at every branch. Enterprise is control-plane first rather than simply PC-first. Hardware remains optional at entry; the full tier, device, UI, subscriber-scenario, and economics model is documented in [Universal Segment Strategy](docs/commercial/01_strategy/segment_strategy_and_duka_economics.md).
 
 ## Delivery status
 
-The repository has progressed beyond the initial engineering substrate into the tenancy and authorization foundation.
+The repository has progressed beyond the initial engineering substrate into the tenancy, authorization and PostgreSQL security-boundary work.
+
+Current product implementation position is **Phase 4 Part 8 / PR-009: durable audit evidence + transactional outbox**. The workflow/documentation architecture is maintained separately in the ICM engineering workspace.
 
 Current main-branch status includes:
 
@@ -95,9 +97,12 @@ Current main-branch status includes:
 - Phase 2 configuration, secrets, errors, telemetry, and runtime foundation;
 - Phase 3 identity/session/MFA/device-identity foundation;
 - Phase 4 organization/branch APIs and repository-scope enforcement;
-- the current Phase 4 RLS implementation contract.
+- Phase 4 PostgreSQL/RLS security-boundary implementation;
+- active Phase 4 Part 8 audit/outbox contract and implementation work.
 
-Commercially, the product remains **pre-validation**. The business model is an enterprise-capable target model and its pricing, segment, channel, retention, Duka economics, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial_validation_plan.md) and [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
+Later phase documents, including Phase 8 product catalogue, are target-state contracts and do not change the current product phase.
+
+Commercially, the product remains **pre-validation**. The business model is an enterprise-capable target model and its pricing, segment, channel, retention, Duka economics, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial/02_validation/commercial_validation_plan.md) and [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
 
 The PostgreSQL integration-test harness remains explicitly deferred where stated by the phase documentation. Product implementation must continue to follow the applicable phase contracts and security architecture.
 

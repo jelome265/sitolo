@@ -3280,7 +3280,7 @@ These rules are absolute unless superseded by a higher-authority requirement exp
 
 This contract is derived from the project’s governing design documents:
 
-- `business_model_design.md` — commercial model, segments, product surfaces, monetization, retention, enterprise strategy, regulatory/commercial boundaries.
+- `docs/commercial/01_strategy/business_model_design.md` — commercial model, segments, product surfaces, monetization, retention, enterprise strategy, regulatory/commercial boundaries.
 - `system_architecture_design.md` — runtime architecture, module boundaries, Rust/Axum/Tokio, Flutter/Tauri, PostgreSQL/SQLite, workers, adapters, sync, reliability, performance, operations.
 - `security_architecture_design.md` — zero-trust security contract, threat model, authorization, tenant isolation, API security, CI/CD security, release gates, incident controls.
 - `domain_model.md` — domain concepts, aggregates, value objects, commands, events, state machines, invariants, bounded contexts, offline semantics.

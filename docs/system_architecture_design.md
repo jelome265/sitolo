@@ -128,7 +128,7 @@ This architecture derives from the existing `sitolo.md` enterprise product speci
 
 ## 3.1 Rust baseline
 
-As of 20 August 2026, Rust 1.98.0 is the latest stable release listed by the official Rust release announcements. Sitolo should pin an explicit stable toolchain in repository configuration and CI rather than building against whatever compiler happens to be installed on a developer machine. citeturn244519search0turn244519search3
+Rust 1.98.1 is the current stable release verified for this architecture baseline. The exact patch level is pinned in repository configuration and must be upgraded intentionally. See `docs/external_standards_verification_register.md` for dated external-version verification.
 
 The repository should treat the compiler, Cargo lockfiles and crate versions as part of the reproducible build boundary. Upgrade cadence should be deliberate: security fixes and critical compiler/toolchain fixes can be expedited; routine stable adoption can occur through an upgrade PR with full CI and performance regression checks.
 
@@ -4156,7 +4156,7 @@ staging
 production
 ```
 
-Rust 1.98.0 is the current stable release listed in the official release feed as of this architecture's preparation date. The exact patch level used by the repository should be pinned and upgraded intentionally. citeturn244519search0turn244519search3
+Rust 1.98.1 is the repository's verified stable toolchain baseline. The exact patch level is pinned and upgraded intentionally. See `docs/external_standards_verification_register.md` for dated verification.
 
 # 229. Dependency License and Provenance
 
