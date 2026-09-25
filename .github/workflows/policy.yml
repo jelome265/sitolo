@@ -33,6 +33,9 @@ jobs:
         run: ./scripts/ci/check-workflow-policy
       - name: ICM workspace policy check
         run: bash ./scripts/ci/check-icm-workspace
+      - name: ICM PowerShell parity check
+        shell: pwsh
+        run: ./scripts/ci/check-icm-workspace.ps1
       - name: System Map generated-file check
         run: |
           bash ./scripts/ci/generate-system-map-routing
