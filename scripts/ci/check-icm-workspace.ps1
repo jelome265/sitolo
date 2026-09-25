@@ -40,7 +40,7 @@ foreach ($path in $required) {
 }
 
 foreach ($entry in @("CLAUDE.md","$WORKSPACE\CLAUDE.md","$WORKSPACE\CONTEXT.md","map\CLAUDE.md","map\CONTEXT.md")) {
-  if (Test-Path $entry -PathType Leaf -and (Get-Content $entry).Count -gt 80) {
+  if ((Test-Path $entry -PathType Leaf) -and ((Get-Content $entry).Count -gt 80)) {
     Write-Error "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry"
     $fail = $true
   }
