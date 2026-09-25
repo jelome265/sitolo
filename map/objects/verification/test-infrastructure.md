@@ -1,9 +1,13 @@
+---
+type: object
+status: stub
+cluster: verification
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-testkit/src/lib.rs
+source_citation: crates/sitolo-testkit/src/lib.rs:1
+---
 # Test Infrastructure
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: verification
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Unit, integration and security test suites.
 ## See
 
 docs/testing_strategy.md
+
