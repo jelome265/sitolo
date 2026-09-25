@@ -3,7 +3,7 @@
 **Status:** Working commercial-validation contract  
 **Prepared:** 2026-09-22  
 **Market:** Malawi first; regional expansion only after evidence-based validation  
-**Parent strategy:** [Business Model Design](business_model_design.md)
+**Parent strategy:** [Business Model Design](../01_strategy/business_model_design.md)
 
 ---
 
