@@ -41,7 +41,11 @@ jobs:
       - name: Documentation reference check
         run: python3 ./scripts/ci/check-doc-references
       - name: Documentation reference inventory
-        run: python3 ./scripts/ci/check-doc-references --inventory | tee documentation-reference-inventory.txt
+        run: |
+          python3 ./scripts/ci/check-doc-references --inventory > documentation-reference-inventory.txt
+          test -s documentation-reference-inventory.txt
+          grep -q "^DOCUMENT REFERENCE INVENTORY:" documentation-reference-inventory.txt
+          cat documentation-reference-inventory.txt
       - name: Upload documentation reference inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
