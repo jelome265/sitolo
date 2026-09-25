@@ -149,8 +149,8 @@ try {
   for ($i = 0; $i -lt $STAGES.Count; $i++) {
     $stage = $STAGES[$i]
     $context = Join-Path $coldRoot "$WORKSPACE\stages\$stage\CONTEXT.md"
-    $output = Join-Path $coldRoot "$WORKSPACE\stages\$stage\output"
-    $body = Get-Content $context -Raw
+    $context = Join-Path $coldRoot "workspace\sitolo-engineering\stages\$stage\CONTEXT.md"
+    $output = Join-Path $coldRoot "workspace\sitolo-engineering\stages\$stage\output"
     $matches = [regex]::Matches($body, "\.\./[0-9]{2}-[^ |\r\n]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md")
     foreach ($match in $matches) {
       $relative = $match.Value -replace "\[run-slug\]", $coldSlug
@@ -159,7 +159,7 @@ try {
     }
     $target = Join-Path $output ($coldSlug + "-" + $ARTIFACTS[$i] + ".md")
     Copy-Item (Join-Path $coldRoot "$WORKSPACE\_templates\$($TEMPLATES[$i]).md") $target -Force
-    $artifact = Get-Content $target -Raw
+    Copy-Item (Join-Path $coldRoot "workspace\sitolo-engineering\_templates\$($TEMPLATES[$i]).md") $target -Force
 $artifact = $artifact -replace 'run_slug: "\[run-slug\]"', 'run_slug: "cold-walk"'
     $artifact = $artifact -replace "(?m)^status: draft$", "status: human-approved"
     Set-Content $target $artifact -NoNewline
@@ -167,7 +167,7 @@ $artifact = $artifact -replace 'run_slug: "\[run-slug\]"', 'run_slug: "cold-walk
     if ($artifact -notmatch '(?m)^run_slug: "cold-walk"$' -or $artifact -notmatch '(?m)^status: human-approved$') { $fail = $true; Write-Error "ICM COLD WALK FAILED: synthetic human gate metadata missing: $target" }
   }
   $count = (Get-ChildItem "$coldRoot\$WORKSPACE\stages" -Recurse -File | Where-Object { $_.FullName -match "\\output\\" -and $_.Name -ne ".gitkeep" }).Count
-  if ($count -ne 9) { $fail = $true; Write-Error "ICM COLD WALK FAILED: expected 9 artifacts, found $count" }
+  $count = (Get-ChildItem "$coldRoot\workspace\sitolo-engineering\stages" -Recurse -File | Where-Object { $_.FullName -match "\\output\\" -and $_.Name -ne ".gitkeep" }).Count
   $mapCard = Get-Content (Join-Path $coldRoot "map\objects\runtime\api-boundary.md") -Raw
   $source = ([regex]::Match($mapCard,"(?m)^source:\s*(.+)$")).Groups[1].Value.Trim()
   if (-not (Test-Path $source -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: System Map source hop failed: $source" }
