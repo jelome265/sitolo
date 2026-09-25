@@ -43,6 +43,13 @@ required=(
   "scripts/ci/generate-system-map-index"
 )
 
+for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" map/CLAUDE.md map/CONTEXT.md; do
+  if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
+    echo "ICM WORKSPACE VIOLATION: routing/context file exceeds 80 lines: $entry" >&2
+    fail=1
+  fi
+done
+
 for path in "${required[@]}"; do
   if [[ ! -f "$path" ]]; then
     echo "ICM WORKSPACE VIOLATION: missing required file: $path" >&2
@@ -64,6 +71,10 @@ for stage in "${STAGES[@]}"; do
   fi
 
   if [[ -f "$context" ]]; then
+    if grep -Eq "\| \../[^|]*/output/ \|" "$context"; then
+      echo "ICM WORKSPACE VIOLATION: stage handoffs must name exact output paths, not output directories: $context" >&2
+      fail=1
+    fi
     for section in "## Inputs" "## Process" "## Outputs" "## Human Check"; do
       if ! grep -Eq "^$section$" "$context"; then
         echo "ICM WORKSPACE VIOLATION: stage contract must declare $section: $context" >&2
