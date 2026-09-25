@@ -97,7 +97,7 @@ Current main-branch status includes:
 - Phase 4 organization/branch APIs and repository-scope enforcement;
 - the current Phase 4 RLS implementation contract.
 
-Commercially, the product remains **pre-validation**. The business model is an enterprise-capable target model and its pricing, segment, channel, retention, Duka economics, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial_validation_plan.md) and [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
+Commercially, the product remains **pre-validation**. The business model is an enterprise-capable target model and its pricing, segment, channel, retention, Duka economics, and PMF assumptions remain hypotheses until validated through the [Commercial Validation Plan](docs/commercial/02_validation/commercial_validation_plan.md) and [Universal Segment Strategy](docs/segment_strategy_and_duka_economics.md).
 
 The PostgreSQL integration-test harness remains explicitly deferred where stated by the phase documentation. Product implementation must continue to follow the applicable phase contracts and security architecture.
 
