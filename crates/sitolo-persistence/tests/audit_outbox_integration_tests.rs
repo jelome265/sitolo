@@ -44,6 +44,7 @@ struct AuditOutboxTestContext {
     guard: SchemaGuard,
     _schema_name: String,
     store: PgAuditOutboxStore,
+    worker_pool: PgPool,
     org_a_scope: AuthorizedScope,
     _org_b_scope: AuthorizedScope,
     org_a_id_str: String,
@@ -112,6 +113,13 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
     admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
     runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
 
+    let mut worker_opts: sqlx::postgres::PgConnectOptions = runtime_url.parse().expect("Invalid runtime database URL");
+    worker_opts = worker_opts
+        .username("app_worker")
+        .password("test")
+        .options([("search_path", schema_name.as_str())]);
+
+
     let admin_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect_with(admin_opts.clone())
@@ -119,7 +127,14 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
-            let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
+            let role_sql = "DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN
+        CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_worker') THEN
+        CREATE ROLE app_worker WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+END $$;";
             sqlx::raw_sql(role_sql)
                 .execute(&admin_pool)
                 .await
@@ -140,6 +155,12 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
     );
     sqlx::raw_sql(&grant_schema_sql)
         .execute(&admin_pool)
+        .await?;
+
+    
+    let worker_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(worker_opts.clone())
         .await?;
 
     let pools = PgAuthorityPools::connect_options(admin_opts.clone(), runtime_opts.clone()).await?;
@@ -210,7 +231,7 @@ async fn setup_audit_outbox_context() -> Result<Option<AuditOutboxTestContext>, 
     .execute(&admin_pool)
     .await?;
 
-    let store = PgAuditOutboxStore::new(pools.runtime_pool().clone());
+    let store = PgAuditOutboxStore::new(pools.runtime_pool().clone(), worker_pool.clone());
 
     Ok(Some(AuditOutboxTestContext {
         pools,
@@ -251,11 +272,35 @@ fn sample_audit_event(id: &str, org_id: &str) -> IamAuditEvent {
     }
 }
 
+
+async fn application_activate_organization(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    store: &PgAuditOutboxStore,
+    org_id: &str,
+    audit_id: &str,
+    outbox_id: &str,
+) -> Result<(), PgAuthorityError> {
+    sqlx::query("UPDATE organizations SET state = 'ACTIVE', state_version = state_version + 1 WHERE id = $1")
+        .bind(org_id)
+        .execute(&mut **tx)
+        .await?;
+
+    let audit = sample_audit_event(audit_id, org_id);
+    store.record_iam_audit_tx(tx, &audit).await?;
+
+    let dedup_key = format!("dedup_activate_{}", audit_id);
+    let outbox = sample_outbox_event(outbox_id, &dedup_key, org_id);
+    store.enqueue_outbox_tx(tx, &outbox).await?;
+
+    Ok(())
+}
+
 fn sample_outbox_event(id: &str, dedup_key: &str, org_id: &str) -> OutboxEvent {
     OutboxEvent {
         event_id: OutboxEventId::new(id).unwrap(),
         aggregate_type: "organization".into(),
         aggregate_id: org_id.to_string(),
+        aggregate_sequence: 1,
         event_name: "iam.organization.created".into(),
         event_version: 1,
         organization_id: Some(org_id.to_string()),
@@ -270,6 +315,7 @@ fn sample_outbox_event(id: &str, dedup_key: &str, org_id: &str) -> OutboxEvent {
         last_error_class: None,
         deduplication_key: dedup_key.to_string(),
         schema_version: 1,
+        claim_token: None,
     }
 }
 
@@ -278,7 +324,7 @@ fn sample_outbox_event(id: &str, dedup_key: &str, org_id: &str) -> OutboxEvent {
 // ============================================================================
 
 #[tokio::test]
-async fn test_atomicity_commit_all_succeeds() {
+async fn test_application_command_atomicity() {
     run_audit_outbox_test(|ctx| async move {
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
         set_transaction_tenant_context(&mut tx, &ctx.org_a_scope)
@@ -645,4 +691,45 @@ async fn test_cross_tenant_audit_isolation() {
         tx_b.commit().await.unwrap();
     })
     .await;
+}
+
+#[tokio::test]
+async fn test_lease_race_and_reclaim() {
+    run_audit_outbox_test(|ctx| async move {
+        // Enqueue an event
+        let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
+        set_transaction_tenant_context(&mut tx, &ctx.org_a_scope).await.unwrap();
+
+        let audit_id = format!("evt_race_{}", uuid::Uuid::new_v4().simple());
+        let outbox_id = format!("evt_outbox_race_{}", uuid::Uuid::new_v4().simple());
+        
+        application_activate_organization(&mut tx, &ctx.store, &ctx.org_a_id_str, &audit_id, &outbox_id)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // Worker A claims the event
+        let now = std::time::SystemTime::now();
+        let claimed = ctx.store.claim_outbox_events(1, std::time::Duration::from_secs(1), now).await.unwrap();
+        assert_eq!(claimed.len(), 1);
+        let token_a = claimed[0].claim_token.clone().unwrap();
+
+        // Wait for lease to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Worker B claims the same event (stale lease recovery)
+        let now2 = std::time::SystemTime::now();
+        let claimed_b = ctx.store.claim_outbox_events(1, std::time::Duration::from_secs(60), now2).await.unwrap();
+        assert_eq!(claimed_b.len(), 1);
+        let token_b = claimed_b[0].claim_token.clone().unwrap();
+        
+        assert_ne!(token_a, token_b, "Worker B should get a new claim token");
+
+        // Worker A tries to mark published with stale token
+        let stale_res = ctx.store.mark_published(&claimed[0].event_id, &token_a, now2).await;
+        assert!(stale_res.is_err(), "Stale worker A should be rejected");
+
+        // Worker B marks published with valid token
+        ctx.store.mark_published(&claimed_b[0].event_id, &token_b, now2).await.unwrap();
+    }).await;
 }
