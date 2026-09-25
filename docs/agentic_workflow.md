@@ -4,6 +4,14 @@ Sitolo uses the Interpretable Context Methodology as its agent workflow architec
 
 Reference: https://github.com/RinDig/Interpretable-Context-Methodology
 
+## Instruction entry points
+
+Claude Code uses `CLAUDE.md` for repository guidance. Codex uses `AGENTS.md` as its discovered repository instruction file. Sitolo keeps `CLAUDE.md` as the canonical ICM router and `AGENTS.md` as the Codex entry point that routes into that same canonical policy. OpenAI's current Codex documentation confirms automatic `AGENTS.md` discovery and root-to-leaf instruction loading. citeturn830571view2turn830571view3
+
+## Product phase vs ICM stage
+
+The ICM pipeline is engineering workflow infrastructure, not Sitolo product-phase sequencing. Sitolo's active product stream remains Phase 4 Part 8 / PR-009. A later contract such as Phase 8 Product Catalogue is target-state documentation, not a phase transition.
+
 ## Two complementary forms
 
 Sitolo composes two ICM forms:
