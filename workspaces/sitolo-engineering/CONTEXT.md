@@ -5,30 +5,32 @@ Run one engineering request through the stages in order. Each stage is a file-ba
 ## Pipeline
 
 01-select → 02-research → 03-investigate → 04-plan → 05-implement → 06-audit → 07-remediate → 08-verify → 09-deliver
-                                                                               ↑
-                                                                               └── re-audit after fixes
 
-Research is always a stage. It may conclude that external research is not required. Remediation is always a stage. It may conclude that no fix is required.
+Research always runs as a decision gate. Remediation always runs as a decision gate. A remediation that changes the implementation returns to audit before verification.
 
 ## Task Routing
 
-| Task Type | Go To | Input |
-|---|---|---|
-| Start a change | stages/01-select/CONTEXT.md | User request |
-| Continue current run | current stage CONTEXT.md | Existing handoff |
-| Re-audit after remediation | stages/06-audit/CONTEXT.md | Latest remediation output |
-| Show status | scan stage output directories | files other than .gitkeep |
+| Task | Go To |
+|---|---|
+| Start a change | stages/01-select/CONTEXT.md |
+| Continue a run | current stage CONTEXT.md |
+| Re-audit remediation | stages/06-audit/CONTEXT.md |
+| Show status | stage output directories |
 
 ## Shared Resources
 
 | Resource | Location | Contains |
 |---|---|---|
-| Workspace policy | _config/workflow-policy.md | Stable workflow settings |
-| Shared context | shared/ | Cross-stage material |
-| Skills | skills/ | Bundled engineering knowledge |
-| Project governance | ../../agent.md | Authority and engineering rules |
-| Project docs map | ../../docs/README.md | Selective document routing |
+| Business and product context | shared/business-context/CONTEXT.md | Product, actor, segment, tier, onboarding and commercial routing |
+| Technical context | shared/technical-context/CONTEXT.md | Architecture, domain, DB, API, sync, testing and operations routing |
+| Security context | shared/security-context/CONTEXT.md | Threat, controls and security test routing |
+| Commercial context | shared/commercial-context/CONTEXT.md | Commercial governance and economics routing |
+| Integration context | shared/integration-context/CONTEXT.md | Provider and fiscal integration routing |
+| Phase context | shared/phase-context/CONTEXT.md | Current implementation contracts |
+| Artifact templates | _templates/CONTEXT.md | Output shapes |
+| Repository map | ../../map/CLAUDE.md | Change-impact routing |
+| Governance | ../../agent.md | Engineering authority |
 
 ## Status
 
-An output directory containing only .gitkeep means PENDING. Any other file means an artifact exists. File presence does not prove quality or approval.
+An output directory containing only .gitkeep is PENDING. Any other file means an artifact exists. File presence does not prove approval or quality.

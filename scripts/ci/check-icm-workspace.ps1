@@ -14,6 +14,24 @@ $required = @(
   "$WORKSPACE\_config\workflow-policy.md",
   "$WORKSPACE\shared\context-loading.md",
   "$WORKSPACE\skills\engineering-review\SKILL.md"
+  "$WORKSPACE\shared\CONTEXT.md"
+  "$WORKSPACE\shared\business-context\CONTEXT.md"
+  "$WORKSPACE\shared\technical-context\CONTEXT.md"
+  "$WORKSPACE\shared\security-context\CONTEXT.md"
+  "$WORKSPACE\shared\commercial-context\CONTEXT.md"
+  "$WORKSPACE\shared\integration-context\CONTEXT.md"
+  "$WORKSPACE\shared\phase-context\CONTEXT.md"
+  "map\CLAUDE.md"
+  "map\AGENTS.md"
+  "map\routing.md"
+  "map\CONTEXT.md"
+  "map\_meta\schema.md"
+  "map\_templates\object.md"
+  "map\_templates\process.md"
+  "map\objects\CONTEXT.md"
+  "map\objects\_index.md"
+  "map\processes\CONTEXT.md"
+  "map\effects\CONTEXT.md"
 )
 
 foreach ($path in $required) {
@@ -72,6 +90,11 @@ foreach ($stage in $STAGES) {
       }
     }
   }
+}
+
+if (-not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\AGENTS.md").Hash) -or -not ((Get-FileHash "map\CLAUDE.md").Hash -eq (Get-FileHash "map\routing.md").Hash)) {
+  Write-Error "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins."
+  $fail = $true
 }
 
 if (Test-Path ".codex" -PathType Container) {

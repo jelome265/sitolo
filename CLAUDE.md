@@ -2,30 +2,22 @@
 
 Sitolo uses a filesystem-routed Interpretable Context Methodology workspace for repeatable engineering work.
 
-## Workspace Map
-
-CLAUDE.md
-CONTEXT.md
-AGENTS.md
-agent.md
-docs/
-workspaces/
-  sitolo-engineering/
-
 ## Routing
 
-| Task | Workspace | Entry |
+| Task | Go To | Description |
 |---|---|---|
-| Software change, bug, feature, security fix, migration | workspaces/sitolo-engineering/CLAUDE.md | workspace router |
-| Pipeline status | workspaces/sitolo-engineering/CONTEXT.md | status section |
-| Workflow setup | workspaces/sitolo-engineering/setup/questionnaire.md | setup |
+| Engineering change | workspaces/sitolo-engineering/CLAUDE.md | Routes to the engineering pipeline |
+| Pipeline status | workspaces/sitolo-engineering/CONTEXT.md | Shows stage state |
+| Repository change impact | map/CLAUDE.md | Routes to the ICM System Map of the codebase |
+| Architecture or corpus question | docs/README.md | Routes to authoritative project knowledge |
+| Workflow integrity | scripts/ci/check-icm-workspace | Mechanical workspace validation |
 
-## What to Load
+## Loading
 
-| Task | Load | Do NOT Load |
-|---|---|---|
-| Any engineering task | selected workspace router, then selected stage contract | unrelated workspaces, all stage references, all prior outputs |
-| Architecture question | agent.md, docs/README.md, then only routed documents | stage outputs unless the question concerns a run |
-| Pipeline status | workspace CONTEXT.md | application source and stage references |
+The root router only chooses a workspace or map. It must not contain stage procedures or duplicate project policy.
 
-The root router only selects a workspace. Stage procedures and project engineering rules live elsewhere.
+When entering the engineering workspace, read its CLAUDE.md, then CONTEXT.md, then the selected stage contract.
+
+## Authority
+
+agent.md is the detailed engineering governance contract. docs/README.md is the project documentation map. Workspaces provide workflow routing only.

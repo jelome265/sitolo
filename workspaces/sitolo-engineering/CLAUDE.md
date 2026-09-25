@@ -4,8 +4,11 @@ This workspace takes one engineering request through a controlled sequence from 
 
 ## Folder Map
 
+CLAUDE.md
+CONTEXT.md
 setup/
 _config/
+_templates/
 shared/
 skills/
 stages/
@@ -32,7 +35,7 @@ stages/
 |---|---|
 | New feature, bug, security fix, migration, refactor | stages/01-select/CONTEXT.md |
 | Current external/regulatory/provider fact | stages/02-research/CONTEXT.md |
-| Existing code and contract investigation | stages/03-investigate/CONTEXT.md |
+| Existing implementation and contracts | stages/03-investigate/CONTEXT.md |
 | Implementation design | stages/04-plan/CONTEXT.md |
 | Code change | stages/05-implement/CONTEXT.md |
 | Contract/security review | stages/06-audit/CONTEXT.md |
@@ -45,11 +48,12 @@ stages/
 | Task | Load | Do NOT Load |
 |---|---|---|
 | Enter workspace | CONTEXT.md, then selected stage CONTEXT.md | other stage contracts |
-| Execute a stage | selected CONTEXT.md, declared references, declared previous outputs | unrelated stage folders |
-| Resume | current stage contract and its declared handoff files | restart from the beginning unless required |
+| Product-affecting engineering | shared/business-context/CONTEXT.md and only the routed source sections | the full commercial corpus |
+| Architecture/security change | shared/technical-context/CONTEXT.md or shared/security-context/CONTEXT.md | unrelated reference families |
+| Repository change impact | ../../map/CLAUDE.md | the whole source tree |
 
 ## Stage Handoffs
 
-Every stage writes only to its own output directory. The next stage reads the previous stage output named by its contract. A human may edit an output before the next stage runs; the next stage must use the edited file.
+Every stage writes only to its own output directory. The next stage reads the previous stage's declared output. A human may edit an output before the next stage runs.
 
-Stages are numbered and one-way. Do not skip a stage. Remediation returns to audit before verification.
+Do not skip stages. Remediation returns to audit before verification.

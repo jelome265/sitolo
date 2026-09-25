@@ -1,123 +1,52 @@
 # Sitolo ICM Engineering Workflow
 
-Sitolo adopts the Interpretable Context Methodology (ICM) described by Jake Van Clief and David McDermott. The workflow is filesystem-routed rather than driven by a multi-agent orchestration runtime.
+Sitolo uses the Interpretable Context Methodology as its agent workflow architecture. The workflow is filesystem-routed: one agent reads the smallest relevant context, performs one stage job, writes a plain-text handoff, and proceeds through explicit gates.
 
-## Architecture
+Reference: https://github.com/RinDig/Interpretable-Context-Methodology
 
-The routing layers are:
+## Two complementary forms
 
-```
-root CLAUDE.md
-    ↓
-root CONTEXT.md
-    ↓
-workspaces/sitolo-engineering/CLAUDE.md
-    ↓
-workspaces/sitolo-engineering/CONTEXT.md
-    ↓
-numbered stage CONTEXT.md
-    ↓
-declared references + previous output
-    ↓
-stage output
-    ↓
-next stage
-```
+Sitolo composes two ICM forms:
 
-The repository AGENTS.md is a Codex compatibility adapter that routes Codex into the same filesystem model. The detailed Sitolo engineering contract remains in agent.md. Project knowledge remains in docs/.
+1. Pipeline: repeated engineering runs with numbered stages and human-editable handoffs.
+2. System Map: a read-oriented edit graph of the repository so later agents can locate nouns, real movements, and first-order change impact without crawling the entire tree.
 
-## Five Layers
+## Five-layer context
 
-1. Root or workspace router: where am I and where do I go?
-2. Stage CONTEXT.md: what does this stage load and do?
-3. Reference material: stable rules and domain knowledge.
-4. Working artifacts: the current run's outputs and handoffs.
-5. Human edit surface: each output may be reviewed and edited before the next stage consumes it.
+| Layer | Sitolo | Purpose |
+|---|---|---|
+| L0 | root CLAUDE.md | Where am I? |
+| L1 | workspace CONTEXT.md | Where do I go? |
+| L2 | stage CONTEXT.md | What do I do? |
+| L3 | shared routers, references, skills | What rules apply? |
+| L4 | stage output | What am I working with? |
 
-No stage loads the entire repository by default.
+ICM explicitly separates stable reference material from run-specific artifacts and requires selective loading.
 
-## Sitolo Pipeline
+## Business model
 
-The base engineering workspace uses:
+Yes, the business model is part of the engineering context, but it is Layer 3 reference material, not stage procedure and not copied into every prompt.
 
-```
-01-select
-02-research
-03-investigate
-04-plan
-05-implement
-06-audit
-07-remediate
-08-verify
-09-deliver
-```
+Use the business-context router for product scope, user/actor semantics, customer workflows, segments, tiers, vertical modules, onboarding, monetization, continuity, and business/regulatory boundaries.
 
-The sequence is intentionally explicit. Research always runs, but may conclude that no external research is required. Remediation always runs, but may conclude that no remediation is required. When remediation changes code, the workflow returns to 06-audit before 08-verify.
+The canonical commercial documents remain under docs/commercial/. The agent must read only the relevant document and section for the active change. A low-level implementation change that cannot alter product behavior should not load the commercial corpus.
 
-## Stage Contracts
+## Pipeline
 
-Every stage has a CONTEXT.md with:
+01-select → 02-research → 03-investigate → 04-plan → 05-implement → 06-audit → 07-remediate → 08-verify → 09-deliver
 
-- Inputs: exactly what the stage may load.
-- Process: one job expressed as explicit steps.
-- Outputs: the artifact written for the next stage.
+Every stage owns an output directory. Human edits to stage output are valid handoffs. Stage contracts contain Inputs, Process, and Outputs and remain short routing documents.
 
-Stage contracts are routing files, not repositories for long engineering policy. Long-lived rules belong in agent.md or an appropriate reference file.
+## Human gates
 
-## Handoffs
+Consequential handoffs are intentionally visible. The person can inspect and edit the artifact before the next stage consumes it.
 
-Each stage writes to its own output directory. The next stage reads the output named by the previous stage contract.
+## System Map
 
-A human can edit an output file before the next stage runs. That edited file is the handoff. The workflow does not rely on hidden memory or an orchestration database.
+map/ follows the current ICM System Map form for a repository that later agents must edit. The subject tree remains authoritative. The map catalogs nouns, real movements, and first-order change impact; it does not become a second architecture specification.
 
-## Canonical Sources
+## Validation
 
-One rule has one authoritative home.
+scripts/ci/check-icm-workspace and its PowerShell counterpart verify the workspace structure. The canonical repository verifier invokes the workspace check.
 
-- Engineering governance: agent.md.
-- Documentation routing: docs/README.md.
-- Workflow configuration: workspaces/sitolo-engineering/_config/workflow-policy.md.
-- Stage procedure: that stage's CONTEXT.md.
-- Stable stage-specific knowledge: that stage's references or workspace skills.
-- Run-specific state: stage output files.
-
-Previous stage outputs are not style guides or policy sources.
-
-## Human Gates
-
-Consequential stages contain a Human Check. The agent produces the stage artifact, the human reviews or edits it, and only then should the next stage consume it.
-
-This keeps the workflow inspectable and makes every intermediate decision an explicit edit surface.
-
-## Mechanical Validation
-
-The repository validates the ICM structure with:
-
-```
-./scripts/ci/check-icm-workspace
-```
-
-The canonical repository verifier also invokes this check. CI policy runs it for workflow/workspace changes.
-
-Validation checks include required routing files, numbered stages, stage-contract length, reference length, output-directory structure, Markdown output discipline, and rejection of the old repository-global orchestration directories.
-
-## Why This Fits Sitolo
-
-Sitolo's engineering work is primarily sequential and reviewable:
-
-- requirements are selected before design;
-- external facts are established before implementation when necessary;
-- existing code and contracts are investigated before planning;
-- implementation follows an explicit plan;
-- audit is independent of implementation;
-- remediation can feed back into audit;
-- verification produces reproducible evidence;
-- delivery is separate from implementation.
-
-The filesystem therefore provides a visible state machine without creating a second application that has to understand Sitolo's domain.
-
-## Scope Boundary
-
-ICM is the workflow architecture, not a replacement for domain architecture, CI, PostgreSQL, workers, external integrations, or application runtime design.
-
-For dynamic real-time collaboration among multiple agents or high-concurrency distributed execution, a dedicated coordination system may be justified. That is outside this repository's base engineering workspace.
+Known missing references in the existing documentation corpus are recorded as integrity findings rather than fabricated into new facts.

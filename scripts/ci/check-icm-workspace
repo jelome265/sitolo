@@ -19,6 +19,24 @@ required=(
   "$WORKSPACE/_config/workflow-policy.md"
   "$WORKSPACE/shared/context-loading.md"
   "$WORKSPACE/skills/engineering-review/SKILL.md"
+  "$WORKSPACE/shared/CONTEXT.md"
+  "$WORKSPACE/shared/business-context/CONTEXT.md"
+  "$WORKSPACE/shared/technical-context/CONTEXT.md"
+  "$WORKSPACE/shared/security-context/CONTEXT.md"
+  "$WORKSPACE/shared/commercial-context/CONTEXT.md"
+  "$WORKSPACE/shared/integration-context/CONTEXT.md"
+  "$WORKSPACE/shared/phase-context/CONTEXT.md"
+  "map/CLAUDE.md"
+  "map/AGENTS.md"
+  "map/routing.md"
+  "map/CONTEXT.md"
+  "map/_meta/schema.md"
+  "map/_templates/object.md"
+  "map/_templates/process.md"
+  "map/objects/CONTEXT.md"
+  "map/objects/_index.md"
+  "map/processes/CONTEXT.md"
+  "map/effects/CONTEXT.md"
 )
 
 for path in "${required[@]}"; do
@@ -80,6 +98,11 @@ done
 
 if [[ -d .codex ]]; then
   echo "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces instead." >&2
+  fail=1
+fi
+
+if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md; then
+  echo "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins." >&2
   fail=1
 fi
 
