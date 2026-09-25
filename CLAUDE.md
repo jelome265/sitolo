@@ -1,4 +1,4 @@
-# Sitolo — ICM Root Router
+# Sitolo - ICM Root Router
 
 Sitolo uses a filesystem-routed Interpretable Context Methodology workspace for repeatable engineering work.
 
