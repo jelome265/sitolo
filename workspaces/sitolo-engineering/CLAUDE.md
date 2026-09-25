@@ -56,4 +56,4 @@ stages/
 
 Every stage writes only to its own output directory. The next stage reads the previous stage's declared output. A human may edit an output before the next stage runs.
 
-Do not skip stages. Remediation returns to audit before verification.
+Do not skip stages. A remediation-triggered re-audit is a human-controlled revisit to 06 before verification, not an automatic stage dependency.
