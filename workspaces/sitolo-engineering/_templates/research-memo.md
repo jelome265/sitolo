@@ -1,3 +1,9 @@
+---
+artifact_type: research-memo
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Research Memo
 
 ## Question
@@ -10,3 +16,4 @@
 ## Uncertainty
 
 ## Decision impact
+
