@@ -28,7 +28,7 @@ The source code is evidence of current implementation. It does not silently over
 
 ## 2. Reference inventory
 
-The initial audit snapshot contained 86 Markdown files in the scoped documentation/repository set. The current branch contains **155 Markdown files** including the ICM workspace and map. The live count must always be derived from the tree; this document must not become the inventory source. The reference checker must inventory:
+The initial audit snapshot contained 86 Markdown files in the scoped documentation/repository set. Current counts must always be derived from the repository tree; this document is not the inventory source. The reference checker must inventory:
 
 1. explicit Markdown links;
 2. backtick/path-qualified `.md` references;
@@ -109,21 +109,28 @@ ICM routing documents do not change this hierarchy. They only control which sour
 
 ### DOC-007 — MRA EIS dated transition language must remain historical
 **Files:** commercial operating model and any residual EFD/transition references
-**State:** partially addressed
-**Evidence:** current sources describe the nationwide EIS rollout from 1 May 2026, while the commercial operating model's 2026-09-22 text records earlier transition dates as dated compliance signals. The live MRA developer resources continue to expose EIS API material. citeturn297771search1turn689436search4
-**Action:** keep historical dates explicitly historical and maintain a current regulatory-facts source with verification date before external compliance claims.
+**State:** fixed at document-structure level
+**Evidence:** a dated regulatory verification register now separates current regulator facts from historical transition dates and defines reverification triggers.
+**Action:** reverify the register before production certification or external compliance claims.
 **Priority:** P1
 
 ### DOC-008 — External standards need dated verification metadata
 **Targets:** Rust, PostgreSQL, SLSA, OWASP, NIST, OpenTelemetry and provider/regulatory sources
-**State:** recurring freshness risk
-**Action:** each externally versioned requirement must carry a verified date and official source; stale versions become historical rather than silently remaining current.
+**State:** fixed for the core standards set
+**Evidence:** `docs/external_standards_verification_register.md` records Rust 1.98.1, PostgreSQL 18.6, SLSA 1.2, OpenTelemetry Semantic Conventions 1.44.0, OWASP ASVS 5.0.0, and the distinction between final NIST SSDF 1.1 and draft SSDF 1.2, with primary sources.
+**Action:** refresh the register when external standards change.
 **Priority:** P1
 
 ### DOC-009 — Documentation-to-source completion claims are mixed with future-phase contracts
 **Targets:** Phase 5, 6, 7, 8, 9, 10 contracts; testing/deployment/observability contracts
 **State:** semantic classification needed
 **Action:** classify each contract statement as implemented evidence, current requirement, future-phase requirement, or acceptance criterion. No acceptance criterion is evidence merely because it appears as `[X]` or imperative text.
+**Priority:** P1
+
+### DOC-010 — Completed PR-specific contracts can be mistaken for active work
+**Files:** Phase 4 Part 6/7 contracts and superseded PR-008/PR-009 review documents
+**State:** fixed for current routing
+**Action:** current `docs/README.md` and ICM phase routing now classify these as historical/snapshot records; completed Part 6/7 contracts carry explicit lifecycle banners, and PR-009 has a current-status pointer.
 **Priority:** P1
 
 ---
