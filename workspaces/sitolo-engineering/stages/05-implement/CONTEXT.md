@@ -6,8 +6,8 @@ One job: implement the approved plan without broadening scope.
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Implementation plan | ../04-plan/output/ | Approved plan | Exact change contract |
-| Investigation | ../03-investigate/output/ | Findings | Existing-state constraints |
+| Implementation plan | ../04-plan/output/[run-slug]-plan.md | Full file | Exact change contract |
+| Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state constraints |
 | Governance | ../../../../agent.md | Relevant sections | Engineering rules |
 | Project docs | ../../../../docs/README.md | Documents named by plan | Detailed contracts |
 | Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
