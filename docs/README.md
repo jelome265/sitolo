@@ -6,12 +6,23 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 
 | Document | Purpose |
 |---|---|
-| [`agent.md`](../agent.md) | Repository-wide engineering governance contract for AI coding agents and contributors |
+| [`agent.md`](../agent.md) | Repository-wide engineering governance contract |
 | [`ADR-001-025.md`](ADR-001-025.md) | Architecture decision records |
 | [`implementation_plan.md`](implementation_plan.md) | Implementation program overview and sequencing |
-| [`enterprise_audit_and_review.md`](enterprise_audit_and_review.md) | Canonical enterprise architecture, security, reliability, and readiness audit |
-| [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Verified corrections and errata for the design corpus (2026-09-05) |
-| [`agentic_workflow.md`](agentic_workflow.md) | Filesystem-routed ICM engineering workspace, stages, handoffs, and validation |
+| [`enterprise_audit_and_review.md`](enterprise_audit_and_review.md) | Enterprise architecture/security/readiness audit |
+| [`phase0_corrections_errata.md`](phase0_corrections_errata.md) | Verified corrections and errata |
+| [`agentic_workflow.md`](agentic_workflow.md) | ICM engineering workflow |
+| [`icm_reference_integrity.md`](icm_reference_integrity.md) | Documentation reference-integrity findings and repair policy |
+
+## Restored authority paths
+
+| Document | Purpose |
+|---|---|
+| [`sitolo.md`](sitolo.md) | Product/domain specification baseline |
+| [`business_model_design.md`](business_model_design.md) | Compatibility entry to the canonical commercial business model |
+| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture baseline |
+| [`auth_authorization_spec.md`](auth_authorization_spec.md) | Authentication/authorization contract |
+| [`ci_enforcement.md`](ci_enforcement.md) | CI/release enforcement contract |
 
 ## Design corpus
 
@@ -31,51 +42,22 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | Document | Purpose |
 |---|---|
 | [`threat_model.md`](threat_model.md) | Threat model |
-| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture design |
-| [`security_implementation_spec.md`](security_implementation_spec.md) | Security implementation specification |
-| [`security_test_harness.md`](security_test_harness.md) | Security test harness design |
-
-## External integrations
-
-| Document | Purpose |
-|---|---|
-| [`payment_integration_spec.md`](payment_integration_spec.md) | Payment provider integration |
-| [`mra_eis_integration_spec.md`](mra_eis_integration_spec.md) | MRA EIS tax integration |
+| [`security_architecture_design.md`](security_architecture_design.md) | Security architecture |
+| [`security_implementation_spec.md`](security_implementation_spec.md) | Security implementation |
+| [`security_test_harness.md`](security_test_harness.md) | Security test harness |
+| [`auth_authorization_spec.md`](auth_authorization_spec.md) | Identity and authorization contract |
+| [`ci_enforcement.md`](ci_enforcement.md) | CI security/release enforcement |
 
 ## Phase implementation specifications
 
-| Document | Scope |
-|---|---|
-| [`phase1_repository_rust_workspace_ci_deep_implementation.md`](phase1_repository_rust_workspace_ci_deep_implementation.md) | Repository, Rust workspace, CI, supply-chain and build governance |
-| [`phase2_config_secrets_logging_errors_telemetry_implementation.md`](phase2_config_secrets_logging_errors_telemetry_implementation.md) | Config, secrets, logging, errors, telemetry |
-| [`phase2_appconfig_fingerprint_coverage_and_configuration_contract_remediation.md`](phase2_appconfig_fingerprint_coverage_and_configuration_contract_remediation.md) | Phase 2 configuration contract and fingerprint remediation |
-| [`phase2_ci_sha256_fingerprint_lowerhex_failure_remediation.md`](phase2_ci_sha256_fingerprint_lowerhex_failure_remediation.md) | Phase 2 SHA-256 compatibility remediation |
-| [`phase2_postgresql_runtime_configuration_persistence_boundary_implementation.md`](phase2_postgresql_runtime_configuration_persistence_boundary_implementation.md) | Phase 2 PostgreSQL runtime boundary |
-| [`postgresql-runtime-development.md`](postgresql-runtime-development.md) | Safe local PostgreSQL runtime-development path |
-| [`phase3_identity_sessions_mfa_device_identity_implementation.md`](phase3_identity_sessions_mfa_device_identity_implementation.md) | Identity, sessions, MFA, device identity |
-| [`phase4_tenant_organization_branch_iam_implementation.md`](phase4_tenant_organization_branch_iam_implementation.md) | Tenant, organization, branch, IAM |
-| [`phase5_postgresql_schema_migrations_constraints_rls_implementation.md`](phase5_postgresql_schema_migrations_constraints_rls_implementation.md) | PostgreSQL schema, migrations, constraints, RLS |
-| [`phase6_authorization_engine_policy_enforcement_implementation.md`](phase6_authorization_engine_policy_enforcement_implementation.md) | Authorization engine and policy enforcement |
-| [`phase7_security_test_framework_implementation.md`](phase7_security_test_framework_implementation.md) | Security test framework |
+The phase documents remain implementation contracts. The restored Phase 8 catalogue contract is:
 
-Note: `onstreams.apk` is a reference artifact present in this directory, not part of the documentation corpus.
+- [`phase8_product_catalogue_implementation.md`](phase8_product_catalogue_implementation.md)
+
+Existing Phase 1–7 and Phase 9–10 contracts remain listed in their respective corpus sections and must not be replaced by this index.
 
 ## Commercial Operating Model
 
-The commercial corpus is physically grouped under [`commercial/`](commercial/). Grouping is non-destructive: documents remain separate and retain their individual domain boundaries. The commercial corpus audit and precision/consistency contract define authority; the directory structure defines navigation only.
-
-| Group | Scope |
-|---|---|
-| [`commercial/00_governance/`](commercial/00_governance/) | Corpus authority, precision, metrics and decision governance |
-| [`commercial/01_strategy/`](commercial/01_strategy/) | Business model, operating model, segmentation, verticals and country expansion |
-| [`commercial/02_validation/`](commercial/02_validation/) | Commercial experiments and offline validation |
-| [`commercial/03_pricing_packaging/`](commercial/03_pricing_packaging/) | Buyer/payer process, packaging and tier migration |
-| [`commercial/04_acquisition_distribution/`](commercial/04_acquisition_distribution/) | Channels, partners, agents, CAC and contribution economics |
-| [`commercial/05_lifecycle_service/`](commercial/05_lifecycle_service/) | Onboarding, retention, support, trust, portability and continuity |
-| [`commercial/06_payments_finance/`](commercial/06_payments_finance/) | Subscription billing, mobile-money reconciliation, credit and lay-by |
-| [`commercial/07_trust_compliance/`](commercial/07_trust_compliance/) | Regulatory, fiscal/tax and fraud-control boundaries |
-| [`commercial/08_intelligence_defensibility/`](commercial/08_intelligence_defensibility/) | Business intelligence, actioning and defensibility |
-
-### Commercial corpus index
+The commercial corpus is physically grouped under [`commercial/`](commercial/). The canonical business model is [`commercial/01_strategy/business_model_design.md`](commercial/01_strategy/business_model_design.md). The root `business_model_design.md` exists only for compatibility with older references.
 
 See [`commercial/README.md`](commercial/README.md) for the complete grouped-document map, scope definitions, and migration policy.
