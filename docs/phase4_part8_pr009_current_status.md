@@ -6,7 +6,6 @@
 **Base:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`  
 **Review date:** 2026-09-25  
 **Binding contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md`  
-**Detailed execution contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md` and this current-status document
 
 ---
 
@@ -93,7 +92,7 @@ These are implementation/proof gaps, not documentation existence problems.
 
 The older file `phase4_part8_pr009_remediation_implementation_instructions.md` is superseded and retained as historical review evidence.
 
-The dated `phase4_part8_pr009_remediation_execution_contract.md` is a detailed review snapshot from 24 September 2026. Its requirements remain useful, but any PR-head-specific fact must be rechecked against the current PR.
+The older `phase4_part8_pr009_remediation_implementation_instructions.md` is retained only as historical review evidence. Any PR-head-specific fact in a historical review must be rechecked against the current PR.
 
 This document is the current PR-status pointer.
 
