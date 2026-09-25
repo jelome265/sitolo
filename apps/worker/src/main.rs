@@ -28,7 +28,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect_with(opts)
         .await?;
 
-    let store = Arc::new(PgAuditOutboxStore::new(worker_pool.clone(), worker_pool.clone()));
+    let store = Arc::new(PgAuditOutboxStore::new(
+        worker_pool.clone(),
+        worker_pool.clone(),
+    ));
     let dispatcher = Arc::new(InMemoryDispatcher::new());
     let metrics = Arc::new(OutboxRelayMetrics::new());
     let config = RelayConfig {
