@@ -1,3 +1,9 @@
+---
+artifact_type: run-brief
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Run Brief
 
 ## Request
@@ -15,3 +21,4 @@
 ## Known constraints
 
 ## Open decisions
+
