@@ -6,7 +6,7 @@ Run one engineering request through the stages in order. Each stage is a file-ba
 
 01-select → 02-research → 03-investigate → 04-plan → 05-implement → 06-audit → 07-remediate → 08-verify → 09-deliver
 
-Research always runs as a decision gate. Remediation always runs as a decision gate. A remediation that changes the implementation returns to audit before verification.
+Research always runs as a decision gate. Remediation always runs as a decision gate. If remediation changes the implementation, the human re-enters the audit stage before verification; this is a human-controlled revisit, not a stage dependency cycle.
 
 ## Task Routing
 
