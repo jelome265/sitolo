@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: domain
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-domain/src/lib.rs
+source_citation: crates/sitolo-domain/src/lib.rs:11
+---
 # Domain Core
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: domain
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Application services, tests and future catalogue/inventory/sales engines.
 ## See
 
 crates/sitolo-domain/src/lib.rs
+
