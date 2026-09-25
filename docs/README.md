@@ -13,6 +13,7 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | [`agentic_workflow.md`](agentic_workflow.md) | Filesystem-routed ICM engineering workflow |
 | [`ADR-001-025.md`](ADR-001-025.md) | Architecture decision records |
 | [`implementation_plan.md`](implementation_plan.md) | Implementation program, dependency order and release posture |
+| [`current_implementation_status.md`](current_implementation_status.md) | Current product phase and active engineering-stream pointer |
 
 ## Historical / compatibility documents
 
