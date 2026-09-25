@@ -21,21 +21,21 @@ Sitolo composes two ICM forms:
 | L3 | shared routers, references, skills | What rules apply? |
 | L4 | stage output | What am I working with? |
 
-ICM explicitly separates stable reference material from run-specific artifacts and requires selective loading.
+ICM separates stable reference material from run-specific artifacts and requires selective loading. Current ICM also expects stage inputs and outputs to be explicit file paths and human-editable handoffs. citeturn375393search0turn375393search2
 
 ## Business model
 
-Yes, the business model is part of the engineering context, but it is Layer 3 reference material, not stage procedure and not copied into every prompt.
+The business model is part of engineering context, but it is Layer 3 reference material, not stage procedure and not copied into every prompt.
 
-Use the business-context router for product scope, user/actor semantics, customer workflows, segments, tiers, vertical modules, onboarding, monetization, continuity, and business/regulatory boundaries.
+Use the business-context router for product scope, actor semantics, customer workflows, segments, tiers, vertical modules, onboarding, monetization, continuity, and business/regulatory boundaries.
 
-The canonical commercial documents remain under docs/commercial/. The agent must read only the relevant document and section for the active change. A low-level implementation change that cannot alter product behavior should not load the commercial corpus.
+The canonical commercial documents remain under `docs/commercial/`. Low-level implementation work should load only the relevant source and sections.
 
 ## Pipeline
 
 01-select → 02-research → 03-investigate → 04-plan → 05-implement → 06-audit → 07-remediate → 08-verify → 09-deliver
 
-Every stage owns an output directory. Human edits to stage output are valid handoffs. Stage contracts contain Inputs, Process, and Outputs and remain short routing documents.
+Every stage owns an output directory. Human edits to stage output are valid handoffs. Stage contracts contain Inputs, Process, Outputs and Human Check.
 
 ## Human gates
 
@@ -43,10 +43,14 @@ Consequential handoffs are intentionally visible. The person can inspect and edi
 
 ## System Map
 
-map/ follows the current ICM System Map form for a repository that later agents must edit. The subject tree remains authoritative. The map catalogs nouns, real movements, and first-order change impact; it does not become a second architecture specification.
+`map/` follows the current ICM System Map form for a repository that later agents must edit. The subject tree remains authoritative. The map catalogs nouns, real movements and first-order change impact; it does not become a second architecture specification. Current ICM Architect explicitly defines the System Map as a form for an editable repository and requires walk-test validation. citeturn375393search2turn375393search3
 
 ## Validation
 
-scripts/ci/check-icm-workspace and its PowerShell counterpart verify the workspace structure. The canonical repository verifier invokes the workspace check.
+`scripts/ci/check-icm-workspace` and its PowerShell counterpart verify the workspace structure. `scripts/ci/check-doc-references` verifies Markdown reference resolution.
 
-Known missing references in the existing documentation corpus are recorded as integrity findings rather than fabricated into new facts.
+The repository now has restored authority paths for the formerly missing contract filenames. Remaining documentation integrity work is semantic: stale-vs-current classification, authority conflicts, implementation drift, external-version freshness, and historical routing.
+
+## Walk-test requirement
+
+A fresh agent must be able to enter through the root router, discover the engineering workspace, identify the current stage, load only required references and inputs, produce a Markdown handoff, and report status from filesystem state alone. That walk test is the acceptance test for the workflow structure. citeturn375393search2
