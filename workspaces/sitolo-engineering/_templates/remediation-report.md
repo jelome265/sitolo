@@ -1,3 +1,9 @@
+---
+artifact_type: remediation-report
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Remediation Report
 
 ## Findings addressed
@@ -10,3 +16,4 @@
 ## Re-audit required
 
 ## Remaining risks
+
