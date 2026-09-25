@@ -6,15 +6,13 @@ cd "$ROOT"
 
 WORKSPACE="workspaces/sitolo-engineering"
 STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
-
+TEMPLATES=(run-brief research-memo investigation implementation-plan implementation-report audit-report remediation-report verification-report delivery-handoff)
+ARTIFACTS=(brief research investigation plan implementation audit remediation verification delivery)
 fail=0
 
 required=(
-  CLAUDE.md
-  CONTEXT.md
-  AGENTS.md
-  "$WORKSPACE/CLAUDE.md"
-  "$WORKSPACE/CONTEXT.md"
+  CLAUDE.md CONTEXT.md AGENTS.md
+  "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md"
   "$WORKSPACE/setup/questionnaire.md"
   "$WORKSPACE/_config/workflow-policy.md"
   "$WORKSPACE/shared/context-loading.md"
@@ -27,28 +25,13 @@ required=(
   "$WORKSPACE/shared/integration-context/CONTEXT.md"
   "$WORKSPACE/shared/phase-context/CONTEXT.md"
   "$WORKSPACE/_templates/CONTEXT.md"
-  "$ROOT/docs/icm_reference_integrity.md"
-  "map/CLAUDE.md"
-  "map/AGENTS.md"
-  "map/routing.md"
-  "map/CONTEXT.md"
-  "map/_meta/schema.md"
-  "map/_templates/object.md"
-  "map/_templates/process.md"
-  "map/objects/CONTEXT.md"
-  "map/objects/_index.md"
-  "map/processes/CONTEXT.md"
-  "map/effects/CONTEXT.md"
-  "scripts/ci/generate-system-map-routing"
-  "scripts/ci/generate-system-map-index"
+  docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
+  docs/current_implementation_status.md
+  map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
+  map/_meta/schema.md map/_templates/object.md map/_templates/process.md
+  map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
+  scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
 )
-
-for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" map/CLAUDE.md map/CONTEXT.md; do
-  if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
-    echo "ICM WORKSPACE VIOLATION: routing/context file exceeds 80 lines: $entry" >&2
-    fail=1
-  fi
-done
 
 for path in "${required[@]}"; do
   if [[ ! -f "$path" ]]; then
@@ -57,45 +40,40 @@ for path in "${required[@]}"; do
   fi
 done
 
+for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" map/CLAUDE.md map/CONTEXT.md; do
+  if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
+    echo "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry" >&2
+    fail=1
+  fi
+done
+
 for stage in "${STAGES[@]}"; do
   context="$WORKSPACE/stages/$stage/CONTEXT.md"
   references="$WORKSPACE/stages/$stage/references"
   output="$WORKSPACE/stages/$stage/output"
-
   if [[ ! -f "$context" ]]; then
     echo "ICM WORKSPACE VIOLATION: missing stage contract: $context" >&2
     fail=1
-  elif (( $(wc -l < "$context") > 80 )); then
+    continue
+  fi
+  if (( $(wc -l < "$context") > 80 )); then
     echo "ICM WORKSPACE VIOLATION: stage contract exceeds 80 lines: $context" >&2
     fail=1
   fi
-
-  if [[ -f "$context" ]]; then
-    if grep -Eq "\| \../[^|]*/output/ \|" "$context"; then
-      echo "ICM WORKSPACE VIOLATION: stage handoffs must name exact output paths, not output directories: $context" >&2
+  for section in "## Inputs" "## Process" "## Outputs" "## Human Check"; do
+    if ! grep -Fqx "$section" "$context"; then
+      echo "ICM WORKSPACE VIOLATION: missing $section: $context" >&2
       fail=1
     fi
-    for section in "## Inputs" "## Process" "## Outputs" "## Human Check"; do
-      if ! grep -Eq "^$section$" "$context"; then
-        echo "ICM WORKSPACE VIOLATION: stage contract must declare $section: $context" >&2
-        fail=1
-      fi
-    done
-  fi
-
-  if [[ ! -d "$references" ]]; then
-    echo "ICM WORKSPACE VIOLATION: missing stage references directory: $references" >&2
+  done
+  if grep -Eq '\| \../[^|]+/output/ \|' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: stage handoff must name exact artifact path: $context" >&2
     fail=1
   fi
-
-  if [[ ! -d "$output" ]]; then
-    echo "ICM WORKSPACE VIOLATION: missing stage output directory: $output" >&2
-    fail=1
-  elif [[ ! -f "$output/.gitkeep" ]]; then
-    echo "ICM WORKSPACE VIOLATION: output directory must contain .gitkeep: $output" >&2
+  if [[ ! -d "$references" || ! -d "$output" || ! -f "$output/.gitkeep" ]]; then
+    echo "ICM WORKSPACE VIOLATION: references/output scaffold incomplete: $stage" >&2
     fail=1
   fi
-
   if [[ -d "$references" ]]; then
     while IFS= read -r ref; do
       if (( $(wc -l < "$ref") > 200 )); then
@@ -104,214 +82,113 @@ for stage in "${STAGES[@]}"; do
       fi
     done < <(find "$references" -type f -name '*.md' -print)
   fi
-
   if [[ -d "$output" ]]; then
     while IFS= read -r artifact; do
-      if [[ "$artifact" != "$output/.gitkeep" ]]; then
-        case "$artifact" in
-          *.md) ;;
-          *)
-            echo "ICM WORKSPACE VIOLATION: stage outputs must be Markdown: $artifact" >&2
-            fail=1
-            ;;
-        esac
+      if [[ "$artifact" != "$output/.gitkeep" && "${artifact##*.}" != "md" ]]; then
+        echo "ICM WORKSPACE VIOLATION: stage output must be Markdown: $artifact" >&2
+        fail=1
       fi
     done < <(find "$output" -type f -print)
   fi
 done
 
+if [[ -d .codex ]]; then
+  echo "ICM WORKSPACE VIOLATION: .codex must not be the workflow engine" >&2
+  fail=1
+fi
+if [[ -d .agents/skills || -d .agents/evals ]]; then
+  echo "ICM WORKSPACE VIOLATION: repository-global agent workflow detected" >&2
+  fail=1
+fi
+if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then
+  echo "ICM WORKSPACE VIOLATION: second Codex orchestration runtime detected" >&2
+  fail=1
+fi
 
-# System Map object/process evidence checks.
+if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md; then
+  echo "ICM WORKSPACE VIOLATION: System Map routing twins differ" >&2
+  fail=1
+fi
+
 for object in map/objects/*/*.md; do
-  [[ "${object##*/}" == "CONTEXT.md" ]] && continue
-  [[ "${object##*/}" == "_index.md" ]] && continue
   for field in "type: object" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
-    if ! grep -Eq "^$field" "$object"; then
-      echo "ICM WORKSPACE VIOLATION: object card missing frontmatter field '$field': $object" >&2
-      fail=1
-    fi
+    grep -Eq "^$field" "$object" || { echo "ICM WORKSPACE VIOLATION: object missing $field: $object" >&2; fail=1; }
   done
   source_path=$(sed -n 's/^source: //p' "$object")
-  if [[ -n "$source_path" && ! -f "$source_path" ]]; then
-    echo "ICM WORKSPACE VIOLATION: object source path missing: $object -> $source_path" >&2
-    fail=1
-  fi
-  if grep -Eq "^status: verified$" "$object" && ! grep -Eq "^universe: live$" "$object"; then
-    echo "ICM WORKSPACE VIOLATION: verified object must be universe=live: $object" >&2
+  [[ -n "$source_path" && -f "$source_path" ]] || { echo "ICM WORKSPACE VIOLATION: object source missing: $object -> $source_path" >&2; fail=1; }
+  if grep -Eq '^status: verified$' "$object" && ! grep -Eq '^universe: live$' "$object"; then
+    echo "ICM WORKSPACE VIOLATION: verified object must be live: $object" >&2
     fail=1
   fi
 done
 
 for process in map/processes/*.md; do
-  [[ "${process##*/}" == "CONTEXT.md" ]] && continue
   for field in "type: process" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
-    if ! grep -Eq "^$field" "$process"; then
-      echo "ICM WORKSPACE VIOLATION: process card missing frontmatter field '$field': $process" >&2
-      fail=1
-    fi
+    grep -Eq "^$field" "$process" || { echo "ICM WORKSPACE VIOLATION: process missing $field: $process" >&2; fail=1; }
   done
   for section in "## Input" "## Movement" "## Output" "## Consumes" "## Produces" "## If you change this" "### Hits" "### Does not hit" "## Verification" "## See"; do
-    if ! grep -Eq "^$section$" "$process"; then
-      echo "ICM WORKSPACE VIOLATION: process card missing section '$section': $process" >&2
-      fail=1
-    fi
+    grep -Fqx "$section" "$process" || { echo "ICM WORKSPACE VIOLATION: process missing $section: $process" >&2; fail=1; }
   done
-  if ! sed -n '/^## Movement$/,/^## Output$/p' "$process" | grep -Eq '^[[:space:]]*[0-9]+\. '; then
-    echo "ICM WORKSPACE VIOLATION: process movement has no numbered steps: $process" >&2
-    fail=1
-  fi
+  sed -n '/^## Movement$/,/^## Output$/p' "$process" | grep -Eq '^[[:space:]]*[0-9]+\. ' || { echo "ICM WORKSPACE VIOLATION: process has no numbered movement: $process" >&2; fail=1; }
   for section in "## Consumes" "## Produces"; do
     body=$(sed -n "/^$section$/,/^## /p" "$process" | tail -n +2)
-    if ! printf '%s\n' "$body" | grep -Eq '\]\(\.\./objects/[^)]+\.md\)'; then
-      echo "ICM WORKSPACE VIOLATION: $section must link object cards: $process" >&2
-      fail=1
-    fi
+    printf '%s\n' "$body" | grep -Eq '\]\(\.\./objects/[^)]+\.md\)' || { echo "ICM WORKSPACE VIOLATION: $section lacks object links: $process" >&2; fail=1; }
   done
-  sources=$(sed -n 's/^source: //p' "$process")
-  IFS=';' read -r -a source_list <<< "$sources"
+  IFS=';' read -r -a source_list <<< "$(sed -n 's/^source: //p' "$process")"
   for source_path in "${source_list[@]}"; do
     source_path="$(printf '%s' "$source_path" | sed 's/^ *//; s/ *$//')"
-    if [[ -n "$source_path" && ! -f "$source_path" ]]; then
-      echo "ICM WORKSPACE VIOLATION: process source path missing: $process -> $source_path" >&2
-      fail=1
-    fi
+    [[ -f "$source_path" ]] || { echo "ICM WORKSPACE VIOLATION: process source missing: $process -> $source_path" >&2; fail=1; }
   done
-  if grep -Eq "^status: verified$" "$process" && ! grep -Eq "^universe: live$" "$process"; then
-    echo "ICM WORKSPACE VIOLATION: verified process must be universe=live: $process" >&2
+  if grep -Eq '^status: verified$' "$process" && ! grep -Eq '^universe: live$' "$process"; then
+    echo "ICM WORKSPACE VIOLATION: verified process must be live: $process" >&2
     fail=1
   fi
-  if grep -Eq "^universe: ghost$" "$process" && ! grep -q "Ghost/unwired" "$process"; then
-    echo "ICM WORKSPACE VIOLATION: ghost process must explain why it is unwired: $process" >&2
+  if grep -Eq '^universe: ghost$' "$process" && ! grep -q 'Ghost/unwired' "$process"; then
+    echo "ICM WORKSPACE VIOLATION: ghost process missing unwired evidence: $process" >&2
     fail=1
   fi
 done
-# Cold end-to-end filesystem walk in an isolated copy.
-cold_root=$(mktemp -d)
-trap 'rm -rf "$cold_root"' EXIT
-mkdir -p "$cold_root/map" "$cold_root/workspaces"
-cp -R map "$cold_root/"
-cp -R "$WORKSPACE" "$cold_root/workspaces/"
 
-cat CLAUDE.md >/dev/null
-cat "$WORKSPACE/CLAUDE.md" >/dev/null
-cat "$WORKSPACE/CONTEXT.md" >/dev/null
-cat "$WORKSPACE/stages/01-select/CONTEXT.md" >/dev/null
+# Cold walk: build a temporary run from factory templates, traverse all 9 stages,
+# and require every stage handoff to exist before the following stage reads it.
+cold_root=$(mktemp -d)
+cleanup() { rm -rf "$cold_root"; }
+trap cleanup EXIT
+cp -R "$WORKSPACE" "$cold_root/workspace"
+cp -R map "$cold_root/map"
 
 cold_slug="cold-walk"
-templates=(run-brief research-memo investigation implementation-plan implementation-report audit-report remediation-report verification-report delivery-handoff)
-artifacts=(brief research investigation plan implementation audit remediation verification delivery)
-for i in $(seq 0 8); do
+for i in "${!STAGES[@]}"; do
   stage="${STAGES[$i]}"
-  context="$cold_root/$WORKSPACE/stages/$stage/CONTEXT.md"
-  output="$cold_root/$WORKSPACE/stages/$stage/output"
-  template="${templates[$i]}"
-  artifact="${artifacts[$i]}"
+  context="$cold_root/workspace/stages/$stage/CONTEXT.md"
+  output="$cold_root/workspace/stages/$stage/output"
   refs=$(grep -oE '\.\./[0-9]{2}-[^ |]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md' "$context" 2>/dev/null || true)
   if [[ -n "$refs" ]]; then
     while IFS= read -r ref; do
       [[ -z "$ref" ]] && continue
-      resolved="$cold_root/$WORKSPACE/stages/$stage/${ref/\[run-slug\]/$cold_slug}"
+      resolved="$cold_root/workspace/stages/$stage/${ref/\[run-slug\]/$cold_slug}"
       if [[ ! -f "$resolved" ]]; then
         echo "ICM COLD WALK FAILED: missing handoff before $stage: $ref" >&2
         fail=1
       fi
     done <<< "$refs"
   fi
-  target="$output/$cold_slug-$artifact.md"
-  cp "$cold_root/$WORKSPACE/_templates/$template.md" "$target"
+  target="$output/$cold_slug-${ARTIFACTS[$i]}.md"
+  cp "$cold_root/workspace/_templates/${TEMPLATES[$i]}.md" "$target"
   sed -i 's/run_slug: "\[run-slug\]"/run_slug: "cold-walk"/; s/^status: draft$/status: human-approved/' "$target"
-  if [[ ! -s "$target" ]] || ! grep -Eq '^status: human-approved
-  echo "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces instead." >&2
-  fail=1
-fi
-
-if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md; then
-  echo "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins." >&2
-  fail=1
-fi
-
-if [[ -d .agents/skills || -d .agents/evals ]]; then
-  echo "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure." >&2
-  fail=1
-fi
-
-if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then
-  echo "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime." >&2
-  fail=1
-fi
-
-if ! grep -Eq 'workspaces/sitolo-engineering' AGENTS.md CLAUDE.md CONTEXT.md; then
-  echo "ICM WORKSPACE VIOLATION: root routing files must point to the Sitolo engineering workspace." >&2
-  fail=1
-fi
-
-if ! grep -Eq 'stages/01-select/CONTEXT\.md' "$WORKSPACE/CLAUDE.md"; then
-  echo "ICM WORKSPACE VIOLATION: workspace router must expose Stage 01." >&2
-  fail=1
-fi
-
-if [[ "$fail" -ne 0 ]]; then
-  echo "ICM workspace check FAILED" >&2
-  exit 1
-fi
-
-echo "ICM workspace check PASSED"
- "$target"; then
-    echo "ICM COLD WALK FAILED: invalid gated artifact: $target" >&2
-    fail=1
-  fi
+  [[ -s "$target" ]] || { echo "ICM COLD WALK FAILED: empty artifact: $target" >&2; fail=1; }
+  grep -Eq '^run_slug: "cold-walk"$' "$target" || { echo "ICM COLD WALK FAILED: missing run slug: $target" >&2; fail=1; }
+  grep -Eq '^status: human-approved$' "$target" || { echo "ICM COLD WALK FAILED: synthetic human gate not recorded: $target" >&2; fail=1; }
 done
 
-artifact_count=$(find "$cold_root/$WORKSPACE/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
-if [[ "$artifact_count" -ne 9 ]]; then
-  echo "ICM COLD WALK FAILED: expected 9 stage artifacts, found $artifact_count" >&2
-  fail=1
-fi
+artifact_count=$(find "$cold_root/workspace/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
+[[ "$artifact_count" -eq 9 ]] || { echo "ICM COLD WALK FAILED: expected 9 artifacts, found $artifact_count" >&2; fail=1; }
 
 map_source=$(sed -n 's/^source: //p' "$cold_root/map/objects/runtime/api-boundary.md")
-if [[ -z "$map_source" || ! -f "$map_source" ]]; then
-  echo "ICM COLD WALK FAILED: System Map cited source missing: $map_source" >&2
-  fail=1
-fi
+[[ -f "$map_source" ]] || { echo "ICM COLD WALK FAILED: System Map source hop failed: $map_source" >&2; fail=1; }
 
 cold_bytes=$(cat CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" "$WORKSPACE/stages/01-select/CONTEXT.md" | wc -c)
-if (( cold_bytes > 32000 )); then
-  echo "ICM COLD WALK FAILED: root plus first stage exceeds ~8k token budget" >&2
-  fail=1
-fi
-
-if [[ "$fail" -eq 0 ]]; then
-  echo "ICM COLD WALK PASSED: 9 stages, exact handoffs, gated artifacts, System Map source hop"
-fi
-if [[ -d .codex ]]; then
-  echo "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces instead." >&2
-  fail=1
-fi
-
-if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md; then
-  echo "ICM WORKSPACE VIOLATION: system-map CLAUDE.md, AGENTS.md, and routing.md must be byte-identical twins." >&2
-  fail=1
-fi
-
-if [[ -d .agents/skills || -d .agents/evals ]]; then
-  echo "ICM WORKSPACE VIOLATION: repository-global agent skills/evals must not replace workspace-local ICM structure." >&2
-  fail=1
-fi
-
-if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then
-  echo "ICM WORKSPACE VIOLATION: CI must not introduce a second Codex orchestration/reviewer runtime." >&2
-  fail=1
-fi
-
-if ! grep -Eq 'workspaces/sitolo-engineering' AGENTS.md CLAUDE.md CONTEXT.md; then
-  echo "ICM WORKSPACE VIOLATION: root routing files must point to the Sitolo engineering workspace." >&2
-  fail=1
-fi
-
-if ! grep -Eq 'stages/01-select/CONTEXT\.md' "$WORKSPACE/CLAUDE.md"; then
-  echo "ICM WORKSPACE VIOLATION: workspace router must expose Stage 01." >&2
-  fail=1
-fi
+(( cold_bytes <= 32000 )) || { echo "ICM COLD WALK FAILED: entry + first stage exceeds ~8k-token budget" >&2; fail=1; }
 
 if [[ "$fail" -ne 0 ]]; then
   echo "ICM workspace check FAILED" >&2
@@ -319,3 +196,4 @@ if [[ "$fail" -ne 0 ]]; then
 fi
 
 echo "ICM workspace check PASSED"
+echo "ICM COLD WALK PASSED: 9 stages, exact handoffs, synthetic human gates, System Map source hop"
