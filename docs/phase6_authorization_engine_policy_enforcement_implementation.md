@@ -85,13 +85,13 @@ This document deepens, rather than replaces, the existing Sitolo contracts.
 The implementation follows the existing project hierarchy:
 
 ```text
-Business model
+Applicable law / regulatory requirement
     ↓
-Product/domain specification
-    ↓
-System architecture
+Signed external-provider contract / current provider behavior
     ↓
 Security architecture
+    ↓
+System architecture
     ↓
 Security implementation contract
     ↓
