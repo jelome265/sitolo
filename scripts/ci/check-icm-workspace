@@ -120,6 +120,57 @@ for stage in "${STAGES[@]}"; do
   fi
 done
 
+
+# System Map object/process evidence checks.
+for object in map/objects/*/*.md; do
+  [[ "${object##*/}" == "CONTEXT.md" ]] && continue
+  [[ "${object##*/}" == "_index.md" ]] && continue
+  for field in "type: object" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
+    if ! grep -Eq "^$field" "$object"; then
+      echo "ICM WORKSPACE VIOLATION: object card missing frontmatter field '$field': $object" >&2
+      fail=1
+    fi
+  done
+  if grep -Eq "^status: verified$" "$object" && ! grep -Eq "^universe: live$" "$object"; then
+    echo "ICM WORKSPACE VIOLATION: verified object must be universe=live: $object" >&2
+    fail=1
+  fi
+done
+
+for process in map/processes/*.md; do
+  [[ "${process##*/}" == "CONTEXT.md" ]] && continue
+  for field in "type: process" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
+    if ! grep -Eq "^$field" "$process"; then
+      echo "ICM WORKSPACE VIOLATION: process card missing frontmatter field '$field': $process" >&2
+      fail=1
+    fi
+  done
+  for section in "## Input" "## Movement" "## Output" "## Consumes" "## Produces" "## If you change this" "### Hits" "### Does not hit" "## Verification" "## See"; do
+    if ! grep -Eq "^$section$" "$process"; then
+      echo "ICM WORKSPACE VIOLATION: process card missing section '$section': $process" >&2
+      fail=1
+    fi
+  done
+  if ! sed -n '/^## Movement$/,/^## Output$/p' "$process" | grep -Eq '^[[:space:]]*[0-9]+\. '; then
+    echo "ICM WORKSPACE VIOLATION: process movement has no numbered steps: $process" >&2
+    fail=1
+  fi
+  for section in "## Consumes" "## Produces"; do
+    body=$(sed -n "/^$section$/,/^## /p" "$process" | tail -n +2)
+    if ! printf '%s\n' "$body" | grep -Eq '\]\(\.\./objects/[^)]+\.md\)'; then
+      echo "ICM WORKSPACE VIOLATION: $section must link object cards: $process" >&2
+      fail=1
+    fi
+  done
+  if grep -Eq "^status: verified$" "$process" && ! grep -Eq "^universe: live$" "$process"; then
+    echo "ICM WORKSPACE VIOLATION: verified process must be universe=live: $process" >&2
+    fail=1
+  fi
+  if grep -Eq "^universe: ghost$" "$process" && ! grep -q "Ghost/unwired" "$process"; then
+    echo "ICM WORKSPACE VIOLATION: ghost process must explain why it is unwired: $process" >&2
+    fail=1
+  fi
+done
 if [[ -d .codex ]]; then
   echo "ICM WORKSPACE VIOLATION: .codex is not the workflow engine; use filesystem-routed workspaces instead." >&2
   fail=1
