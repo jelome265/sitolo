@@ -63,7 +63,7 @@ for ($i = 0; $i -lt $STAGES.Count; $i++) {
   $body = Get-Content $context -Raw
   foreach ($section in @("## Inputs","## Process","## Outputs","## Human Check")) {
     if ($body -notmatch [regex]::Escape($section)) {
-      Write-Error "ICM WORKSPACE VIOLATION: missing $section: $context"
+      Write-Error "ICM WORKSPACE VIOLATION: missing ${section}: $context"
       $fail = $true
     }
   }
@@ -107,7 +107,7 @@ if ((Get-FileHash "map\CLAUDE.md").Hash -ne (Get-FileHash "map\AGENTS.md").Hash 
 Get-ChildItem "map\objects" -Recurse -File -Filter *.md | Where-Object { $_.Name -notin @("CONTEXT.md","_index.md") } | ForEach-Object {
   $text = Get-Content $_.FullName -Raw
   foreach ($field in @("type: object","status:","universe:","source_revision:","source:","source_citation:")) {
-    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: object missing $field: $($_.FullName)" }
+    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: object missing ${field}: $($_.FullName)" }
   }
   $source = ([regex]::Match($text,"(?m)^source:\s*(.+)$")).Groups[1].Value.Trim()
   if ([string]::IsNullOrWhiteSpace($source) -or -not (Test-Path $source -PathType Leaf)) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: object source missing: $($_.FullName) -> $source" }
@@ -117,7 +117,7 @@ Get-ChildItem "map\objects" -Recurse -File -Filter *.md | Where-Object { $_.Name
 Get-ChildItem "map\processes" -File -Filter *.md | Where-Object { $_.Name -ne "CONTEXT.md" -and $_.Name -ne "_index.md" } | ForEach-Object {
   $text = Get-Content $_.FullName -Raw
   foreach ($field in @("type: process","status:","universe:","source_revision:","source:","source_citation:")) {
-    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing $field: $($_.FullName)" }
+    if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing ${field}: $($_.FullName)" }
   }
   foreach ($section in @("## Input","## Movement","## Output","## Consumes","## Produces","## If you change this","### Hits","### Does not hit","## Verification","## See")) {
     if ($text -notmatch [regex]::Escape($section)) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing $section: $($_.FullName)" }
@@ -127,7 +127,7 @@ Get-ChildItem "map\processes" -File -Filter *.md | Where-Object { $_.Name -ne "C
     $start = $text.IndexOf($section)
     if ($start -ge 0) {
       $sectionText = $text.Substring($start)
-      if ($sectionText -notmatch "\]\(\.\./objects/[^)]+\.md\)") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: $section lacks object links: $($_.FullName)" }
+      if ($sectionText -notmatch "\]\(\.\./objects/[^)]+\.md\)") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: ${section} lacks object links: $($_.FullName)" }
     }
   }
   $sources = ([regex]::Match($text,"(?m)^source:\s*(.+)$")).Groups[1].Value -split ";"
@@ -155,7 +155,7 @@ try {
     foreach ($match in $matches) {
       $relative = $match.Value -replace "\[run-slug\]", $coldSlug
       $resolved = Join-Path (Split-Path $context -Parent) $relative
-      if (-not (Test-Path $resolved -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: missing handoff before $stage: $relative" }
+      if (-not (Test-Path $resolved -PathType Leaf)) { $fail = $true; Write-Error "ICM COLD WALK FAILED: missing handoff before ${stage}: $relative" }
     }
     $target = Join-Path $output ($coldSlug + "-" + $ARTIFACTS[$i] + ".md")
     Copy-Item (Join-Path $coldRoot "$WORKSPACE\_templates\$($TEMPLATES[$i]).md") $target -Force
