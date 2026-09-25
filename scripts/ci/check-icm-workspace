@@ -131,6 +131,11 @@ for object in map/objects/*/*.md; do
       fail=1
     fi
   done
+  source_path=$(sed -n 's/^source: //p' "$object")
+  if [[ -n "$source_path" && ! -f "$source_path" ]]; then
+    echo "ICM WORKSPACE VIOLATION: object source path missing: $object -> $source_path" >&2
+    fail=1
+  fi
   if grep -Eq "^status: verified$" "$object" && ! grep -Eq "^universe: live$" "$object"; then
     echo "ICM WORKSPACE VIOLATION: verified object must be universe=live: $object" >&2
     fail=1
@@ -159,6 +164,15 @@ for process in map/processes/*.md; do
     body=$(sed -n "/^$section$/,/^## /p" "$process" | tail -n +2)
     if ! printf '%s\n' "$body" | grep -Eq '\]\(\.\./objects/[^)]+\.md\)'; then
       echo "ICM WORKSPACE VIOLATION: $section must link object cards: $process" >&2
+      fail=1
+    fi
+  done
+  sources=$(sed -n 's/^source: //p' "$process")
+  IFS=';' read -r -a source_list <<< "$sources"
+  for source_path in "${source_list[@]}"; do
+    source_path="$(printf '%s' "$source_path" | sed 's/^ *//; s/ *$//')"
+    if [[ -n "$source_path" && ! -f "$source_path" ]]; then
+      echo "ICM WORKSPACE VIOLATION: process source path missing: $process -> $source_path" >&2
       fail=1
     fi
   done
