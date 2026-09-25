@@ -12,6 +12,8 @@ Stable security Layer 3 context.
 | Phase 1 repository security | ../../../../docs/phase1_repository_rust_workspace_ci_deep_implementation.md | Supply-chain and CI sections | Build/release trust |
 | Regulatory perimeter | ../../../../docs/commercial/07_trust_compliance/regulatory_perimeter_and_compliance_boundary.md | §§5-16 when relevant | Regulatory control boundary |
 
+| External standards | ../../../../docs/external_standards_verification_register.md | Full file when version/standard claims matter | Dated external authority |
+
 ## Integrity note
 
-The corpus references security_architecture_design.md but the file is absent from the current repository tree. Do not invent it. Treat this as a documentation-integrity finding and use the existing security implementation and threat-model sources until the authority is resolved.
+The formerly missing `security_architecture_design.md` reference has been restored. It is a reconstructed canonical baseline, while the current source tree remains the implementation evidence. The standing reference-integrity policy is `docs/icm_reference_integrity.md`. The external standards register must be rechecked before using version-sensitive security claims.
