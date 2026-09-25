@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: data
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-persistence/src/postgres.rs
+source_citation: crates/sitolo-persistence/src/postgres.rs:43
+---
 # Persistence
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: data
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ PostgreSQL, repositories, integration tests and release verification.
 ## See
 
 crates/sitolo-persistence/src/lib.rs
+
