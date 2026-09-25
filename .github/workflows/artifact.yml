@@ -80,7 +80,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes releases/sitolo-${{ env.SOURCE_SHA }}.tar.gz releases/release-metadata.json releases/SHA256SUMS
       - name: Generate SPDX SBOM bound to the packaged artifact
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26
         with:
           file: releases/sitolo-${{ env.SOURCE_SHA }}.tar.gz
           format: spdx-json
