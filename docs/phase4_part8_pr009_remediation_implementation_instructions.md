@@ -3,7 +3,7 @@
 **Status:** Superseded review artifact  
 **Reviewed PR:** #49 — Phase 4 Part 8 audit/outbox implementation  
 **Original review scope:** remediation of the first PR-009 implementation pass  
-**Superseded by:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
+**Superseded by:** `docs/phase4_part8_audit_outbox_implementation_contract.md`  
 **Disposition:** Historical review evidence; do not use as the active PR-009 implementation plan.
 
 ---
@@ -20,7 +20,7 @@ The old reviewed commit/base values remain useful for tracing the evolution of t
 
 The active remediation contract is:
 
-`docs/phase4_part8_pr009_remediation_execution_contract.md`
+`docs/phase4_part8_audit_outbox_implementation_contract.md`
 
 That document records the later PR head, the remaining P0/P1 defects, implementation order and definition of done.
 
