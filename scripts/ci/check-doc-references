@@ -1,3 +1,134 @@
-#!/usr/bin/env python3\n"""Validate and inventory internal Markdown document references.\n\nThe checker distinguishes explicit relative Markdown links, path-qualified .md\nreferences, bare document names, missing references, and ambiguous basenames.\nExternal URLs are ignored. Filename resolution never establishes authority.\n"""\nfrom __future__ import annotations\n\nimport argparse\nimport pathlib\nimport re\nimport sys\nfrom collections import defaultdict\n\nROOT = pathlib.Path(__file__).resolve().parents[2]\nSKIP_PARTS = {".git", "target"}\n\nLINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
+#!/usr/bin/env python3
+"""Validate and inventory internal Markdown document references.
+
+The checker distinguishes explicit Markdown links, reference-style links,
+wikilinks, path-qualified .md references, bare document names, missing
+references, ambiguous basenames, and repository-escaping references.
+External URLs are ignored. Filename resolution never establishes authority.
+"""
+from __future__ import annotations
+
+import argparse
+import pathlib
+import re
+import sys
+from collections import defaultdict
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SKIP_PARTS = {".git", "target"}
+
+LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
 REF_LINK = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(\S+\.md(?:#[^\s]+)?)\s*$", re.MULTILINE)
-WIKILINK = re.compile(r"\[\[([^\]|]+\.md)(?:#[^\]|]+)?(?:\|[^\]]*)?\]\]")\nCODE_MD = re.compile(r"`([^`\n]*?\.md(?:#[^`]*)?)`")\nPATH_MD = re.compile(r"(?<![\w./-])((?:\.?\.?/)?(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)(?![\w.-])")\n\ndef ignored(path: pathlib.Path) -> bool:\n    return any(part in SKIP_PARTS for part in path.parts)\n\ndef relative_path(path: pathlib.Path) -> str:\n    return path.relative_to(ROOT).as_posix()\n\ndef in_root(path: pathlib.Path) -> bool:\n    try:\n        path.relative_to(ROOT)\n        return True\n    except ValueError:\n        return False\n\ndef resolve_explicit(source: pathlib.Path, ref: str) -> pathlib.Path | None:\n    if not ref or ref.startswith(("http://", "https://", "mailto:", "#")):\n        return None\n    candidate = ROOT / ref.lstrip("/") if ref.startswith("/") else source.parent / ref\n    return candidate.resolve()\n\ndef resolve_document_reference(source: pathlib.Path, ref: str, by_basename: dict[str, list[pathlib.Path]]) -> tuple[str, pathlib.Path | None, list[pathlib.Path]]:\n    ref = ref.split("#", 1)[0].strip()\n    if not ref:\n        return "ignored", None, []\n    if "/" in ref:\n        if ref.startswith("/"):\n            candidate = (ROOT / ref.lstrip("/")).resolve()\n        elif ref.startswith(("./", "../")):\n            candidate = (source.parent / ref).resolve()\n        elif ref.startswith(("docs/", "workspaces/", "map/")):\n            candidate = (ROOT / ref).resolve()\n        else:\n            candidate = (source.parent / ref).resolve()\n        return "path", candidate, []\n    local = (source.parent / ref).resolve()\n    if local.exists():\n        return "local", local, []\n    candidates = by_basename.get(ref, [])\n    if len(candidates) == 1:\n        return "basename", candidates[0], candidates\n    if len(candidates) > 1:\n        return "ambiguous", None, candidates\n    return "missing", local, []\n\ndef main() -> int:\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--inventory", action="store_true", help="print every resolved reference")\n    args = parser.parse_args()\n\n    files = sorted(p for p in ROOT.rglob("*.md") if p.is_file() and not ignored(p))\n    by_basename: dict[str, list[pathlib.Path]] = defaultdict(list)\n    for path in files:\n        by_basename[path.name].append(path)\n\n    errors: list[str] = []\n    references: list[tuple[pathlib.Path, str, str, pathlib.Path]] = []\n\n    for source in files:\n        text = source.read_text(encoding="utf-8", errors="replace")\n        explicit_refs = set(LINK.findall(text))\n        code_refs = {m.group(1) for m in CODE_MD.finditer(text)}\n        path_refs = {m.group(1) for m in PATH_MD.finditer(text)}\n        for ref in sorted(explicit_refs):\n            target = resolve_explicit(source, ref.split("#", 1)[0])\n            if target is None:\n                continue\n            if not in_root(target):\n                errors.append(f"{relative_path(source)}: document link escapes repository -> {ref}")\n            elif not target.exists():\n                errors.append(f"{relative_path(source)}: broken Markdown link -> {ref}")\n            else:\n                references.append((source, ref, "path", target))\n        for ref in sorted((code_refs | path_refs) - explicit_refs):\n            if ".md" not in ref:\n                continue\n            mode, target, candidates = resolve_document_reference(source, ref, by_basename)\n            if mode == "ignored":\n                continue\n            if mode == "ambiguous":\n                names = ", ".join(relative_path(p) for p in candidates)\n                errors.append(f"{relative_path(source)}: ambiguous document reference -> {ref} [{names}]")\n            elif target is None or not in_root(target) or not target.exists():\n                errors.append(f"{relative_path(source)}: missing document reference -> {ref}")\n            else:\n                references.append((source, ref, mode, target))\n\n    counts = defaultdict(int)\n    for _, _, mode, _ in references:\n        counts[mode] += 1\n    print(f"DOCUMENT REFERENCE INVENTORY: {len(files)} Markdown files, {len(references)} resolved references, {len(errors)} unresolved/ambiguous errors")\n    print("  path={} local={} basename={}".format(counts["path"], counts["local"], counts["basename"]))\n    if args.inventory:\n        for source, ref, mode, target in sorted(references, key=lambda x: (relative_path(x[0]), x[1], x[2])):\n            print(f"{relative_path(source)} -> {ref} [{mode}] => {relative_path(target)}")\n    if errors:\n        print("DOCUMENT REFERENCE CHECK FAILED")\n        for error in errors:\n            print(f"- {error}")\n        return 1\n    print("DOCUMENT REFERENCE CHECK PASSED")\n    return 0\n\nif __name__ == "__main__":\n    sys.exit(main())\n
+WIKILINK = re.compile(r"\[\[([^\]|]+\.md)(?:#[^\]|]+)?(?:\|[^\]]*)?\]\]")
+HTML_MD = re.compile(r"(?:href|src)=[\"']([^\"']+\.md(?:#[^\"']*)?)[\"']")
+CODE_MD = re.compile(r"`([^`\n]*?\.md(?:#[^`]*)?)`")
+PATH_MD = re.compile(r"(?<![\w./-])((?:\.?\.?/)?(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)(?![\w.-])")
+
+def ignored(path: pathlib.Path) -> bool:
+    return any(part in SKIP_PARTS for part in path.parts)
+
+def relative_path(path: pathlib.Path) -> str:
+    return path.relative_to(ROOT).as_posix()
+
+def in_root(path: pathlib.Path) -> bool:
+    try:
+        path.relative_to(ROOT)
+        return True
+    except ValueError:
+        return False
+
+def resolve_explicit(source: pathlib.Path, ref: str) -> pathlib.Path | None:
+    if not ref or ref.startswith(("http://", "https://", "mailto:", "#")):
+        return None
+    candidate = ROOT / ref.lstrip("/") if ref.startswith("/") else source.parent / ref
+    return candidate.resolve()
+
+def resolve_document_reference(source: pathlib.Path, ref: str, by_basename: dict[str, list[pathlib.Path]]) -> tuple[str, pathlib.Path | None, list[pathlib.Path]]:
+    ref = ref.split("#", 1)[0].strip()
+    if not ref or ref.startswith(("http://", "https://", "mailto:", "#")):
+        return "ignored", None, []
+    if "/" in ref:
+        if ref.startswith("/"):
+            candidate = (ROOT / ref.lstrip("/")).resolve()
+        elif ref.startswith(("./", "../")):
+            candidate = (source.parent / ref).resolve()
+        elif ref.startswith(("docs/", "workspaces/", "map/")):
+            candidate = (ROOT / ref).resolve()
+        else:
+            candidate = (source.parent / ref).resolve()
+        return "path", candidate, []
+    local = (source.parent / ref).resolve()
+    if local.exists():
+        return "local", local, []
+    candidates = by_basename.get(ref, [])
+    if len(candidates) == 1:
+        return "basename", candidates[0], candidates
+    if len(candidates) > 1:
+        return "ambiguous", None, candidates
+    return "missing", local, []
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--inventory", action="store_true", help="print every resolved reference")
+    args = parser.parse_args()
+
+    files = sorted(p for p in ROOT.rglob("*.md") if p.is_file() and not ignored(p))
+    by_basename: dict[str, list[pathlib.Path]] = defaultdict(list)
+    for path in files:
+        by_basename[path.name].append(path)
+
+    errors: list[str] = []
+    references: list[tuple[pathlib.Path, str, str, pathlib.Path]] = []
+
+    for source in files:
+        text = source.read_text(encoding="utf-8", errors="replace")
+        link_refs = set(LINK.findall(text))
+        other_refs = set(REF_LINK.findall(text))
+        other_refs.update(WIKILINK.findall(text))
+        other_refs.update(HTML_MD.findall(text))
+        other_refs.update(CODE_MD.findall(text))
+        other_refs.update(PATH_MD.findall(text))
+
+        for ref in sorted(link_refs):
+            target = resolve_explicit(source, ref.split("#", 1)[0])
+            if target is None:
+                continue
+            if not in_root(target):
+                errors.append(f"{relative_path(source)}: document link escapes repository -> {ref}")
+            elif not target.exists():
+                errors.append(f"{relative_path(source)}: broken Markdown link -> {ref}")
+            else:
+                references.append((source, ref, "path", target))
+
+        for ref in sorted(other_refs - link_refs):
+            mode, target, candidates = resolve_document_reference(source, ref, by_basename)
+            if mode == "ignored":
+                continue
+            if target is not None and not in_root(target):
+                errors.append(f"{relative_path(source)}: document reference escapes repository -> {ref}")
+            elif mode == "ambiguous":
+                names = ", ".join(relative_path(p) for p in candidates)
+                errors.append(f"{relative_path(source)}: ambiguous document reference -> {ref} [{names}]")
+            elif target is None or not target.exists():
+                errors.append(f"{relative_path(source)}: missing document reference -> {ref}")
+            else:
+                references.append((source, ref, mode, target))
+
+    counts = defaultdict(int)
+    for _, _, mode, _ in references:
+        counts[mode] += 1
+    print(f"DOCUMENT REFERENCE INVENTORY: {len(files)} Markdown files, {len(references)} resolved references, {len(errors)} unresolved/ambiguous/escaping errors")
+    print("  path={} local={} basename={}".format(counts["path"], counts["local"], counts["basename"]))
+    if args.inventory:
+        for source, ref, mode, target in sorted(references, key=lambda x: (relative_path(x[0]), x[1], x[2])):
+            print(f"{relative_path(source)} -> {ref} [{mode}] => {relative_path(target)}")
+    if errors:
+        print("DOCUMENT REFERENCE CHECK FAILED")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("DOCUMENT REFERENCE CHECK PASSED")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
