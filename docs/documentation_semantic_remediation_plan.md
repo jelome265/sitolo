@@ -213,7 +213,7 @@ Official ICM references:
 
 ## 9. ICM Conformance Audit
 
-The current ICM implementation was compared with Jake Van Clief's current ICM and icm-architect invariants.
+The current ICM implementation was compared with Jake Van Clief's current ICM and icm-architect invariants and then exercised by the repository's automated verification gates.
 
 | Invariant | State | Finding |
 |---|---|---|
@@ -222,16 +222,27 @@ The current ICM implementation was compared with Jake Van Clief's current ICM an
 | Numbering encodes order | PASS | Engineering stages are numbered 01 through 09. |
 | Explicit stage contracts | PASS | Every stage has Inputs, Process, Outputs and Human Check. |
 | Factory vs product | PASS | Shared references/templates are separated from stage outputs. |
-| Human-editable handoffs | PASS structurally | Output folders are handoff surfaces; no committed run artifacts. |
-| Selective loading | PASS | Stage Inputs tables route relevant references and run artifacts. |
-| Queryable plain text/frontmatter | PARTIAL | Map cards and output templates now use YAML frontmatter; the wider legacy documentation corpus remains ordinary Markdown and is not itself an ICM workspace. |
-| Filesystem state + generated indexes | PASS structurally | Output folders encode state; System Map routing/index are generated and checked. |
-| Template instantiation | PASS structurally | Artifact templates exist; no runtime template-copy command has been exercised in an end-to-end run. |
-| No competing instruction runtimes | PASS | Codex enters through AGENTS.md; Claude uses CLAUDE.md; both route to the same workspace policy. |
-| Cold walk test | NOT YET PROVEN | CI validates structure, but no real end-to-end agent run has been completed and recorded. |
-| Human-gated slice discipline | PARTIAL | Human checks exist in every stage; the repository has not yet recorded a completed cold walk through every gate. |
-| System Map verified evidence | PARTIAL | Verified object cards have current revision/citation metadata; process cards intentionally remain stub until source movements are re-verified. |
+| Human-editable handoffs | PASS structurally | Output folders are handoff surfaces; no real run outputs are committed. |
+| Selective loading | PASS | Stage Inputs tables route relevant references and exact run handoffs. |
+| Queryable plain text/frontmatter | PASS for ICM-managed artifacts | System Map cards and workspace artifact templates use structured frontmatter; the wider project corpus remains ordinary Markdown by design. |
+| Filesystem state + generated indexes | PASS | Stage output directories encode run state and System Map indexes/twins are generated and CI-checked. |
+| Template instantiation | PASS | CI cold-walk instantiates all nine artifact templates in an isolated run. |
+| No competing instruction runtimes | PASS | Claude enters through CLAUDE.md; Codex enters through AGENTS.md; both route to the same workspace policy. |
+| Markdown reference integrity | PASS | CI inventories the repository corpus and currently reports zero unresolved, ambiguous, or escaping internal Markdown references. |
+| Cold walk | PASS | CI performs an isolated 9-stage filesystem walk with exact handoffs, artifact instantiation, synthetic gate metadata, and a System Map source hop. |
+| Human-gated slice discipline | PARTIAL BY DESIGN | The automated cold walk proves the mechanics and state transitions. It cannot prove a real human reviewed each artifact; that remains a required human action during actual engineering runs. |
+| System Map object verification | PASS for verified cards | Verified cards carry current revision, source path, and source citation metadata. Stub/ghost cards remain unpromoted. |
+| System Map process verification | PASS for classification; not live execution | All four process cards now have structured schema, source evidence, Input → Movement → Output, consumes/produces links, Hits/Does not hit, and explicit ghost/unwired evidence. They remain stub + ghost because the complete runtime movements are not wired in the current product implementation. |
+| Effects routing | PASS | `map/effects/CONTEXT.md` is a first-order change-impact catalog and does not become a second specification. |
+| Source authority discipline | PASS | Compatibility, historical, contract, evidence and navigation roles are explicitly separated. |
 
 ### Interpretation
 
-The ICM structure is substantially conformant, but it is not yet “perfect” under Jake's current methodology because the repository has not completed the cold walk/end-to-end run that Jake's validation requires, and process-card verification remains intentionally incomplete. These are verification/conformance gaps, not reasons to invent additional orchestration code.
+The ICM implementation is now structurally and mechanically verified against the current Jake architecture. The remaining non-green item is not a defect in the framework implementation: a real engineering run still requires an actual human to inspect/edit each stage handoff, and process cards must only become live/verified when the corresponding runtime movements actually execute.
+
+The automated verification must therefore be read as:
+
+`framework mechanics proven` + `current System Map state honestly classified` + `human approval still required for real runs`.
+
+This is the maximum claim supported by repository evidence; the repository must not call the workflow human-approved merely because CI completed the cold walk.
+
