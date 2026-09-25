@@ -77,6 +77,12 @@ Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical impleme
 | [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) | Current PR-009 implementation/status snapshot |
 | [`phase4_part8_pr009_remediation_execution_contract.md`](phase4_part8_pr009_remediation_execution_contract.md) | Detailed dated PR-009 remediation execution snapshot |
 
+## External standards
+
+| Document | Purpose |
+|---|---|
+| [`external_standards_verification_register.md`](external_standards_verification_register.md) | Dated version/authority verification for external engineering standards |
+
 ## External integrations
 
 | Document | Purpose |
