@@ -21,7 +21,7 @@ One job: produce reproducible evidence that the approved implementation and re-a
 4. Record exact commands, results, environment limitations, and unverified claims.
 5. Confirm that the latest audit has no unresolved material findings.
 6. Write the verification report to output/.
-7. If verification fails, return to 07-remediate with the evidence. Otherwise continue to 09-deliver.
+7. If verification fails, record the failure and hand control back to 07-remediate; otherwise continue to 09-deliver.
 
 ## Human Check
 
