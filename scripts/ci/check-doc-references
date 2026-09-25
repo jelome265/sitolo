@@ -23,6 +23,7 @@ WIKILINK = re.compile(r"\[\[([^\]|]+\.md)(?:#[^\]|]+)?(?:\|[^\]]*)?\]\]")
 HTML_MD = re.compile(r"(?:href|src)=[\"']([^\"']+\.md(?:#[^\"']*)?)[\"']")
 CODE_MD = re.compile(r"`([^`\n]*?\.md(?:#[^`]*)?)`")
 PATH_MD = re.compile(r"(?<![\w./-])((?:\.?\.?/|(?:[A-Za-z0-9_.-]+/)+)[A-Za-z0-9_.-]+\.md)(?![\w.-])")
+FENCE = re.compile(r"(?ms)^\s{0,3}(`{3,}|~{3,}).*?^\s{0,3}\1\s*$")
 
 def ignored(path: pathlib.Path) -> bool:
     return any(part in SKIP_PARTS for part in path.parts)
@@ -82,6 +83,7 @@ def main() -> int:
 
     for source in files:
         text = source.read_text(encoding="utf-8", errors="replace")
+        text = FENCE.sub("", text)
         link_refs = set(LINK.findall(text))
         other_refs = set(REF_LINK.findall(text))
         other_refs.update(WIKILINK.findall(text))
