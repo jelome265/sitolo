@@ -1,4 +1,4 @@
-# Sitolo — Codex Entrypoint
+# Sitolo - Codex Entrypoint
 
 This repository follows a filesystem-routed Interpretable Context Methodology (ICM) workflow for repeatable engineering work.
 
