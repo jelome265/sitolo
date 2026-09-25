@@ -1,24 +1,53 @@
 # System Map Schema
 
-Closed card types.
+The map is a navigational record library. The subject tree remains authoritative.
 
-## Object fields
+## Object cards
 
-- type: object
-- status: stub | verified | stale
-- source
-- cluster
+Every object card uses YAML frontmatter:
 
-Object cards describe repository or architecture nouns and must not copy source behavior.
+```yaml
+---
+type: object
+status: stub | verified | stale
+cluster: <cluster>
+source_revision: <commit or dated revision>
+source: <repository path>
+source_citation: <path:line when source is code>
+---
+```
 
-## Process fields
+Required body sections:
 
-- type: process
-- status: stub | verified | stale
-- source
+- one-sentence identity;
+- Why this shape;
+- Shape;
+- Connected to;
+- If you change this, with Hits / Does not hit;
+- Surfaces;
+- See.
 
-Process cards describe real movements as Input → Movement → Output.
+`status: verified` requires a current source revision and source citation. `stub` is the safe default when executable source evidence is insufficient.
 
-## Verification
+## Process cards
 
-Verified requires a current commit or revision date and source citations. Stub is the safe default.
+Every process card uses YAML frontmatter:
+
+```yaml
+---
+type: process
+status: stub | verified | stale
+source_revision: <commit or dated revision>
+source: <repository path or governing document>
+---
+```
+
+Process cards describe only real movements as Input → Movement → Output and must include source citations before promotion to verified.
+
+## Generated index
+
+`map/objects/_index.md` is generated from object-card frontmatter by `scripts/ci/generate-system-map-index`. Do not hand-edit it.
+
+## Authority
+
+Map cards point to source. They never become a second architecture specification.
