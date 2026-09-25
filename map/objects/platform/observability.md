@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: platform
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-observability/src/lib.rs
+source_citation: crates/sitolo-observability/src/lib.rs:25
+---
 # Observability
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: platform
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Runtime logs/metrics/traces, CI evidence and operations.
 ## See
 
 crates/sitolo-observability/src/lib.rs
+
