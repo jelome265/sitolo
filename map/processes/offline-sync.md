@@ -9,7 +9,9 @@ source_citation: crates/sitolo-sync/src/lib.rs:1
 
 # Offline Command Synchronization
 
-Input: durable client-side command generated offline.
+## Input
+
+durable client-side command generated offline.
 
 ## Movement
 
