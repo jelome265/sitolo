@@ -22,7 +22,7 @@ One job: correct confirmed findings, or explicitly record that no remediation is
 5. Add or strengthen proof without weakening the requirement.
 6. Run targeted tests for each material correction.
 7. Write a remediation report to output/.
-8. Return to 06-audit for re-audit. Do not proceed to verification until the re-audit is clean.
+8. Mark re-audit required when implementation changed. The human then re-enters 06-audit with the updated implementation; do not proceed to verification until the re-audit is clean.
 
 ## Human Check
 
