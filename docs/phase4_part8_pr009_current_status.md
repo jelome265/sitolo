@@ -6,7 +6,7 @@
 **Base:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`  
 **Review date:** 2026-09-25  
 **Binding contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md`  
-**Detailed execution contract:** `docs/phase4_part8_pr009_remediation_execution_contract.md`
+**Detailed execution contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md` and this current-status document
 
 ---
 
