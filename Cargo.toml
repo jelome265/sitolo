@@ -32,7 +32,7 @@ thiserror = { version = "2", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false }
 sha2 = { version = "0.11", default-features = false }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
 # `std` is required for dispatcher installation (`with_default` in tests)
 # and subscriber timestamp/thread metadata. Every workspace crate is
