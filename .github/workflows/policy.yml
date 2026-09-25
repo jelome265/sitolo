@@ -35,6 +35,14 @@ jobs:
         run: bash ./scripts/ci/check-icm-workspace
       - name: Documentation reference check
         run: python3 ./scripts/ci/check-doc-references
+      - name: Documentation reference inventory
+        run: python3 ./scripts/ci/check-doc-references --inventory | tee documentation-reference-inventory.txt
+      - name: Upload documentation reference inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: documentation-reference-inventory-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: error
+          path: documentation-reference-inventory.txt
       - name: Repository policy presence
         run: |
           for f in rust-toolchain.toml deny.toml Cargo.lock .github/CODEOWNERS; do
