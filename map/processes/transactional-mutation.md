@@ -9,7 +9,9 @@ source_citation: crates/sitolo-persistence/src/postgres.rs:43
 
 # Transactional Business Mutation
 
-Input: validated business command.
+## Input
+
+validated business command.
 
 ## Movement
 
