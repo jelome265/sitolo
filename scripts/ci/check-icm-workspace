@@ -120,6 +120,37 @@ if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md
   fail=1
 fi
 
+# Effects are a change-impact routing/catalog surface, not a second source of behavior.
+effect_files=(map/effects/*.md)
+for effect in "${effect_files[@]}"; do
+  if [[ "$effect" != "map/effects/CONTEXT.md" ]]; then
+    echo "ICM WORKSPACE VIOLATION: effects layer must remain routing/catalog-only: $effect" >&2
+    fail=1
+  fi
+done
+
+for phrase in \
+  "One job: route an editor from a change to the first-order System Map cards that should be opened." \
+  "This catalog itself is the output" \
+  "Source documents and source code remain authoritative."; do
+  grep -Fq "$phrase" map/effects/CONTEXT.md || {
+    echo "ICM WORKSPACE VIOLATION: effects catalog invariant missing: $phrase" >&2
+    fail=1
+  }
+done
+
+while IFS= read -r target; do
+  [[ -z "$target" ]] && continue
+  target="${target/./.}"
+  [[ -f "map/effects/$target" ]] || {
+    echo "ICM WORKSPACE VIOLATION: broken effects routing target: $target" >&2
+    fail=1
+  }
+done < <(
+  sed -n '/^## Routing$/,/^## Rule$/p' map/effects/CONTEXT.md |
+  grep -oE '\.\./[^; |]+\.md' || true
+)
+
 for object in map/objects/*/*.md; do
   for field in "type: object" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
     grep -Eq "^$field" "$object" || {
