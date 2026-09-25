@@ -9,7 +9,9 @@ source_citation: apps/api/src/serve.rs:46; crates/sitolo-api/src/auth.rs:75
 
 # Authenticated Request Processing
 
-Input: authenticated client intent.
+## Input
+
+authenticated client intent.
 
 ## Movement
 
