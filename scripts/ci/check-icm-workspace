@@ -176,10 +176,48 @@ for i in "${!STAGES[@]}"; do
   fi
   target="$output/$cold_slug-${ARTIFACTS[$i]}.md"
   cp "$cold_root/workspace/_templates/${TEMPLATES[$i]}.md" "$target"
-  sed -i 's/run_slug: "\[run-slug\]"/run_slug: "cold-walk"/; s/^status: draft$/status: human-approved/' "$target"
+  sed -i 's/run_slug: "\[run-slug\]"/run_slug: "cold-walk"/; s/^status: draft$/status: cold-validated/' "$target"
   [[ -s "$target" ]] || { echo "ICM COLD WALK FAILED: empty artifact: $target" >&2; fail=1; }
-  grep -Eq '^run_slug: "cold-walk"$' "$target" || { echo "ICM COLD WALK FAILED: missing run slug: $target" >&2; fail=1; }
-  grep -Eq '^status: human-approved$' "$target" || { echo "ICM COLD WALK FAILED: synthetic human gate not recorded: $target" >&2; fail=1; }
+  grep -Eq '^run_slug: "cold-walk"
+done
+
+artifact_count=$(find "$cold_root/workspace/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
+[[ "$artifact_count" -eq 9 ]] || { echo "ICM COLD WALK FAILED: expected 9 artifacts, found $artifact_count" >&2; fail=1; }
+
+map_source=$(sed -n 's/^source: //p' "$cold_root/map/objects/runtime/api-boundary.md")
+[[ -f "$map_source" ]] || { echo "ICM COLD WALK FAILED: System Map source hop failed: $map_source" >&2; fail=1; }
+
+cold_bytes=$(cat CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" "$WORKSPACE/stages/01-select/CONTEXT.md" | wc -c)
+(( cold_bytes <= 32000 )) || { echo "ICM COLD WALK FAILED: entry + first stage exceeds ~8k-token budget" >&2; fail=1; }
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM workspace check FAILED" >&2
+  exit 1
+fi
+
+echo "ICM workspace check PASSED"
+echo "ICM COLD WALK PASSED: 9 stages, exact handoffs, no synthetic human approval, System Map source hop"
+ "$target" || { echo "ICM COLD WALK FAILED: missing run slug: $target" >&2; fail=1; }
+  grep -Eq '^status: cold-validated
+done
+
+artifact_count=$(find "$cold_root/workspace/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
+[[ "$artifact_count" -eq 9 ]] || { echo "ICM COLD WALK FAILED: expected 9 artifacts, found $artifact_count" >&2; fail=1; }
+
+map_source=$(sed -n 's/^source: //p' "$cold_root/map/objects/runtime/api-boundary.md")
+[[ -f "$map_source" ]] || { echo "ICM COLD WALK FAILED: System Map source hop failed: $map_source" >&2; fail=1; }
+
+cold_bytes=$(cat CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" "$WORKSPACE/stages/01-select/CONTEXT.md" | wc -c)
+(( cold_bytes <= 32000 )) || { echo "ICM COLD WALK FAILED: entry + first stage exceeds ~8k-token budget" >&2; fail=1; }
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM workspace check FAILED" >&2
+  exit 1
+fi
+
+echo "ICM workspace check PASSED"
+echo "ICM COLD WALK PASSED: 9 stages, exact handoffs, synthetic human gates, System Map source hop"
+ "$target" || { echo "ICM COLD WALK FAILED: synthetic cold-run state not recorded: $target" >&2; fail=1; }
 done
 
 artifact_count=$(find "$cold_root/workspace/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
