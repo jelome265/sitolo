@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: runtime
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-api/src/lib.rs
+source_citation: crates/sitolo-api/src/lib.rs:10
+---
 # API Boundary
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: runtime
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Public HTTP transport, integration tests and API-focused security tests.
 ## See
 
 crates/sitolo-api/src/lib.rs
+
