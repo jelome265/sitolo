@@ -1,9 +1,13 @@
+---
+type: object
+status: stub
+cluster: runtime
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: apps/worker/src/main.rs
+source_citation: apps/worker/src/main.rs:10
+---
 # Worker Runtime
 
-- type: object
-- status: stub
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: runtime
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Worker process, CI integration tests and future outbox relay.
 ## See
 
 apps/worker/src/main.rs
+
