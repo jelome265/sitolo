@@ -1,3 +1,10 @@
+---
+type: process
+status: stub
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: docs/transactional-mutation.md
+---
+
 # Transactional Business Mutation
 
 - type: process
@@ -35,3 +42,4 @@ Pure presentation logic.
 ## See
 
 docs/database_design.md
+
