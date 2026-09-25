@@ -21,6 +21,8 @@ $required = @(
   "$WORKSPACE\shared\commercial-context\CONTEXT.md"
   "$WORKSPACE\shared\integration-context\CONTEXT.md"
   "$WORKSPACE\shared\phase-context\CONTEXT.md"
+  "$WORKSPACE\_templates\CONTEXT.md"
+  "docs\icm_reference_integrity.md"
   "map\CLAUDE.md"
   "map\AGENTS.md"
   "map\routing.md"
@@ -55,7 +57,7 @@ foreach ($stage in $STAGES) {
       $fail = $true
     }
     $body = Get-Content $context -Raw
-    foreach ($section in @("## Inputs","## Process","## Outputs")) {
+    foreach ($section in @("## Inputs","## Process","## Outputs","## Human Check")) {
       if ($body -notmatch [regex]::Escape($section)) {
         Write-Error ("ICM WORKSPACE VIOLATION: stage contract missing section " + $section + ": " + $context)
         $fail = $true

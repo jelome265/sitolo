@@ -26,6 +26,8 @@ required=(
   "$WORKSPACE/shared/commercial-context/CONTEXT.md"
   "$WORKSPACE/shared/integration-context/CONTEXT.md"
   "$WORKSPACE/shared/phase-context/CONTEXT.md"
+  "$WORKSPACE/_templates/CONTEXT.md"
+  "$ROOT/docs/icm_reference_integrity.md"
   "map/CLAUDE.md"
   "map/AGENTS.md"
   "map/routing.md"
@@ -57,6 +59,15 @@ for stage in "${STAGES[@]}"; do
   elif (( $(wc -l < "$context") > 80 )); then
     echo "ICM WORKSPACE VIOLATION: stage contract exceeds 80 lines: $context" >&2
     fail=1
+  fi
+
+  if [[ -f "$context" ]]; then
+    for section in "## Inputs" "## Process" "## Outputs" "## Human Check"; do
+      if ! grep -Eq "^$section$" "$context"; then
+        echo "ICM WORKSPACE VIOLATION: stage contract must declare $section: $context" >&2
+        fail=1
+      fi
+    done
   fi
 
   if [[ ! -d "$references" ]]; then
