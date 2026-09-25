@@ -1,9 +1,13 @@
+---
+type: object
+status: verified
+cluster: security-domain
+source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source: crates/sitolo-tenancy/src/scope.rs
+source_citation: crates/sitolo-tenancy/src/scope.rs:113
+---
 # Tenancy
 
-- type: object
-- status: verified
-- source revision: Sitolo main at e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
-- cluster: security-domain
 
 ## Why this shape
 
@@ -34,3 +38,4 @@ Application authorization context, persistence and security tests.
 ## See
 
 crates/sitolo-tenancy/src/lib.rs
+
