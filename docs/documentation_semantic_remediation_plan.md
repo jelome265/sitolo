@@ -210,3 +210,28 @@ Those principles justify keeping business/commercial knowledge in Layer 3 and ke
 Official ICM references:
 - https://github.com/RinDig/Interpretable-Context-Methodology
 - https://github.com/RinDig/icm-architect
+
+## 9. ICM Conformance Audit
+
+The current ICM implementation was compared with Jake Van Clief's current ICM and icm-architect invariants.
+
+| Invariant | State | Finding |
+|---|---|---|
+| One folder, one job | PASS | Engineering stages, shared context, templates and System Map shelves have distinct roles. |
+| Small stable entry | PASS | Root routers are small and route rather than carry workflow payload. |
+| Numbering encodes order | PASS | Engineering stages are numbered 01 through 09. |
+| Explicit stage contracts | PASS | Every stage has Inputs, Process, Outputs and Human Check. |
+| Factory vs product | PASS | Shared references/templates are separated from stage outputs. |
+| Human-editable handoffs | PASS structurally | Output folders are handoff surfaces; no committed run artifacts. |
+| Selective loading | PASS | Stage Inputs tables route relevant references and run artifacts. |
+| Queryable plain text/frontmatter | PARTIAL | Map cards and output templates now use YAML frontmatter; the wider legacy documentation corpus remains ordinary Markdown and is not itself an ICM workspace. |
+| Filesystem state + generated indexes | PASS structurally | Output folders encode state; System Map routing/index are generated and checked. |
+| Template instantiation | PASS structurally | Artifact templates exist; no runtime template-copy command has been exercised in an end-to-end run. |
+| No competing instruction runtimes | PASS | Codex enters through AGENTS.md; Claude uses CLAUDE.md; both route to the same workspace policy. |
+| Cold walk test | NOT YET PROVEN | CI validates structure, but no real end-to-end agent run has been completed and recorded. |
+| Human-gated slice discipline | PARTIAL | Human checks exist in every stage; the repository has not yet recorded a completed cold walk through every gate. |
+| System Map verified evidence | PARTIAL | Verified object cards have current revision/citation metadata; process cards intentionally remain stub until source movements are re-verified. |
+
+### Interpretation
+
+The ICM structure is substantially conformant, but it is not yet “perfect” under Jake's current methodology because the repository has not completed the cold walk/end-to-end run that Jake's validation requires, and process-card verification remains intentionally incomplete. These are verification/conformance gaps, not reasons to invent additional orchestration code.
