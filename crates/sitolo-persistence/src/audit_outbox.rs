@@ -87,7 +87,10 @@ pub struct PgAuditOutboxStore {
 
 impl PgAuditOutboxStore {
     pub fn new(runtime_pool: sqlx::PgPool, worker_pool: sqlx::PgPool) -> Self {
-        Self { runtime_pool, worker_pool }
+        Self {
+            runtime_pool,
+            worker_pool,
+        }
     }
 }
 
@@ -555,7 +558,13 @@ mod tests {
         assert_eq!(claimed[0].status, OutboxStatus::Claimed);
         assert_eq!(claimed[0].attempt_count, 1);
 
-        db.mark_published(&claimed[0].event_id, claimed[0].claim_token.as_deref().unwrap_or(""), now).await.unwrap();
+        db.mark_published(
+            &claimed[0].event_id,
+            claimed[0].claim_token.as_deref().unwrap_or(""),
+            now,
+        )
+        .await
+        .unwrap();
         let records = db.outbox_records();
         assert_eq!(records[0].status, OutboxStatus::Published);
     }
