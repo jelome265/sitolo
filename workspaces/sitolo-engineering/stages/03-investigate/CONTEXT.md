@@ -6,7 +6,7 @@ One job: understand the existing implementation and authoritative project contra
 
 | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/ | Selected run brief | Scope |
+| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Scope |
 | Research | ../02-research/output/[run-slug]-research.md | Full file when produced | External constraints |
 | Project docs map | ../../../../docs/README.md | Relevant sections | Locate authoritative documents |
 | Governance | ../../../../agent.md | Relevant sections | Engineering policy |
