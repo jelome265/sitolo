@@ -31,7 +31,7 @@ The source code is evidence of current implementation. It does not silently over
 The initial audit snapshot contained 86 Markdown files in the scoped documentation/repository set. Current counts must always be derived from the repository tree; this document is not the inventory source. The reference checker must inventory:
 
 1. explicit Markdown links;
-2. backtick/path-qualified `.md` references;
+2. backtick/path-qualified Markdown files references;
 3. document-local bare filenames;
 4. repository-wide unique basename matches;
 5. ambiguous basename matches;
@@ -188,7 +188,7 @@ A documentation repair must not claim implementation completion when the source 
 
 The documentation audit is closed only when:
 
-- every internal `.md` reference resolves or is explicitly classified as historical/compatibility;
+- every internal Markdown files reference resolves or is explicitly classified as historical/compatibility;
 - no ambiguous bare basename reference remains in a governing document;
 - every canonical document has one source of truth;
 - every historical audit is clearly marked historical;
