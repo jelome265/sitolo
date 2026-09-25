@@ -120,7 +120,7 @@ Get-ChildItem "map\processes" -File -Filter *.md | Where-Object { $_.Name -ne "C
     if ($text -notmatch "(?m)^$([regex]::Escape($field))") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing ${field}: $($_.FullName)" }
   }
   foreach ($section in @("## Input","## Movement","## Output","## Consumes","## Produces","## If you change this","### Hits","### Does not hit","## Verification","## See")) {
-    if ($text -notmatch [regex]::Escape($section)) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing $section: $($_.FullName)" }
+    if ($text -notmatch [regex]::Escape($section)) { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process missing ${section}: $($_.FullName)" }
   }
   if ($text -notmatch "(?m)^\s*\d+\. ") { $fail = $true; Write-Error "ICM WORKSPACE VIOLATION: process movement has no numbered steps: $($_.FullName)" }
   foreach ($section in @("## Consumes","## Produces")) {
