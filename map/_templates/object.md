@@ -1,3 +1,13 @@
+---
+type: object
+status: stub
+universe: ghost
+cluster: <cluster>
+source_revision: <commit or dated revision>
+source: <authoritative source path>
+source_citation: <path or path:line>
+---
+
 # Object
 
 One sentence naming the repository or architecture noun.
@@ -8,7 +18,7 @@ The load-bearing reason this object exists.
 
 ## Shape
 
-Source-owned files, modules, types or boundaries.
+Source-owned files, modules, types or boundaries, with citations.
 
 ## Connected to
 
