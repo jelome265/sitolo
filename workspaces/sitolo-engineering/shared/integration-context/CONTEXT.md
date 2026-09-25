@@ -10,6 +10,7 @@ External-provider Layer 3 context.
 | MRA/EIS | ../../../../docs/mra_eis_integration_spec.md | Relevant fiscal sections | Tax integration |
 | Regulatory perimeter | ../../../../docs/commercial/07_trust_compliance/regulatory_perimeter_and_compliance_boundary.md | §§5-16 | Regulatory boundary |
 | System architecture | ../../../../docs/system_architecture_design.md | Integration and adapter sections | Trust-boundary architecture |
+| Regulatory verification | ../../../../docs/commercial/00_governance/current_regulatory_facts_and_verification.md | Full file when regulatory freshness matters | Dated current regulatory evidence |
 
 ## Rule
 
