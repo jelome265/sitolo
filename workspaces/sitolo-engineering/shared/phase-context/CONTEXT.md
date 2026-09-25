@@ -11,6 +11,7 @@ Implementation-specific Layer 3 context.
 | Phase 3 | ../../../../docs/phase3_identity_sessions_mfa_device_identity_implementation.md | Identity, session and device controls |
 | Phase 4 | ../../../../docs/phase4_tenant_organization_branch_iam_implementation.md | Tenant, organization, branch and IAM target contract |
 | Active Part 8 | ../../../../docs/phase4_part8_audit_outbox_implementation_contract.md; ../../../../docs/phase4_part8_pr009_current_status.md | Binding Part 8 contract and current PR-009 status |
+| Current implementation | ../../../../docs/current_implementation_status.md | Full file | Active product phase vs ICM workflow separation |
 | Phase 5 | ../../../../docs/phase5_postgresql_schema_migrations_constraints_rls_implementation.md | Schema and RLS |
 | Phase 6 | ../../../../docs/phase6_authorization_engine_policy_enforcement_implementation.md | Authorization |
 | Phase 7 | ../../../../docs/phase7_security_test_framework_implementation.md | Security tests |
