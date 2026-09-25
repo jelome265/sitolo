@@ -1,3 +1,9 @@
+---
+artifact_type: audit-report
+status: draft
+run_slug: "[run-slug]"
+---
+
 # Audit Report
 
 ## Scope
@@ -16,3 +22,4 @@
 ## Required remediation
 
 ## Unresolved questions
+
