@@ -14,6 +14,7 @@ Stable technical Layer 3 context.
 | Testing | ../../../../docs/testing_strategy.md | Relevant verification sections | Test evidence |
 | Observability | ../../../../docs/observability_spec.md | Relevant telemetry sections | Operational evidence |
 | Deployment | ../../../../docs/deployment_spec.md | Relevant release and recovery sections | Deployment and operations |
+| External standards | ../../../../docs/external_standards_verification_register.md | Relevant versioned standard | Version/authority freshness |
 
 ## Rule
 
