@@ -39,6 +39,28 @@ required=(
   map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
   scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts scripts/ci/check-security-icm-policy
   scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
+  # Phase-contract corpus required by the implementation program.
+  # Phase 0 is a foundational package; Phases 1-20 require explicit contracts.
+  docs/phase1_repository_rust_workspace_ci_deep_implementation.md
+  docs/phase2_config_secrets_logging_errors_telemetry_implementation.md
+  docs/phase3_identity_sessions_mfa_device_identity_implementation.md
+  docs/phase4_tenant_organization_branch_iam_implementation.md
+  docs/phase5_postgresql_schema_migrations_constraints_rls_implementation.md
+  docs/phase6_authorization_engine_policy_enforcement_implementation.md
+  docs/phase7_security_test_framework_implementation.md
+  docs/phase8_product_catalogue_implementation.md
+  docs/phase9_inventory_ledger_implementation.md
+  docs/phase10_pos_sales_implementation.md
+  docs/phase11_payments_reconciliation_implementation.md
+  docs/phase12_offline_synchronization_implementation.md
+  docs/phase13_procurement_suppliers_implementation.md
+  docs/phase14_returns_refunds_cash_implementation.md
+  docs/phase15_mra_eis_implementation.md
+  docs/phase16_reporting_exports_implementation.md
+  docs/phase17_billing_entitlements_implementation.md
+  docs/phase18_admin_support_implementation.md
+  docs/phase19_hardening_performance_dr_implementation.md
+  docs/phase20_production_certification_implementation.md
 )
 
 for path in "${required[@]}"; do
