@@ -1,7 +1,6 @@
 //! Real socket transport tests for PR #68 remediation.
 use std::time::Duration;
 use tokio::net::TcpListener;
-use reqwest::Client;
 
 #[tokio::test]
 async fn real_socket_http1_persistent_connection() {
