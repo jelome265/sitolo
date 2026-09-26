@@ -58,7 +58,7 @@ done
 # Validate the organizational workspace registry and routing surfaces.
 while IFS="|" read -r _id workspace _evidence _status; do
   workspace="$(printf "%s" "$workspace" | sed "s/^ *//; s/ *$//")"
-  [[ -z "$workspace" || "$workspace" == "Workspace" ]] && continue
+  [[ -z "$workspace" || "$workspace" == "Workspace" || "$workspace" == "---" ]] && continue
   workspace="${workspace%/}"
   [[ -d "workspaces/$workspace" ]] || {
     echo "ICM WORKSPACE VIOLATION: registered workspace directory missing: $workspace" >&2
