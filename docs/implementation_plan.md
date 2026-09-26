@@ -1,7 +1,7 @@
 # Sitolo — Implementation Plan
 
 **Document:** `implementation_plan.md`  
-**Phase:** 0 — Architecture / Contracts / ADR Freeze  
+**Program status:** Architecture/contracts implementation baseline  
 **File:** 13 of 16  
 **Status:** Implementation baseline  
 **Date:** 2026-09-05  
@@ -239,6 +239,24 @@ PHASE 20 Production certification
 Some foundation work can overlap when dependency-safe. No phase may silently bypass an unresolved upstream security or authority decision.
 
 ---
+
+# 6.1 Phase Contract Coverage Authority
+
+The implementation program defined in this document remains authoritative for phase numbering, dependency order, phase objectives and cross-phase completion requirements.
+
+The companion `docs/phase_contract_coverage_register.md` is the **authoritative reconciliation record for the phase-contract corpus**. It owns the current coverage classification, canonical-contract mapping, supporting-source mapping, ICM routing status, implementation/evidence status, known gaps and remediation tracking for Phases 0–20.
+
+This separation is deliberate:
+
+```text
+implementation_plan.md
+    → what phases exist and what they require
+
+phase_contract_coverage_register.md
+    → whether the required contract/routing/evidence corpus exists and where it is deficient
+```
+
+The register may not override higher-authority product, security, regulatory/provider, domain, database, API or commercial sources, and it may not reinterpret a target contract as implementation evidence.
 
 # 7. Phase 0 — Architecture / Contracts / ADR Freeze
 

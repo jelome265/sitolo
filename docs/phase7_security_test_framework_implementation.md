@@ -73,13 +73,13 @@ Phase 7 MUST consume, not redefine, the existing Sitolo contracts.
 The authoritative relationship is:
 
 ```text
-product scope
+applicable law / regulatory requirement
     ↓
-business model
-    ↓
-system architecture
+signed external-provider contract / current provider behavior
     ↓
 security architecture
+    ↓
+system architecture
     ↓
 security implementation specification
     ↓

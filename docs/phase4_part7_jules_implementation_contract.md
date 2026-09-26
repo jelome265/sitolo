@@ -2,8 +2,9 @@
 
 Repository: jelome265/sitolo
 Phase: Phase 4 Part 7
+> **Lifecycle classification:** Historical implementation contract. This document governed a completed PR-specific change and is retained for traceability. It is not a current implementation task. Current state must be verified against the repository source and the current phase/PR status documents.
 Scope: PR-008 — PostgreSQL Row-Level Security integration and real negative security tests
-Status: Binding implementation contract
+Status: Historical implementation contract
 Baseline: main after merged Phase 4 Part 6 / PR-006 (#37)
 
 # 0. EXECUTIVE CONTRACT

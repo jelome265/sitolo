@@ -1,0 +1,459 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+WORKSPACE="workspaces/sitolo-engineering"
+STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
+TEMPLATES=(run-brief research-memo investigation implementation-plan implementation-report audit-report remediation-report verification-report delivery-handoff)
+ARTIFACTS=(brief research investigation plan implementation audit remediation verification delivery)
+fail=0
+
+required=(
+  CLAUDE.md CONTEXT.md AGENTS.md
+  "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md"
+  "$WORKSPACE/setup/questionnaire.md"
+  "$WORKSPACE/_config/workflow-policy.md"
+  "$WORKSPACE/shared/context-loading.md"
+  "$WORKSPACE/shared/governance-context/CONTEXT.md"
+  "$WORKSPACE/skills/engineering-review/SKILL.md"
+  "$WORKSPACE/shared/CONTEXT.md"
+  "$WORKSPACE/shared/business-context/CONTEXT.md"
+  "$WORKSPACE/shared/technical-context/CONTEXT.md"
+  "$WORKSPACE/shared/security-context/CONTEXT.md"
+  "$WORKSPACE/shared/commercial-context/CONTEXT.md"
+  "$WORKSPACE/shared/integration-context/CONTEXT.md"
+  "$WORKSPACE/shared/phase-context/CONTEXT.md"
+  "$WORKSPACE/_templates/CONTEXT.md"
+  docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
+  docs/current_implementation_status.md docs/phase_contract_coverage_register.md docs/security_control_register.md docs/security_incident_response.md docs/security_exception_register.md docs/security_cryptography_and_key_management.md
+  docs/workspace_domain_architecture.md
+  workspaces/CLAUDE.md workspaces/CONTEXT.md
+  workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md
+  workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md
+  workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md
+  workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md
+  map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
+  map/_meta/schema.md map/_templates/object.md map/_templates/process.md
+  map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
+  scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts scripts/ci/check-security-icm-policy
+  scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
+  # Phase-contract corpus required by the implementation program.
+  # Phase 0 is a foundational package; Phases 1-20 require explicit contracts.
+  docs/phase1_repository_rust_workspace_ci_deep_implementation.md
+  docs/phase2_config_secrets_logging_errors_telemetry_implementation.md
+  docs/phase3_identity_sessions_mfa_device_identity_implementation.md
+  docs/phase4_tenant_organization_branch_iam_implementation.md
+  docs/phase5_postgresql_schema_migrations_constraints_rls_implementation.md
+  docs/phase6_authorization_engine_policy_enforcement_implementation.md
+  docs/phase7_security_test_framework_implementation.md
+  docs/phase8_product_catalogue_implementation.md
+  docs/phase9_inventory_ledger_implementation.md
+  docs/phase10_pos_sales_implementation.md
+  docs/phase11_payments_reconciliation_implementation.md
+  docs/phase12_offline_synchronization_implementation.md
+  docs/phase13_procurement_suppliers_implementation.md
+  docs/phase14_returns_refunds_cash_implementation.md
+  docs/phase15_mra_eis_implementation.md
+  docs/phase16_reporting_exports_implementation.md
+  docs/phase17_billing_entitlements_implementation.md
+  docs/phase18_admin_support_implementation.md
+  docs/phase19_hardening_performance_dr_implementation.md
+  docs/phase20_production_certification_implementation.md
+)
+
+for path in "${required[@]}"; do
+  if [[ ! -f "$path" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing required file: $path" >&2
+    fail=1
+  fi
+done
+
+# The missing-phase contract set must be sequentially executable, not one-shot.
+phase_contracts_11_20=(
+  docs/phase11_payments_reconciliation_implementation.md
+  docs/phase12_offline_synchronization_implementation.md
+  docs/phase13_procurement_suppliers_implementation.md
+  docs/phase14_returns_refunds_cash_implementation.md
+  docs/phase15_mra_eis_implementation.md
+  docs/phase16_reporting_exports_implementation.md
+  docs/phase17_billing_entitlements_implementation.md
+  docs/phase18_admin_support_implementation.md
+  docs/phase19_hardening_performance_dr_implementation.md
+  docs/phase20_production_certification_implementation.md
+)
+required_parts=(
+  "## Part 01 — Select / Reconcile"
+  "## Part 02 — Domain / State"
+  "## Part 03 — Persistence / Transactions"
+  "## Part 04 — Security / Authority"
+  "## Part 05 — Core Implementation"
+  "## Part 06 — Failure / Concurrency / Adversarial Verification"
+  "## Part 07 — Observability / Operations / Recovery"
+  "## Part 08 — Integration / Evidence"
+  "## Part 09 — Semantic Audit"
+  "## Part 10 — Remediation / Re-audit"
+  "## Part 11 — Verification / Delivery"
+)
+for phase_doc in "${phase_contracts_11_20[@]}"; do
+  if [[ -f "$phase_doc" ]]; then
+    grep -Fq "## 2. Mandatory sequential implementation model" "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: phase contract lacks mandatory sequential model: $phase_doc" >&2
+      fail=1
+    }
+    grep -Fq "The phase MUST NOT be implemented as one-shot work." "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: one-shot implementation prohibition missing: $phase_doc" >&2
+      fail=1
+    }
+    for part in "${required_parts[@]}"; do
+      grep -Fqx "$part" "$phase_doc" || {
+        echo "ICM WORKSPACE VIOLATION: missing sequential phase part '$part': $phase_doc" >&2
+        fail=1
+      }
+    done
+    grep -Fq "Part N+1" "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: sequential gate language missing: $phase_doc" >&2
+      fail=1
+    }
+  fi
+done
+
+for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" workspaces/CLAUDE.md workspaces/CONTEXT.md workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md map/CLAUDE.md map/CONTEXT.md; do
+  if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
+    echo "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry" >&2
+    fail=1
+  fi
+done
+
+# Root routing invariant: organizational work must enter the workspace router
+# before any domain-specific or engineering workspace is selected.
+if grep -Eq 'workspaces/sitolo-engineering' CLAUDE.md CONTEXT.md; then
+  echo "ICM WORKSPACE VIOLATION: root routing surface bypasses the organizational workspace router" >&2
+  fail=1
+fi
+
+grep -Fq 'Any organizational work | workspaces/CLAUDE.md' CLAUDE.md || {
+  echo "ICM WORKSPACE VIOLATION: root CLAUDE.md lacks mandatory organizational workspace dispatch" >&2
+  fail=1
+}
+
+grep -Fq 'Every organizational task starts at `workspaces/CLAUDE.md`' CONTEXT.md || {
+  echo "ICM WORKSPACE VIOLATION: root CONTEXT.md lacks mandatory workspace entry invariant" >&2
+  fail=1
+}
+
+if [[ -f scripts/ci/check-security-icm-policy ]]; then
+  bash scripts/ci/check-security-icm-policy || fail=1
+else
+  echo "ICM SECURITY VIOLATION: missing security ICM policy validator" >&2
+  fail=1
+fi
+
+# Validate the organizational workspace contract and routing surfaces.
+if [[ -f scripts/ci/check-icm-workspace-contracts ]]; then
+  bash scripts/ci/check-icm-workspace-contracts || fail=1
+else
+  echo "ICM WORKSPACE VIOLATION: missing workspace contract validator" >&2
+  fail=1
+fi
+
+for entry in workspaces/CLAUDE.md workspaces/CONTEXT.md; do
+  [[ -f "$entry" ]] || {
+    echo "ICM WORKSPACE VIOLATION: missing organizational workspace router: $entry" >&2
+    fail=1
+  }
+done
+for stage in "${STAGES[@]}"; do
+  context="$WORKSPACE/stages/$stage/CONTEXT.md"
+  references="$WORKSPACE/stages/$stage/references"
+  output="$WORKSPACE/stages/$stage/output"
+
+  if [[ ! -f "$context" ]]; then
+    echo "ICM WORKSPACE VIOLATION: missing stage contract: $context" >&2
+    fail=1
+    continue
+  fi
+
+  if (( $(wc -l < "$context") > 80 )); then
+    echo "ICM WORKSPACE VIOLATION: stage contract exceeds 80 lines: $context" >&2
+    fail=1
+  fi
+
+  for section in "## Inputs" "## Process" "## Outputs" "## Human Check"; do
+    if ! grep -Fqx "$section" "$context"; then
+      echo "ICM WORKSPACE VIOLATION: missing $section: $context" >&2
+      fail=1
+    fi
+  done
+
+  if ! grep -q '^\*\*Do NOT load:\*\*' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: missing explicit negative loading boundary: $context" >&2
+    fail=1
+  fi
+
+  if grep -Fq '../../../../agent.md' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: stage contract must route through the recursive governance context, not agent.md directly: $context" >&2
+    fail=1
+  fi
+
+  if grep -Eq '\| \../[^|]+/output/ \|' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: stage handoff must name exact artifact path: $context" >&2
+    fail=1
+  fi
+
+  if [[ ! -d "$references" || ! -d "$output" || ! -f "$output/.gitkeep" ]]; then
+    echo "ICM WORKSPACE VIOLATION: references/output scaffold incomplete: $stage" >&2
+    fail=1
+  fi
+
+  # Layer 3 is declared through Reference inputs. ICM allows stage-local
+  # references as well as shared/_config/skills material, so the contract is
+  # checked at the Inputs boundary rather than by requiring a local reference file.
+  if ! sed -n '/^## Inputs$/,/^## /p' "$context" | grep -Eq '^\| Reference \|'; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no declared Layer 3 Reference input: $stage" >&2
+    fail=1
+  fi
+
+  if [[ -d "$references" ]]; then
+    while IFS= read -r ref; do
+      if (( $(wc -l < "$ref") > 200 )); then
+        echo "ICM WORKSPACE VIOLATION: reference exceeds 200 lines: $ref" >&2
+        fail=1
+      fi
+    done < <(find "$references" -type f -name '*.md' -print)
+  fi
+
+  # Layer 4 handoffs must come from an earlier numbered stage. This proves one-way
+  # executable dependencies and rejects accidental forward/circular references.
+  handoff_refs=$(grep -oE '\.\./[0-9]{2}-[^ |]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md' "$context" 2>/dev/null || true)
+  current_num=$((10#${stage%%-*}))
+  if (( current_num > 1 )) && [[ -z "$handoff_refs" ]]; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no Layer 4 handoff input: $stage" >&2
+    fail=1
+  fi
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    target_name=$(basename "$(dirname "$(dirname "$ref")")")
+    target_num=$((10#${target_name%%-*}))
+    if (( target_num >= current_num )); then
+      echo "ICM WORKSPACE VIOLATION: stage dependency is not one-way to an earlier stage: $stage -> $ref" >&2
+      fail=1
+    fi
+  done <<< "$handoff_refs"
+
+  if [[ -d "$output" ]]; then
+    while IFS= read -r artifact; do
+      if [[ "$artifact" != "$output/.gitkeep" ]]; then
+        echo "ICM WORKSPACE VIOLATION: run artifacts must not be committed inside the reusable factory output shelf: $artifact" >&2
+        fail=1
+      fi
+    done < <(find "$output" -type f -print)
+  fi
+done
+
+if [[ -d .codex ]]; then
+  echo "ICM WORKSPACE VIOLATION: .codex must not be the workflow engine" >&2
+  fail=1
+fi
+
+if [[ -d .agents/skills || -d .agents/evals ]]; then
+  echo "ICM WORKSPACE VIOLATION: repository-global agent workflow detected" >&2
+  fail=1
+fi
+
+if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then
+  echo "ICM WORKSPACE VIOLATION: second Codex orchestration runtime detected" >&2
+  fail=1
+fi
+
+if ! cmp -s map/CLAUDE.md map/AGENTS.md || ! cmp -s map/CLAUDE.md map/routing.md; then
+  echo "ICM WORKSPACE VIOLATION: System Map routing twins differ" >&2
+  fail=1
+fi
+
+# Effects are a change-impact routing/catalog surface, not a second source of behavior.
+effect_files=(map/effects/*.md)
+for effect in "${effect_files[@]}"; do
+  if [[ "$effect" != "map/effects/CONTEXT.md" ]]; then
+    echo "ICM WORKSPACE VIOLATION: effects layer must remain routing/catalog-only: $effect" >&2
+    fail=1
+  fi
+done
+
+for phrase in \
+  "One job: route an editor from a change to the first-order System Map cards that should be opened." \
+  "This catalog itself is the output" \
+  "Source documents and source code remain authoritative."; do
+  grep -Fq "$phrase" map/effects/CONTEXT.md || {
+    echo "ICM WORKSPACE VIOLATION: effects catalog invariant missing: $phrase" >&2
+    fail=1
+  }
+done
+
+while IFS= read -r target; do
+  [[ -z "$target" ]] && continue
+  target="${target/./.}"
+  [[ -f "map/effects/$target" ]] || {
+    echo "ICM WORKSPACE VIOLATION: broken effects routing target: $target" >&2
+    fail=1
+  }
+done < <(
+  sed -n '/^## Routing$/,/^## Rule$/p' map/effects/CONTEXT.md |
+  grep -oE '\.\./[^; |]+\.md' || true
+)
+
+for object in map/objects/*/*.md; do
+  for field in "type: object" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
+    grep -Eq "^$field" "$object" || {
+      echo "ICM WORKSPACE VIOLATION: object missing $field: $object" >&2
+      fail=1
+    }
+  done
+
+  source_path=$(sed -n 's/^source: //p' "$object")
+  [[ -n "$source_path" && -f "$source_path" ]] || {
+    echo "ICM WORKSPACE VIOLATION: object source missing: $object -> $source_path" >&2
+    fail=1
+  }
+
+  if grep -Eq '^status: verified$' "$object" && ! grep -Eq '^universe: live$' "$object"; then
+    echo "ICM WORKSPACE VIOLATION: verified object must be live: $object" >&2
+    fail=1
+  fi
+done
+
+for process in map/processes/*.md; do
+  [[ "$process" == "map/processes/CONTEXT.md" ]] && continue
+
+  for field in "type: process" "status:" "universe:" "source_revision:" "source:" "source_citation:"; do
+    grep -Eq "^$field" "$process" || {
+      echo "ICM WORKSPACE VIOLATION: process missing $field: $process" >&2
+      fail=1
+    }
+  done
+
+  for section in "## Input" "## Movement" "## Output" "## Consumes" "## Produces" "## If you change this" "### Hits" "### Does not hit" "## Verification" "## See"; do
+    grep -Fqx "$section" "$process" || {
+      echo "ICM WORKSPACE VIOLATION: process missing $section: $process" >&2
+      fail=1
+    }
+  done
+
+  sed -n '/^## Movement$/,/^## Output$/p' "$process" |
+    grep -Eq '^[[:space:]]*[0-9]+\. ' || {
+      echo "ICM WORKSPACE VIOLATION: process has no numbered movement: $process" >&2
+      fail=1
+    }
+
+  for section in "## Consumes" "## Produces"; do
+    body=$(sed -n "/^$section$/,/^## /p" "$process" | tail -n +2)
+    printf '%s\n' "$body" |
+      grep -Eq '\]\(\.\./objects/[^)]+\.md\)' || {
+      echo "ICM WORKSPACE VIOLATION: $section lacks object links: $process" >&2
+      fail=1
+    }
+  done
+
+  IFS=';' read -r -a source_list <<< "$(sed -n 's/^source: //p' "$process")"
+  for source_path in "${source_list[@]}"; do
+    source_path="$(printf '%s' "$source_path" | sed 's/^ *//; s/ *$//')"
+    [[ -f "$source_path" ]] || {
+      echo "ICM WORKSPACE VIOLATION: process source missing: $process -> $source_path" >&2
+      fail=1
+    }
+  done
+
+  if grep -Eq '^status: verified$' "$process" && ! grep -Eq '^universe: live$' "$process"; then
+    echo "ICM WORKSPACE VIOLATION: verified process must be live: $process" >&2
+    fail=1
+  fi
+
+  if grep -Eq '^universe: ghost$' "$process" && ! grep -q 'Ghost/unwired' "$process"; then
+    echo "ICM WORKSPACE VIOLATION: ghost process missing unwired evidence: $process" >&2
+    fail=1
+  fi
+done
+
+# Formal process-card verification checks current source identity, citations,
+# object links, and current-state evidence for executable movements.
+if [[ -f ./scripts/ci/check-system-map-processes ]]; then
+  bash ./scripts/ci/check-system-map-processes || fail=1
+fi
+
+# Mechanical cold walk: traverse the actual nine-stage filesystem factory in a disposable
+# copy. No human approval is synthesized; this only proves routing/handoff
+# integrity and template instantiation.
+cold_root=$(mktemp -d)
+cleanup() { rm -rf "$cold_root"; }
+trap cleanup EXIT
+
+cp -R "$WORKSPACE" "$cold_root/workspace"
+cp -R map "$cold_root/map"
+
+cold_slug="cold-walk"
+
+for i in "${!STAGES[@]}"; do
+  stage="${STAGES[$i]}"
+  context="$cold_root/workspace/stages/$stage/CONTEXT.md"
+  output="$cold_root/workspace/stages/$stage/output"
+
+  refs=$(grep -oE '\.\./[0-9]{2}-[^ |]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md' "$context" 2>/dev/null || true)
+
+  if [[ -n "$refs" ]]; then
+    while IFS= read -r ref; do
+      [[ -z "$ref" ]] && continue
+      resolved="$cold_root/workspace/stages/$stage/${ref/\[run-slug\]/$cold_slug}"
+      if [[ ! -f "$resolved" ]]; then
+        echo "ICM COLD WALK FAILED: missing handoff before $stage: $ref" >&2
+        fail=1
+      fi
+    done <<< "$refs"
+  fi
+
+  target="$output/$cold_slug-${ARTIFACTS[$i]}.md"
+  cp "$cold_root/workspace/_templates/${TEMPLATES[$i]}.md" "$target"
+  sed -i 's/run_slug: "\[run-slug\]"/run_slug: "cold-walk"/; s/^status: draft$/status: cold-validated/' "$target"
+
+  [[ -s "$target" ]] || {
+    echo "ICM COLD WALK FAILED: empty artifact: $target" >&2
+    fail=1
+  }
+
+  grep -Eq '^run_slug: "cold-walk"$' "$target" || {
+    echo "ICM COLD WALK FAILED: missing run slug: $target" >&2
+    fail=1
+  }
+
+  grep -Eq '^status: cold-validated$' "$target" || {
+    echo "ICM COLD WALK FAILED: machine validation state not recorded: $target" >&2
+    fail=1
+  }
+done
+
+artifact_count=$(find "$cold_root/workspace/stages" -path '*/output/*' -type f ! -name .gitkeep | wc -l)
+[[ "$artifact_count" -eq 9 ]] || {
+  echo "ICM COLD WALK FAILED: expected 9 artifacts, found $artifact_count" >&2
+  fail=1
+}
+
+map_source=$(sed -n 's/^source: //p' "$cold_root/map/objects/runtime/api-boundary.md")
+[[ -f "$map_source" ]] || {
+  echo "ICM COLD WALK FAILED: System Map source hop failed: $map_source" >&2
+  fail=1
+}
+
+# Conservative byte proxy for the ~2k–8k token target; this is not a tokenizer measurement.
+cold_bytes=$(cat CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" "$WORKSPACE/stages/01-select/CONTEXT.md" | wc -c)
+(( cold_bytes <= 32000 )) || {
+  echo "ICM COLD WALK FAILED: entry + first stage exceeds ~8k-token budget" >&2
+  fail=1
+}
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM workspace check FAILED" >&2
+  exit 1
+fi
+
+echo "ICM workspace check PASSED"
+echo "ICM MECHANICAL COLD WALK PASSED: 9 stages, exact handoffs, no synthetic human approval, System Map source hop"

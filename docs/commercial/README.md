@@ -9,6 +9,7 @@ This directory contains the complete commercial corpus, physically grouped by bo
 | [`Commercial Corpus Audit`](00_governance/commercial_corpus_audit.md) | Corpus integrity, authority, contradiction and evidence audit |
 | [`Commercial Model Precision & Consistency Contract`](00_governance/commercial_model_precision_and_consistency_contract.md) | Canonical precision and consistency rules |
 | [`Commercial Metrics Governance & Decision System`](00_governance/commercial_metrics_governance_and_decision_system.md) | Metric, experiment and commercial decision governance |
+| [`Current Regulatory Facts & Verification Register`](00_governance/current_regulatory_facts_and_verification.md) | Dated regulatory facts and reverification triggers |
 
 ## Strategy
 

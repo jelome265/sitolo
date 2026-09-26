@@ -3,8 +3,7 @@ name: integration
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,15 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           components: rustfmt, clippy
       - name: Run boundary and contract tests
-        run: cargo test --workspace --all-targets --all-features --locked
+        run: cargo test --workspace --all-targets --all-features --locked --exclude sitolo-persistence
       # F-018 scope-exception governance. This textual record is backed by
       # docs/testing_strategy.md ("PostgreSQL integration exception
       # SCOPE-EXC-001"), which names the owner, scope, review date, and the
       # Phase 5 completion gate that retires it.
       - name: Record explicit Phase 1 exclusion
-        run: echo "SCOPE-EXC-001 active: PostgreSQL integration harness deferred to Phase 5 (owner: platform; review: 2026-12-01; see docs/testing_strategy.md)."
+        run: >-
+          echo "SCOPE-EXC-001 active: PostgreSQL integration harness deferred to Phase 5 (owner: platform; review: 2026-12-01; see docs/testing_strategy.md)."

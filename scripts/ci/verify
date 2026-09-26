@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$ROOT"
 
+echo "==> ICM workspace"
+./scripts/ci/check-icm-workspace
+
 echo "==> Verify toolchain"
 rustc --version
 cargo --version

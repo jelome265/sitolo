@@ -60,6 +60,8 @@ The specification establishes:
 - failure semantics;
 - implementation sequence;
 - evidence requirements;
+- security control traceability;
+- security incident/exception/key-management integration;
 - definition of ready and definition of done.
 
 The central implementation principle is:
@@ -75,16 +77,25 @@ That principle follows directly from Sitolo's existing security architecture, wh
 When multiple sources contain overlapping detail, implementation follows this precedence order:
 
 ```text
-BUSINESS MODEL
+APPLICABLE LAW / REGULATION
      |
      v
-PRODUCT / DOMAIN SPECIFICATION
+SIGNED EXTERNAL PROVIDER CONTRACT / CURRENT PROVIDER BEHAVIOR
+     |
+     v
+SECURITY ARCHITECTURE
      |
      v
 SYSTEM ARCHITECTURE
      |
      v
-SECURITY ARCHITECTURE
+DOMAIN MODEL
+     |
+     v
+DATABASE / API / INTEGRATION CONTRACTS
+     |
+     v
+TESTING / OBSERVABILITY / DEPLOYMENT
      |
      v
 THIS IMPLEMENTATION SPECIFICATION

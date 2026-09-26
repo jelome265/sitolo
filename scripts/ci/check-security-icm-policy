@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail=0
+
+required=(
+  docs/security_control_register.md
+  docs/security_incident_response.md
+  docs/security_exception_register.md
+  docs/security_cryptography_and_key_management.md
+  workspaces/sitolo-engineering/skills/security-engineering/SKILL.md
+  workspaces/sitolo-engineering/skills/offensive-security/SKILL.md
+  workspaces/sitolo-engineering/shared/security-context/CONTEXT.md
+  workspaces/sitolo-engineering/stages/01-select/CONTEXT.md
+  workspaces/sitolo-engineering/stages/01-select/references/request-brief.md
+  workspaces/sitolo-engineering/_templates/run-brief.md
+  workspaces/sitolo-engineering/_templates/implementation-plan.md
+  workspaces/sitolo-engineering/stages/04-plan/references/plan-contract.md
+  workspaces/sitolo-engineering/_templates/implementation-report.md
+  workspaces/sitolo-engineering/_templates/audit-report.md
+  workspaces/sitolo-engineering/_templates/verification-report.md
+)
+
+for path in "${required[@]}"; do
+  [[ -f "$path" ]] || { echo "SECURITY ICM VIOLATION: missing security control surface: $path" >&2; fail=1; }
+done
+
+# The reusable security-engineering skill is a mandatory control surface.
+SECURITY_SKILL="workspaces/sitolo-engineering/skills/security-engineering/SKILL.md"
+for section in   "## 3. Mandatory operating rules"   "## 4. Threat-first procedure"   "## 6. Mandatory vulnerability-scanning model"   "## 9. Security regression test design"   "## 10. Test authenticity rules"   "## 13. No-go conditions"   "## 14. Security audit procedure"; do
+  grep -Fq "$section" "$SECURITY_SKILL" || {
+    echo "SECURITY ICM VIOLATION: security skill missing required enforcement section: $section" >&2
+    fail=1
+  }
+done
+for scanner in "cargo audit" "cargo deny check advisories" "secret scanner" "CodeQL" "DAST/API security"; do
+  grep -Fq "$scanner" "$SECURITY_SKILL" || {
+    echo "SECURITY ICM VIOLATION: security skill missing scanner requirement: $scanner" >&2
+    fail=1
+  }
+done
+
+# The authorized offensive-security skill is a mandatory control surface for adversarial validation.
+OFFENSIVE_SKILL="workspaces/sitolo-engineering/skills/offensive-security/SKILL.md"
+for section in   "## 2. Authorization and Scope Gate"   "## 4. Threat-Driven Attack Program"   "## 5. Required Attack Coverage"   "## 6. Adversarial Test Construction"   "## 9. Evidence Model"   "## 10. Finding Lifecycle"   "## 11. Defensive Handoff"   "## 15. Safe-Failure Requirements"   "## 16. No-Go Conditions"   "## 18. CI Enforcement Contract"; do
+  grep -Fq "$section" "$OFFENSIVE_SKILL" || {
+    echo "SECURITY ICM VIOLATION: offensive security skill missing required enforcement section: $section" >&2
+    fail=1
+  }
+done
+
+for control_id in   SC-001 SC-002 SC-003 SC-004 SC-005 SC-006 SC-007 SC-008 SC-009 SC-010 SC-011 SC-012; do
+  grep -Fq "| $control_id |" "$OFFENSIVE_SKILL" || {
+    echo "SECURITY ICM VIOLATION: offensive security skill missing control mapping: $control_id" >&2
+    fail=1
+  }
+done
+
+for attack_class in   "IDOR / BOLA"   "Tenant isolation"   "Authentication and session attacks"   "RBAC / privilege escalation"   "Injection"   "SSRF"   "File and path traversal"   "Unsafe deserialization"   "API abuse and rate-limit bypass"   "Replay and idempotency"   "Business-logic abuse"   "Secrets and configuration exposure"   "Dependency and supply-chain abuse"; do
+  grep -Fq "$attack_class" "$OFFENSIVE_SKILL" || {
+    echo "SECURITY ICM VIOLATION: offensive security skill missing attack coverage: $attack_class" >&2
+    fail=1
+  }
+done
+
+for safety_rule in   "no uncontrolled external targets"   "no destructive payloads"   "no credential theft"   "no persistence"   "disposable/local infrastructure"; do
+  grep -Fqi "$safety_rule" "$OFFENSIVE_SKILL" || {
+    echo "SECURITY ICM VIOLATION: offensive security skill missing safety requirement: $safety_rule" >&2
+    fail=1
+  }
+done
+
+OFFENSIVE_RUNNER="scripts/ci/run-offensive-security"
+[[ -f "$OFFENSIVE_RUNNER" ]] || {
+  echo "SECURITY ICM VIOLATION: offensive security runner missing: $OFFENSIVE_RUNNER" >&2
+  fail=1
+}
+for runner_requirement in   'SITOLO_OFFENSIVE_ALLOWED'   'SITOLO_OFFENSIVE_ENV'   'rls_security_tests'   'tenancy_api'   'provider_env'   'run.json'; do
+  grep -Fq "$runner_requirement" "$OFFENSIVE_RUNNER" || {
+    echo "SECURITY ICM VIOLATION: offensive runner missing requirement: $runner_requirement" >&2
+    fail=1
+  }
+done
+
+# The live security workflow must expose an isolated offensive regression job.
+for workflow_requirement in   "offensive-regression:"   "SITOLO_OFFENSIVE_ALLOWED: true"   "SITOLO_OFFENSIVE_ENV: disposable"   "postgres:18-alpine"   "run-offensive-security"   "upload-artifact@"; do
+  grep -Fq "$workflow_requirement" .github/workflows/security.yml || {
+    echo "SECURITY ICM VIOLATION: security workflow missing offensive enforcement: $workflow_requirement" >&2
+    fail=1
+  }
+done
+
+for id in SC-001 SC-002 SC-003 SC-004 SC-005 SC-006 SC-007 SC-008 SC-009 SC-010 SC-011 SC-012; do
+  grep -Fq "| $id |" docs/security_control_register.md || {
+    echo "SECURITY ICM VIOLATION: security control missing: $id" >&2
+    fail=1
+  }
+done
+
+# Baseline vulnerability scanning must exist in the real GitHub security workflow.
+SECURITY_WORKFLOW=".github/workflows/security.yml"
+for scanner in   "cargo-deny-action"   "cargo audit"   "gitleaks/gitleaks-action"   "github/codeql-action"; do
+  grep -Fq "$scanner" "$SECURITY_WORKFLOW" || {
+    echo "SECURITY ICM VIOLATION: security workflow missing baseline scanner: $scanner" >&2
+    fail=1
+  }
+done
+
+for path in   workspaces/sitolo-engineering/stages/02-research/CONTEXT.md   workspaces/sitolo-engineering/stages/03-investigate/CONTEXT.md   workspaces/sitolo-engineering/stages/04-plan/CONTEXT.md   workspaces/sitolo-engineering/stages/05-implement/CONTEXT.md   workspaces/sitolo-engineering/stages/06-audit/CONTEXT.md   workspaces/sitolo-engineering/stages/08-verify/CONTEXT.md; do
+  grep -Fq '../../shared/security-context/CONTEXT.md' "$path" || {
+    echo "SECURITY ICM VIOLATION: missing conditional security-context route: $path" >&2
+    fail=1
+  }
+done
+
+grep -Fq '## Security applicability' workspaces/sitolo-engineering/_templates/run-brief.md || {
+  echo "SECURITY ICM VIOLATION: run-brief template lacks security applicability section" >&2
+  fail=1
+}
+grep -Fq 'security_relevant: yes|no' workspaces/sitolo-engineering/_templates/run-brief.md || {
+  echo "SECURITY ICM VIOLATION: run-brief template lacks security applicability field" >&2
+  fail=1
+}
+grep -Fq '## Security controls' workspaces/sitolo-engineering/_templates/implementation-plan.md || {
+  echo "SECURITY ICM VIOLATION: implementation plan lacks security control matrix" >&2
+  fail=1
+}
+grep -Fq 'Control ID | Threat/requirement' workspaces/sitolo-engineering/_templates/implementation-plan.md || {
+  echo "SECURITY ICM VIOLATION: implementation plan security matrix lacks control columns" >&2
+  fail=1
+}
+grep -Fq 'security control ID' workspaces/sitolo-engineering/stages/04-plan/references/plan-contract.md || {
+  echo "SECURITY ICM VIOLATION: plan contract lacks control-ID traceability requirement" >&2
+  fail=1
+}
+grep -Fq '## Security impact' workspaces/sitolo-engineering/_templates/implementation-report.md || {
+  echo "SECURITY ICM VIOLATION: implementation report lacks security impact section" >&2
+  fail=1
+}
+grep -Fq '## Security control trace' workspaces/sitolo-engineering/_templates/audit-report.md || {
+  echo "SECURITY ICM VIOLATION: audit report lacks security control trace" >&2
+  fail=1
+}
+grep -Fq '## Security control evidence' workspaces/sitolo-engineering/_templates/verification-report.md || {
+  echo "SECURITY ICM VIOLATION: verification report lacks security evidence section" >&2
+  fail=1
+}
+
+grep -Fq '../../skills/security-engineering/SKILL.md' workspaces/sitolo-engineering/shared/security-context/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: security context does not route the mandatory security-engineering skill" >&2
+  fail=1
+}
+grep -Fq '../../skills/offensive-security/SKILL.md' workspaces/sitolo-engineering/shared/security-context/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: security context does not route the authorized offensive-security skill" >&2
+  fail=1
+}
+grep -Fq 'security_relevant: yes|no' workspaces/sitolo-engineering/stages/01-select/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: Stage 01 does not define the security applicability field"
+  fail=1
+}
+grep -Fq 'control ID' workspaces/sitolo-engineering/stages/04-plan/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: Plan stage does not require control mapping" >&2
+  fail=1
+}
+grep -Fq 'negative/security' workspaces/sitolo-engineering/stages/05-implement/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: Implement stage does not require security proof" >&2
+  fail=1
+}
+grep -Fq 'control ID' workspaces/sitolo-engineering/stages/06-audit/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: Audit stage does not require security traceability" >&2
+  fail=1
+}
+grep -Fq 'no applicable security control remains unproven' workspaces/sitolo-engineering/stages/08-verify/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: Verify stage does not require security closure" >&2
+  fail=1
+}
+
+grep -Fq 'offensive-security/SKILL.md' docs/README.md || {
+  echo "SECURITY ICM VIOLATION: offensive security skill not routed by docs/README.md" >&2
+  fail=1
+}
+
+for doc in security_control_register.md security_incident_response.md security_exception_register.md security_cryptography_and_key_management.md; do
+  grep -Fq "$doc" docs/README.md || {
+    echo "SECURITY ICM VIOLATION: security document not routed by docs/README.md: $doc" >&2
+    fail=1
+  }
+done
+
+grep -Fq 'Threat / obligation' docs/security_control_register.md || { echo "SECURITY ICM VIOLATION: trace chain missing" >&2; fail=1; }
+grep -Fq 'Implementation evidence' docs/security_control_register.md || { echo "SECURITY ICM VIOLATION: implementation evidence missing" >&2; fail=1; }
+grep -Fq 'Verification / gate' docs/security_control_register.md || { echo "SECURITY ICM VIOLATION: verification gate missing" >&2; fail=1; }
+grep -Fq 'No active security exceptions' docs/security_exception_register.md || { echo "SECURITY ICM VIOLATION: exception baseline missing" >&2; fail=1; }
+grep -Fq 'POST-INCIDENT REVIEW' docs/security_incident_response.md || { echo "SECURITY ICM VIOLATION: incident lifecycle incomplete" >&2; fail=1; }
+grep -Fq 'Rotation' docs/security_cryptography_and_key_management.md || { echo "SECURITY ICM VIOLATION: key rotation contract missing" >&2; fail=1; }
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "SECURITY ICM POLICY CHECK FAILED" >&2
+  exit 1
+fi
+
+echo "SECURITY ICM POLICY CHECK PASSED"

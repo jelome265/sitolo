@@ -87,13 +87,13 @@ If two documents conflict, the conflict is a defect until resolved. It must not 
 
 | Document | Canonical responsibility | Explicit non-responsibility |
 |---|---|---|
-| `business_model_design.md` | category, customers, value proposition, strategic scope | observed market validation |
+| `docs/commercial/01_strategy/business_model_design.md` | category, customers, value proposition, strategic scope | observed market validation |
 | `commercial_validation_plan.md` | experiments, hypotheses, samples, thresholds, pricing tests, CAC tests, PMF gates | production implementation detail |
 | `commercial_operating_model.md` | end-to-end commercial operating lifecycle | declaring hypotheses validated |
 | `commercial_model_precision_and_consistency_contract.md` | semantic consistency and precedence | replacing empirical validation |
 | `unit_economics_cac_and_contribution_model.md` | economic definitions, cost allocation, CAC, contribution, payback | unilateral final pricing |
 | `commercial_metrics_governance_and_decision_system.md` | metric definitions, cohort rules, governance, decision logging | inventing new experiment hypotheses without validation-plan ownership |
-| `segment_strategy_and_duka_economics.md` | segment strategy and Duka economics | overriding global commercial authority |
+| `docs/commercial/01_strategy/segment_strategy_and_duka_economics.md` | segment strategy and Duka economics | overriding global commercial authority |
 | `buyer_user_approver_and_purchase_process.md` | actor roles and purchase process | defining product entitlements |
 | `payment_collections_and_subscription_billing.md` | billing and collections operating model | changing validated pricing without evidence |
 | `distribution_channel_and_market_access_strategy.md` | acquisition and distribution channels | declaring channel CAC without measurement |

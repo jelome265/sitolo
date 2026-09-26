@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+EVIDENCE_DIR="${SITOLO_OFFENSIVE_EVIDENCE_DIR:-target/offensive-security}"
+mkdir -p "$EVIDENCE_DIR"
+SOURCE_REVISION="$(git rev-parse HEAD)"
+
+write_evidence() {
+  local status="$1"
+  local exit_code="$2"
+  cat > "$EVIDENCE_DIR/run.json" <<EOF
+{
+  "schema": "sitolo.offensive-security.v1",
+  "status": "$status",
+  "exit_code": $exit_code,
+  "source_revision": "$SOURCE_REVISION",
+  "repository": "jelome265/sitolo",
+  "environment": "${SITOLO_OFFENSIVE_ENV:-unset}",
+  "authorized": "${SITOLO_OFFENSIVE_ALLOWED:-false}",
+  "tests": [
+    "cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked",
+    "cargo test -p sitolo-api-bin --test tenancy_api --all-features --locked",
+    "cargo test -p sitolo-security --test provider_env --all-features --locked"
+  ]
+}
+EOF
+}
+
+on_exit() {
+  local code=$?
+  if [[ "$code" -eq 0 ]]; then
+    write_evidence "passed" 0
+  else
+    write_evidence "failed" "$code"
+  fi
+  exit "$code"
+}
+trap on_exit EXIT
+
+fail() {
+  echo "OFFENSIVE SECURITY GATE FAILED: $*" >&2
+  exit 1
+}
+
+[[ "${SITOLO_OFFENSIVE_ALLOWED:-}" == "true" ]] ||   fail "explicit authorization flag SITOLO_OFFENSIVE_ALLOWED=true is required"
+
+[[ "${SITOLO_OFFENSIVE_ENV:-}" == "disposable" ]] ||   fail "offensive tests require SITOLO_OFFENSIVE_ENV=disposable"
+
+for var in ADMIN_DATABASE_URL RUNTIME_DATABASE_URL; do
+  [[ -n "${!var:-}" ]] || fail "$var is required for the real PostgreSQL adversarial suite"
+done
+
+case "$ADMIN_DATABASE_URL" in
+  *127.0.0.1*|*localhost*) ;;
+  *) fail "ADMIN_DATABASE_URL must resolve to the authorized local disposable PostgreSQL service" ;;
+esac
+
+case "$RUNTIME_DATABASE_URL" in
+  *127.0.0.1*|*localhost*) ;;
+  *) fail "RUNTIME_DATABASE_URL must resolve to the authorized local disposable PostgreSQL service" ;;
+esac
+
+echo "==> Authorized offensive security: real PostgreSQL tenant-isolation attacks"
+cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked
+
+echo "==> Authorized offensive security: API boundary/adversarial tests"
+cargo test -p sitolo-api-bin --test tenancy_api --all-features --locked
+
+echo "==> Authorized offensive security: secret-provider boundary tests"
+cargo test -p sitolo-security --test provider_env --all-features --locked
+
+echo "==> Offensive security regression suite passed"

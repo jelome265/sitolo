@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'echo "SYSTEM MAP PROCESS VERIFIER ERROR at ${BASH_SOURCE[0]}:${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail=0
+current_tree="HEAD"
+
+mapfile -t process_files < <(find map/processes -maxdepth 1 -type f -name '*.md' ! -name CONTEXT.md | sort)
+
+for process in "${process_files[@]}"; do
+  get_field() {
+    local field="$1"
+    sed -n "s/^$field: //p" "$process" | head -n 1
+  }
+
+  type="$(get_field type)"
+  status="$(get_field status)"
+  universe="$(get_field universe)"
+  source_revision="$(get_field source_revision)"
+  source="$(get_field source)"
+  source_citation="$(get_field source_citation)"
+
+  [[ "$type" == "process" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: type is not process: $process" >&2; fail=1; }
+  [[ "$status" == "verified" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: process cards must be verified: $process" >&2; fail=1; }
+  [[ "$universe" == "live" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: process cards must be live: $process" >&2; fail=1; }
+  [[ -n "$source" && -n "$source_citation" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: missing source/source_citation: $process" >&2; fail=1; }
+
+  source_sha="$(printf '%s' "$source_revision" | sed -n 's/.*@\([0-9a-fA-F]\{40\}\)$/\1/p')"
+  [[ -n "$source_sha" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: source_revision must contain a concrete commit SHA: $process -> $source_revision" >&2; fail=1; }
+
+  if [[ -n "$source_sha" ]] && ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
+    git fetch --no-tags --depth=1 origin "$source_sha" >/dev/null 2>&1 || true
+  fi
+  if [[ -z "$source_sha" ]]; then
+    echo "SYSTEM MAP PROCESS VIOLATION: source revision cannot be resolved: $process -> $source_revision" >&2
+    fail=1
+  elif ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
+    echo "SYSTEM MAP PROCESS VIOLATION: source revision cannot be resolved: $process -> $source_revision" >&2
+    fail=1
+  fi
+
+  IFS=';' read -r -a source_list <<< "$source"
+  for source_path in "${source_list[@]}"; do
+    source_path="$(printf '%s' "$source_path" | sed 's/^ *//; s/ *$//')"
+    [[ -f "$source_path" ]] || {
+      echo "SYSTEM MAP PROCESS VIOLATION: current source missing: $process -> $source_path" >&2
+      fail=1
+      continue
+    }
+    if [[ -n "$source_sha" ]] && git cat-file -e "$source_sha:$source_path" 2>/dev/null; then
+      source_blob="$(git rev-parse "$source_sha:$source_path")"
+      current_blob="$(git rev-parse "$current_tree:$source_path")"
+      if [[ "$source_blob" != "$current_blob" ]]; then
+        echo "SYSTEM MAP PROCESS VIOLATION: verified process source differs from recorded revision: $process -> $source_path" >&2
+        fail=1
+      fi
+    else
+      echo "SYSTEM MAP PROCESS VIOLATION: source did not exist at recorded revision: $process -> $source_path" >&2
+      fail=1
+    fi
+  done
+
+  for section in "## Input" "## Movement" "## Output" "## Consumes" "## Produces" "## If you change this" "### Hits" "### Does not hit" "## Verification" "## See"; do
+    grep -Fqx "$section" "$process" || {
+      echo "SYSTEM MAP PROCESS VIOLATION: missing $section: $process" >&2
+      fail=1
+    }
+  done
+
+  movement="$(sed -n '/^## Movement$/,/^## Output$/p' "$process")"
+  printf '%s\n' "$movement" | grep -Eq '^[[:space:]]*[0-9]+\. ' || {
+    echo "SYSTEM MAP PROCESS VIOLATION: no numbered movement: $process" >&2
+    fail=1
+  }
+
+  while IFS= read -r step; do
+    [[ -z "$step" ]] && continue
+    printf '%s\n' "$step" | grep -Eq '\([^)]*(/|\.md|\.rs|\.toml|\.yml|\.yaml)[^)]*\)' || {
+      echo "SYSTEM MAP PROCESS VIOLATION: movement step lacks inline source citation: $process -> $step" >&2
+      fail=1
+    }
+  done < <(printf '%s\n' "$movement" | grep -E '^[[:space:]]*[0-9]+\. ' || true)
+
+  for section in "## Consumes" "## Produces"; do
+    body="$(sed -n "/^$section$/,/^## /p" "$process" | tail -n +2)"
+    links="$(printf '%s\n' "$body" | grep -oE '\]\(\.\./objects/[^)]+\.md\)' || true)"
+    [[ -n "$links" ]] || {
+      echo "SYSTEM MAP PROCESS VIOLATION: $section lacks object links: $process" >&2
+      fail=1
+      continue
+    }
+    while IFS= read -r link; do
+      target="$(printf '%s' "$link" | sed 's|.*](\(\.\./objects/[^)]*\.md\))|\1|')"
+      [[ -f "map/processes/$target" ]] || {
+        echo "SYSTEM MAP PROCESS VIOLATION: broken object link: $process -> $target" >&2
+        fail=1
+      }
+    done <<< "$links"
+  done
+
+  if grep -Eq 'Ghost/unwired|universe: ghost|^status: stub$' "$process"; then
+    echo "SYSTEM MAP PROCESS VIOLATION: process shelf must contain executable movements only; remove target-state/ghost process language: $process" >&2
+    fail=1
+  fi
+done
+
+if [[ "${#process_files[@]}" -eq 0 ]]; then
+  echo "System Map process verification FAILED: no executable process cards" >&2
+  exit 1
+fi
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "System Map process verification FAILED" >&2
+  exit 1
+fi
+
+echo "System Map process verification PASSED: ${#process_files[@]} executable process cards are source-grounded and current"

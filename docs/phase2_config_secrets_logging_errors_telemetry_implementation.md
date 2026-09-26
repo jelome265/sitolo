@@ -1032,8 +1032,9 @@ The Phase 2 design was cross-checked against current public guidance available i
 - OpenTelemetry Logs SDK specification. citeturn487252search4
 - OWASP Logging Cheat Sheet. citeturn487252search12
 - OWASP Secrets Management Cheat Sheet. citeturn487252search13
-- NIST SP 800-218 SSDF 1.1. citeturn487252search8
-- NIST SP 800-218 Rev. 1 / SSDF 1.2 initial public draft as a current governance reference. citeturn487252search14
+- NIST SP 800-218 SSDF 1.1 (final publication). citeturn487252search8
+- NIST SP 800-218 Rev. 1 / SSDF 1.2 initial public draft as a forward-looking draft reference only. citeturn487252search14
+- See `docs/external_standards_verification_register.md` for dated external-version verification.
 
 
 # Appendix A — Canonical Runtime Configuration Catalogue

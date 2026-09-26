@@ -3,11 +3,12 @@
 **Repository:** `jelome265/sitolo`  
 **Target:** Phase 4 Part 6 / PR-006 only  
 **Scope name:** Organization + Branch HTTP API transport boundary  
-**Status:** Binding execution contract  
+**Status:** Historical implementation contract  
 **Baseline:** Current `main` at the time this contract is created  
 **Critical baseline fact:** PR-006 was already merged once as #25, reverted as #27, and reimplemented as #29. Current `main` also contains PR-007/#30. This contract exists to make the Part 6 boundary explicit and prevent scope drift, duplicate architecture, stale-baseline implementation, or accidental Phase 5/6 work.
 
 ---
+> **Lifecycle classification:** Historical implementation contract. This document governed a completed PR-specific change and is retained for traceability. It is not a current implementation task. Current state must be verified against the repository source and the current phase/PR status documents.
 
 # 1. NON-NEGOTIABLE EXECUTION RULE
 
