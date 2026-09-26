@@ -3,7 +3,7 @@ type: object
 status: stub
 universe: ghost
 cluster: integration
-source_revision: main@e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc
+source_revision: main@623f7aed6105664d10d1a2802480fde8316ed5f8
 source: crates/sitolo-integrations/src/lib.rs
 source_citation: crates/sitolo-integrations/src/lib.rs:1
 ---

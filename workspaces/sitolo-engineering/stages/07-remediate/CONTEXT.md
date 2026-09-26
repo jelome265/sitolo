@@ -4,14 +4,16 @@ One job: correct confirmed findings, or explicitly record that no remediation is
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings |
-| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Current change |
-| Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended state |
-| Governance | ../../../../agent.md | Relevant rules | Required controls |
-| Project docs | ../../../../docs/README.md | Documents named by audit | Authority |
-| Remediation order | references/remediation-order.md | Full file | Fix priority |
+| Working | Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings |
+| Working | Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Current change |
+| Working | Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended state |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Relevant rules | Required controls |
+| Reference | Project docs | ../../../../docs/README.md | Documents named by audit | Authority |
+| Reference | Remediation order | references/remediation-order.md | Full file | Fix priority |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 

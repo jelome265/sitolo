@@ -4,12 +4,14 @@ One job: turn the user request into a bounded engineering run.
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| User request | current task | Full request | Defines desired change |
-| Governance | ../../../../agent.md | Sections 0-3 and relevant definitions | Engineering constraints |
-| Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
-| Request guide | references/request-brief.md | Full file | Output shape |
+| Working | User request | current task | Full request | Defines desired change |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Sections 0-3 and relevant definitions | Engineering constraints |
+| Reference | Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
+| Reference | Request guide | references/request-brief.md | Full file | Output shape |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 

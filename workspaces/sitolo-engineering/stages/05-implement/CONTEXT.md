@@ -4,14 +4,16 @@ One job: implement the approved plan without broadening scope.
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Implementation plan | ../04-plan/output/[run-slug]-plan.md | Full file | Exact change contract |
-| Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state constraints |
-| Governance | ../../../../agent.md | Relevant sections | Engineering rules |
-| Project docs | ../../../../docs/README.md | Documents named by plan | Detailed contracts |
-| Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
-| Implementation guide | references/implementation.md | Full file | Quality constraints |
+| Working | Implementation plan | ../04-plan/output/[run-slug]-plan.md | Full file | Exact change contract |
+| Working | Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state constraints |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Relevant sections | Engineering rules |
+| Reference | Project docs | ../../../../docs/README.md | Documents named by plan | Detailed contracts |
+| Reference | Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
+| Reference | Implementation guide | references/implementation.md | Full file | Quality constraints |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 

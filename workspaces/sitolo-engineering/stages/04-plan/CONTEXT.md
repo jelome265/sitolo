@@ -4,14 +4,16 @@ One job: turn selected requirements and investigation evidence into an implement
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Approved brief |
-| Research | ../02-research/output/[run-slug]-research.md | Full file | Research memo |
-| Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state evidence |
-| Governance | ../../../../agent.md | Relevant definitions of done and rules | Non-negotiable constraints |
-| Project docs | ../../../../docs/README.md | Documents identified by investigation | Design authority |
-| Plan guide | references/plan-contract.md | Full file | Plan structure |
+| Working | Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Approved brief |
+| Working | Research | ../02-research/output/[run-slug]-research.md | Full file | Research memo |
+| Working | Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state evidence |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Relevant definitions of done and rules | Non-negotiable constraints |
+| Reference | Project docs | ../../../../docs/README.md | Documents identified by investigation | Design authority |
+| Reference | Plan guide | references/plan-contract.md | Full file | Plan structure |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 

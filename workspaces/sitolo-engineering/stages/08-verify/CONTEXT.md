@@ -4,14 +4,16 @@ One job: produce reproducible evidence that the approved implementation and re-a
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Latest audit | ../06-audit/output/[run-slug]-audit.md | Full file | Required findings state |
-| Remediation | ../07-remediate/output/[run-slug]-remediation.md | Full file when remediation occurred | Corrections and proof |
-| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Claimed change |
-| Governance | ../../../../agent.md | Definitions of done | Verification requirements |
-| Project docs | ../../../../docs/README.md | Applicable testing/deployment docs | Required evidence |
-| Verification guide | references/verification.md | Full file | Gate selection |
+| Working | Latest audit | ../06-audit/output/[run-slug]-audit.md | Full file | Required findings state |
+| Working | Remediation | ../07-remediate/output/[run-slug]-remediation.md | Full file when remediation occurred | Corrections and proof |
+| Working | Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Claimed change |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Definitions of done | Verification requirements |
+| Reference | Project docs | ../../../../docs/README.md | Applicable testing/deployment docs | Required evidence |
+| Reference | Verification guide | references/verification.md | Full file | Gate selection |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 
