@@ -309,10 +309,35 @@ async fn rejects_unknown_fields_and_malformed_json() {
 async fn rejects_oversized_payload_and_invalid_identifiers() {
     let state = test_app_state().await;
 
-    // Oversized body (> 32 KiB) -> 422
-    let huge_body = "x".repeat(33 * 1024);
+    // Oversized body (> 32 KiB) -> Axum body-limit rejection (413)
+    let huge_name = "x".repeat(33 * 1024);
+    let huge_body = format!(
+        r#"{{
+            "organization_id": "org-huge",
+            "organization_name": "{huge_name}",
+            "owner_membership_id": "mem-huge",
+            "owner_user_id": "usr-huge",
+            "default_branch_id": "br-huge",
+            "default_branch_name": "Branch"
+        }}"#
+    );
     let (status_huge, _) = dispatch_request("POST", "/v1/organizations", &huge_body, &state).await;
-    assert_eq!(status_huge, "422 Unprocessable Entity");
+    assert_eq!(status_huge, "413 Payload Too Large");
+
+    // A body stream without Content-Length must still surface the
+    // body-limit error as 413 rather than a generic JSON validation error.
+    let chunked_name = "y".repeat(33 * 1024);
+    let chunked_body = format!(
+        r#"{{"organization_id":"org-chunked","organization_name":"{chunked_name}","owner_membership_id":"mem-chunked","owner_user_id":"usr-chunked","default_branch_id":"br-chunked","default_branch_name":"Branch"}}"#
+    );
+    let (status_chunked, _) = sitolo_api_bin::serve::dispatch_request_without_content_length(
+        "POST",
+        "/v1/organizations",
+        &chunked_body,
+        &state,
+    )
+    .await;
+    assert_eq!(status_chunked, "413 Payload Too Large");
 
     // Hostile identifier with CR/LF injection -> 422
     let hostile_id_body = r#"{

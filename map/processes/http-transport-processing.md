@@ -2,24 +2,25 @@
 type: process
 status: verified
 universe: live
-source_revision: main@623f7aed6105664d10d1a2802480fde8316ed5f8
+source_revision: branch@b2491549ebe3b72e3c4e62c44788f638f51f60f9
 source: apps/api/src/serve.rs
-source_citation: apps/api/src/serve.rs:24-84
+source_citation: apps/api/src/serve.rs:45-115
 ---
 
 # HTTP Transport Processing
 
 ## Input
 
-Accepted TCP connection and bounded application state.
+Tokio runtime/listener and bounded application state enter the Axum router; Hyper-util provides configured protocol transport over the Tokio socket.
 
 ## Movement
 
-1. Accept connections under the configured in-flight semaphore. (apps/api/src/serve.rs:28-45)
-2. Read request bytes under a five-second timeout into a 32 KiB bounded buffer. (apps/api/src/serve.rs:52-63)
-3. Separate headers/body and parse the first request line into method and path. (apps/api/src/serve.rs:64-82)
-4. Dispatch the parsed request to the current transport handler and build the JSON response. (apps/api/src/serve.rs:83-91)
-5. Write the bounded HTTP response and close the connection. (apps/api/src/serve.rs:92-98)
+1. Bind the asynchronous `tokio::net::TcpListener` in the API process. (apps/api/src/main.rs:24-40)
+2. Build the production `axum::Router` with explicit health and tenancy routes. (apps/api/src/serve.rs:55-70)
+3. Enforce request-body, body-idle, request-duration, and globally shared in-flight request limits through Tower/Tower-HTTP layers. (apps/api/src/serve.rs:61-76)
+4. Enforce a separate TCP connection-task ceiling with a Tokio semaphore, then configure Hyper HTTP/1/HTTP/2 protocol limits and adapt the Axum Tower service with `TowerToHyperService`. (apps/api/src/serve.rs:118-225)
+5. Extract paths and JSON bodies with Axum and dispatch typed commands to the tenancy application handlers. (apps/api/src/serve.rs:85-125)
+6. Run the Hyper connection task through Tokio and perform bounded graceful shutdown; integration tests exercise the same production Axum router through an in-process request, not a parallel transport parser. (apps/api/src/serve.rs:264-309)
 
 ## Output
 
@@ -37,7 +38,7 @@ HTTP response bytes at the API transport boundary.
 
 ### Hits
 
-HTTP parsing, request bounds, handler dispatch, transport security and shutdown behavior.
+HTTP parsing, protocol bounds, request limits, handler dispatch, transport security and shutdown behavior.
 
 ### Does not hit
 

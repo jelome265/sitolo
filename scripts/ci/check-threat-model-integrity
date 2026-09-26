@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+test -f docs/threat_model.md
+test -f docs/threat_model.integrity.json
+expected="$(awk -F'"' '/git_blob_sha/ {print $4}' docs/threat_model.integrity.json)"
+actual="$(git hash-object docs/threat_model.md)"
+if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+  echo "THREAT MODEL INTEGRITY CHECK FAILED: Git blob hash mismatch" >&2
+  exit 1
+fi
+
+for marker in \
+  "## 8.1 Current-state synchronization rule" \
+  "# 17. Threat → Security-Control Traceability" \
+  "## 18.7 Agentic/ICM security suite" \
+  "## 14.13 Agentic instruction integrity invariant" \
+  "**Normative HTTP backend:** Rust / Axum / Hyper/Hyper-util / Tokio / SQLx" \
+  "OWASP AI Agent Security Cheat Sheet" \
+  "Axum 0.8.9"; do
+  grep -Fq "$marker" docs/threat_model.md || { echo "missing threat-model marker: $marker" >&2; exit 1; }
+done
+
+for n in $(seq 1 30); do
+  id=$(printf "T-%03d" "$n")
+  grep -Fq "$id" docs/threat_model.md || { echo "missing threat $id" >&2; exit 1; }
+done
+
+for n in $(seq 1 12); do
+  id=$(printf "SC-%03d" "$n")
+  grep -Fq "$id" docs/threat_model.md || { echo "missing security control $id" >&2; exit 1; }
+done
+
+echo "THREAT MODEL INTEGRITY CHECK PASSED"
