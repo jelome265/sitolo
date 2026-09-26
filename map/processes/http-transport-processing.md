@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: branch@7e21782cb717de93772e31a17e452c4a60b078c2
+source_revision: branch@c6ed58cde3fc4aeae5c909bb8e18ff3ec3e680dc
 source: apps/api/src/serve.rs
 source_citation: apps/api/src/serve.rs:45-115
 ---
@@ -21,6 +21,7 @@ Tokio runtime/listener and bounded application state enter the Axum router; Hype
 4. Enforce a separate TCP connection-task ceiling with a Tokio semaphore, then configure Hyper HTTP/1/HTTP/2 protocol limits and adapt the Axum Tower service with `TowerToHyperService`. (apps/api/src/serve.rs:118-225)
 5. Extract paths and JSON bodies with Axum and dispatch typed commands to the tenancy application handlers. (apps/api/src/serve.rs:85-125)
 6. Run the Hyper connection task through Tokio and perform bounded graceful shutdown; integration tests exercise the same production Axum router through an in-process request, not a parallel transport parser. (apps/api/src/serve.rs:264-309)
+
 ## Output
 
 HTTP response bytes at the API transport boundary.
