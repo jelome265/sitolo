@@ -452,3 +452,122 @@ next-phase dependency
 ```
 
 **End of Phase 15 contract.**
+
+# 12. Current MRA Evidence Discipline
+
+Because the MRA developer portal exposes current developer resources while the published API guide is dated 2024, each production change must re-check the current MRA primary-source material before a compliance statement is made. Current developer resources include the MRA EIS portal and published API documentation. The public API guide describes four functional groupings—onboarding, configuration, sales and utilities—and separately documents third-party POS certification. See:
+- https://eis-portal.mra.mw/Home/DeveloperResources
+- https://eis-api.mra.mw/docs/eis_api_2.htm
+- https://eis-api.mra.mw/docs/api_compliance_certification.htm
+
+The repository must record:
+
+```text
+source URL
+verification date
+document/version
+environment
+reviewer
+changed requirements
+impact on adapter/tests
+```
+
+# 13. Terminal Configuration Matrix
+
+| Concern | Source of authority | Local representation | Security rule |
+|---|---|---|---|
+| terminal identity | MRA/provider | terminal reference | tenant-bound, protected |
+| activation | MRA/provider | activation state/evidence | credential-controlled |
+| configuration | MRA/provider | version/fingerprint | current-version check |
+| taxpayer association | MRA/provider + authorized merchant state | explicit binding | privileged action |
+| credential | approved secret authority | SecretRef | never ordinary config/log |
+| product/version certification | MRA | release evidence | exact artifact identity |
+
+# 14. EIS Submission State Machine
+
+```text
+LOCAL_TAX_FACT
+   ↓
+TAX_SUBMISSION_PENDING
+   ↓
+SUBMITTING
+ ├─ ACCEPTED
+ ├─ RETRYABLE
+ ├─ UNKNOWN
+ └─ REJECTED
+        ↓
+CORRECTION_REQUIRED where applicable
+```
+
+A provider acceptance does not erase the local tax evidence, and a provider rejection does not erase the local economic transaction.
+
+# 15. Provider Configuration Drift
+
+When MRA configuration changes:
+
+```text
+detect version change
+→ quarantine incompatible work if required
+→ retrieve approved configuration
+→ validate
+→ apply atomically
+→ verify
+→ resume bounded submission
+```
+
+Operating indefinitely on known-outdated configuration is prohibited where current provider rules require an update.
+
+# 16. Offline/EIS Boundary
+
+Offline support must follow the current MRA integration contract.
+
+The client can preserve local work, but final fiscal authority remains governed by server/provider rules. Any EIS offline parameters, sequence rules, signatures, terminal state or later submission behavior must be explicitly sourced from the current MRA contract rather than inferred from generic sync semantics.
+
+# 17. Certification Evidence
+
+The certification pack should distinguish:
+
+```text
+MRA-provided requirement
+→ Sitolo implementation
+→ test result
+→ exact artifact/version
+→ certification submission
+→ MRA decision/record
+```
+
+MRA's published documentation states that third-party POS systems are certified through manual inspection/testing and assigned product/version identifiers, and certification can be revoked. citeturn642578search11turn642578search13
+
+# 18. Security and Privacy Constraints
+
+Never expose terminal credentials, activation secrets or provider authentication material to clients or ordinary logs. Minimize tax/customer data stored in provider evidence.
+
+Support access to EIS configuration is JIT, scoped and audited.
+
+# 19. Failure Catalogue
+
+- terminal activation failure;
+- current configuration unavailable;
+- outdated configuration;
+- invalid credential;
+- accepted submission with lost response;
+- rejected submission;
+- provider outage;
+- offline queue saturation;
+- provider schema drift;
+- certification regression after release.
+
+# 20. No-Go Conditions
+
+Stop implementation/release when:
+
+- current provider requirements cannot be verified;
+- certification requirements are unknown;
+- credentials are stored outside approved secret handling;
+- EIS failure can mutate local economic facts;
+- offline behavior is being inferred rather than source-backed;
+- exact certified artifact/version cannot be identified.
+
+# 21. Downstream Handoff
+
+Phase 15 supplies Phase 20 with current MRA verification, certification records and exact release evidence. It supplies Phase 16 with explicit separation of economic/tax/submission state.
