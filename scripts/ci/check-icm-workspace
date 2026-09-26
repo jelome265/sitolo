@@ -70,6 +70,55 @@ for path in "${required[@]}"; do
   fi
 done
 
+# The missing-phase contract set must be sequentially executable, not one-shot.
+phase_contracts_11_20=(
+  docs/phase11_payments_reconciliation_implementation.md
+  docs/phase12_offline_synchronization_implementation.md
+  docs/phase13_procurement_suppliers_implementation.md
+  docs/phase14_returns_refunds_cash_implementation.md
+  docs/phase15_mra_eis_implementation.md
+  docs/phase16_reporting_exports_implementation.md
+  docs/phase17_billing_entitlements_implementation.md
+  docs/phase18_admin_support_implementation.md
+  docs/phase19_hardening_performance_dr_implementation.md
+  docs/phase20_production_certification_implementation.md
+)
+required_parts=(
+  "## Part 01 — Select / Reconcile"
+  "## Part 02 — Domain / State"
+  "## Part 03 — Persistence / Transactions"
+  "## Part 04 — Security / Authority"
+  "## Part 05 — Core Implementation"
+  "## Part 06 — Failure / Concurrency / Adversarial Verification"
+  "## Part 07 — Observability / Operations / Recovery"
+  "## Part 08 — Integration / Evidence"
+  "## Part 09 — Semantic Audit"
+  "## Part 10 — Remediation / Re-audit"
+  "## Part 11 — Verification / Delivery"
+)
+for phase_doc in "${phase_contracts_11_20[@]}"; do
+  if [[ -f "$phase_doc" ]]; then
+    grep -Fq "## 2. Mandatory sequential implementation model" "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: phase contract lacks mandatory sequential model: $phase_doc" >&2
+      fail=1
+    }
+    grep -Fq "The phase MUST NOT be implemented as one-shot work." "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: one-shot implementation prohibition missing: $phase_doc" >&2
+      fail=1
+    }
+    for part in "${required_parts[@]}"; do
+      grep -Fqx "$part" "$phase_doc" || {
+        echo "ICM WORKSPACE VIOLATION: missing sequential phase part '$part': $phase_doc" >&2
+        fail=1
+      }
+    done
+    grep -Fq "Part N+1" "$phase_doc" || {
+      echo "ICM WORKSPACE VIOLATION: sequential gate language missing: $phase_doc" >&2
+      fail=1
+    }
+  fi
+done
+
 for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" workspaces/CLAUDE.md workspaces/CONTEXT.md workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md map/CLAUDE.md map/CONTEXT.md; do
   if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
     echo "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry" >&2
