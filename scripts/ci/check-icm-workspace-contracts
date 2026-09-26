@@ -97,7 +97,7 @@ while IFS='|' read -r id workspace mode evidence status; do
     fail=1
   fi
 
-  if ! grep -Fq '**Do NOT load:**' "$context"; then
+  if ! section_has_content "$context" "## Do NOT load"; then
     echo "VIOLATION: missing negative loading boundary: $workspace" >&2
     fail=1
   fi
