@@ -29,7 +29,7 @@ done
 
 # The reusable security-engineering skill is a mandatory control surface.
 SECURITY_SKILL="workspaces/sitolo-engineering/skills/security-engineering/SKILL.md"
-for section in   "## 2. Mandatory operating rules"   "## 4. Threat-first procedure"   "## 6. Mandatory vulnerability-scanning model"   "## 9. Security regression test design"   "## 10. Test authenticity rules"   "## 13. No-go conditions"   "## 14. Security audit procedure"; do
+for section in   "## 3. Mandatory operating rules"   "## 4. Threat-first procedure"   "## 6. Mandatory vulnerability-scanning model"   "## 9. Security regression test design"   "## 10. Test authenticity rules"   "## 13. No-go conditions"   "## 14. Security audit procedure"; do
   grep -Fq "$section" "$SECURITY_SKILL" || {
     echo "SECURITY ICM VIOLATION: security skill missing required enforcement section: $section" >&2
     fail=1
