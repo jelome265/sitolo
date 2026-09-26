@@ -454,3 +454,154 @@ next-phase dependency
 ```
 
 **End of Phase 20 contract.**
+
+# 12. Certification Evidence Chain
+
+The final evidence chain is:
+
+~~~text
+requirement
+→ control
+→ implementation
+→ test
+→ evidence artifact
+→ exact source/artifact identity
+→ reviewer
+→ approval
+~~~
+
+Any broken link is an evidence gap.
+
+# 13. Exact Candidate Identity
+
+The certification record must bind:
+
+~~~text
+source commit
+repository state
+Cargo.lock/toolchain
+build environment
+artifact digest
+container/image identity
+SBOM
+provenance/attestation
+configuration version
+migration version
+~~~
+
+A later rebuild that produces a different digest is a different candidate.
+
+# 14. Cross-Phase Readiness Matrix
+
+Before approval, verify each phase:
+
+~~~text
+contract coverage
+implementation state
+verification state
+open findings
+exceptions
+migration state
+operational readiness
+downstream dependencies
+~~~
+
+A target contract is not implementation evidence.
+
+# 15. Security Certification Matrix
+
+Reconcile the security-control register to:
+
+~~~text
+SC-ID
+control requirement
+implementation location
+test
+test result
+workflow/run
+artifact
+residual risk
+exception
+owner
+~~~
+
+Critical tenant isolation, financial integrity, authentication-bypass, data-loss and secret-exposure defects block release absent formal emergency governance.
+
+# 16. External and Regulatory Evidence
+
+For any external obligation:
+
+~~~text
+external authority/version/date
+→ internal requirement
+→ implementation
+→ test
+→ external approval/certification
+~~~
+
+Do not state “MRA compliant”, “ISO compliant” or equivalent merely because internal tests pass. External certification or conformity is a separate evidence class.
+
+# 17. Post-Approval Integrity
+
+A material change to the certified candidate invalidates affected evidence.
+
+Examples:
+
+~~~text
+source code change
+dependency/lockfile change
+build toolchain change
+configuration change affecting trust/business behavior
+migration change
+artifact rebuild with changed digest
+~~~
+
+The appropriate gates must run again.
+
+# 18. Release Decision Record
+
+The final human decision record contains:
+
+~~~text
+candidate identity
+scope
+evidence summary
+blocking findings
+accepted residual risk
+exceptions + expiry
+approvers
+decision
+decision timestamp
+release destination
+rollback reference
+~~~
+
+# 19. Post-Release Certification Monitoring
+
+Certification is not the end of governance.
+
+Monitor:
+
+~~~text
+security regressions
+artifact drift
+critical incident triggers
+provider/regulatory changes
+exception expiry
+rollback capability
+material production deviations
+~~~
+
+Material changes reopen the relevant phase/certification gate.
+
+# 20. No-Go Conditions
+
+Phase 20 cannot be approved when:
+
+- the exact release artifact cannot be identified;
+- a required security gate did not execute;
+- a critical blocking finding remains;
+- evidence belongs to another candidate;
+- an exception is expired/unapproved;
+- external certification is required but absent;
+- rollback/restore evidence is absent where required.
