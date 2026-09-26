@@ -1,30 +1,24 @@
 # Sitolo Engineering Workspace
 
-This workspace takes one engineering request through a controlled sequence from selection to delivery.
-
-## Folder Map
-
-CLAUDE.md
-CONTEXT.md
-setup/
-_config/
-_templates/
-shared/
-skills/
-stages/
-  01-select/
-  02-research/
-  03-investigate/
-  04-plan/
-  05-implement/
-  06-audit/
-  07-remediate/
-  08-verify/
-  09-deliver/
+Mode: executable
+Primary owner: Engineering technical architecture, implementation, testing, deployment, security engineering and technical verification.
 
 ## Entry condition
 
 This workspace is valid only after `workspaces/CLAUDE.md` has selected Engineering as the primary work domain. The presence of code, a repository, infrastructure, or an implementation request does not by itself authorize entry here.
+
+## Workflow destination
+
+Primary destination: `stages/01-select/CONTEXT.md` for a new engineering run, or the current stage CONTEXT.md when continuing an existing run. Delivery terminates at `stages/09-deliver/CONTEXT.md`.
+
+## Cross-domain exits
+
+| Dependency | Destination |
+|---|---|
+| Product requirement or behavior changes | ../sitolo-product/CONTEXT.md |
+| Commercial requirement or economics changes | ../sitolo-commercial/CONTEXT.md |
+| Customer lifecycle/service requirement | ../sitolo-customer-operations/CONTEXT.md |
+| Regulatory, privacy, risk or control requirement | ../sitolo-trust-compliance/CONTEXT.md |
 
 ## Triggers
 
@@ -60,4 +54,4 @@ This workspace is valid only after `workspaces/CLAUDE.md` has selected Engineeri
 
 Every stage writes only to its own output directory. The next stage reads the previous stage's declared output. A human may edit an output before the next stage runs.
 
-Do not skip stages. A remediation-triggered re-audit is a human-controlled revisit to 06 before verification, not an automatic stage dependency.
+Do not skip stages. A remediation-triggered re-audit is a human-controlled revisit to 06 before verification, not an automatic stage dependency cycle.
