@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: branch@b4f442f21fcd31130e2b54735c265c0fa3eb79c5
+source_revision: branch@5f3bbf3730831b381fad953616754c910b9037e5
 source: apps/api/src/serve.rs
 source_citation: apps/api/src/serve.rs:45-115
 ---
@@ -19,7 +19,7 @@ Tokio runtime/listener and bounded application state enter the Axum router; Hype
 2. Build the production `axum::Router` with explicit health and tenancy routes. (apps/api/src/serve.rs:55-70)
 3. Enforce request-body, body-idle, request-duration, and in-flight concurrency limits through Tower/Tower-HTTP layers. (apps/api/src/serve.rs:61-76)
 4. Extract paths and JSON bodies with Axum and dispatch typed commands to the tenancy application handlers. (apps/api/src/serve.rs:118-225)
-5. Configure Hyper's HTTP/1/HTTP/2 connection builders for header/keepalive bounds, bridge the Tokio socket with `TokioIo`, and serve the Axum router. (apps/api/src/serve.rs:85-125)
+5. Configure Hyper's HTTP/1/HTTP/2 connection builders for header/keepalive bounds, bridge the Tokio socket with `TokioIo`, adapt the Axum Tower service with `TowerToHyperService`, and serve it. (apps/api/src/serve.rs:85-125)
 6. Exercise the same production router in integration tests through an in-process Axum request, not a parallel transport parser. (apps/api/src/serve.rs:264-309)
 ## Output
 
