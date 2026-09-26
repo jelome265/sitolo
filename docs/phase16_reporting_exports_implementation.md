@@ -447,3 +447,128 @@ next-phase dependency
 ```
 
 **End of Phase 16 contract.**
+
+# 12. Report Definition Contract
+
+A report definition must identify:
+
+~~~text
+report ID/version
+business purpose
+authoritative source/read model
+allowed dimensions
+allowed measures
+maximum time window
+required scope
+sensitivity classification
+freshness expectation
+query budget
+owner
+~~~
+
+A report definition is not permission. Authorization is evaluated at execution.
+
+# 13. Query Safety Model
+
+Every generated query passes:
+
+~~~text
+typed filter parsing
+→ authorization scope injection
+→ field allowlist
+→ bounded predicate validation
+→ index/plan expectations
+→ row/byte/time limits
+→ execution
+~~~
+
+User-provided filters may constrain a permitted query but cannot broaden tenant, branch or field authority.
+
+# 14. Export Artifact Contract
+
+Large exports must produce an artifact with:
+
+~~~text
+export ID
+report definition/version
+requesting actor
+tenant/branch scope
+creation timestamp
+source data/read-model version
+row/byte count
+content type
+digest
+expiration
+download authorization reference
+audit reference
+~~~
+
+The download channel must not expose a durable public URL.
+
+# 15. Data Freshness and Reproducibility
+
+Reports must declare whether they are:
+
+~~~text
+authoritative real-time
+near-real-time read model
+periodically materialized
+historical snapshot
+~~~
+
+A stale read model must be visible in metadata where correctness could be affected. Financial, inventory and tax reports must define reconciliation expectations with authoritative state.
+
+# 16. Abuse Cases
+
+| Abuse | Control |
+|---|---|
+| tenant selector tampering | server-derived scope |
+| forbidden column injection | field allowlist |
+| unlimited date range | hard maximum |
+| concurrent export flood | quotas/concurrency cap |
+| guessed artifact URL | scoped authorization |
+| report query timeout | database/query budget |
+| stale report interpreted as final | freshness metadata |
+| support global export | separate privileged policy |
+
+# 17. Capacity Gates
+
+Before production use, measure:
+
+~~~text
+small report latency
+large report latency
+export throughput
+DB CPU/IO impact
+concurrent jobs
+storage growth
+cleanup latency
+read-model lag
+~~~
+
+The report workload must be demonstrated not to starve POS, inventory or synchronization workloads.
+
+# 18. Evidence Ledger
+
+The evidence record must connect:
+
+~~~text
+report definition/version
+→ authorization policy
+→ query/read model revision
+→ test dataset
+→ expected scope/fields
+→ output artifact digest
+→ reviewer
+~~~
+
+# 19. No-Go Conditions
+
+Do not release a report surface if:
+
+- scope is client-authoritative;
+- unrestricted field selection exists;
+- large exports have no workload budget;
+- download artifacts are publicly addressable;
+- report freshness is unknown for a materially time-sensitive report;
+- read-model rebuildability is unproven.
