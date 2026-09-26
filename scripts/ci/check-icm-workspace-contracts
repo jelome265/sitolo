@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail=0
+registered=()
+executable=0
+routing_only=0
+
+section_has_content() {
+  local file="$1"
+  local heading="$2"
+  awk -v heading="$heading" '
+    $0 == heading { found=1; next }
+    found && /^## / { exit }
+    found && $0 !~ /^[[:space:]]*$/ { has=1 }
+    END { exit has ? 0 : 1 }
+  ' "$file"
+}
+
+trim() {
+  printf "%s" "$1" | sed 's/^ *//; s/ *$//'
+}
+
+echo "ICM WORKSPACE CONTRACT CHECK"
+
+while IFS='|' read -r id workspace mode evidence status; do
+  id="$(trim "$id")"
+  workspace="$(trim "$workspace")"
+  mode="$(trim "$mode")"
+  status="$(trim "$status")"
+
+  [[ -z "$id" || "$id" == "ID" || "$id" == "---" ]] && continue
+
+  workspace="${workspace%/}"
+  registered+=("$workspace")
+  ws_root="workspaces/$workspace"
+  claude="$ws_root/CLAUDE.md"
+  context="$ws_root/CONTEXT.md"
+
+  if [[ ! -f "$claude" || ! -f "$context" ]]; then
+    echo "VIOLATION: registered workspace missing CLAUDE.md or CONTEXT.md: $workspace" >&2
+    fail=1
+    continue
+  fi
+
+  if ! grep -Eq "^Mode: (executable|routing-only)$" "$claude"; then
+    echo "VIOLATION: workspace mode missing or invalid: $workspace" >&2
+    fail=1
+  elif [[ "$mode" != "$(sed -n 's/^Mode: //p' "$claude" | head -n1 | tr -d '[:space:]')" ]]; then
+    echo "VIOLATION: registry mode disagrees with workspace CLAUDE.md: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Entry condition"; then
+    echo "VIOLATION: missing/empty entry condition: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Workflow destination"; then
+    echo "VIOLATION: missing/empty workflow destination: $workspace" >&2
+    fail=1
+  elif ! awk '
+      /^## Workflow destination$/ { found=1; next }
+      found && /^## / { exit }
+      found && /^Primary destination:/ { ok=1 }
+      END { exit ok ? 0 : 1 }
+    ' "$claude"; then
+    echo "VIOLATION: workflow destination must declare Primary destination: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Cross-domain exits"; then
+    echo "VIOLATION: missing/empty cross-domain exits: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$context" "## Inputs"; then
+    echo "VIOLATION: missing/empty scoped inputs: $workspace" >&2
+    fail=1
+  elif ! awk '
+      /^## Inputs$/ { found=1; next }
+      found && /^## / { exit }
+      found && /\.\.\/|docs\// { ok=1 }
+      END { exit ok ? 0 : 1 }
+    ' "$context"; then
+    echo "VIOLATION: Inputs do not expose scoped repository/canonical sources: $workspace" >&2
+    fail=1
+  fi
+
+  if ! grep -q '^**Do NOT load:**' "$context"; then
+    echo "VIOLATION: missing negative loading boundary: $workspace" >&2
+    fail=1
+  fi
+
+  if ! grep -Fq "$workspace/" workspaces/CLAUDE.md; then
+    echo "VIOLATION: registered workspace is unreachable from organizational router: $workspace" >&2
+    fail=1
+  fi
+
+  mapfile -t exits < <(
+    sed -n '/^## Cross-domain exits$/,/^## /p' "$claude" |
+      grep -oE '\.\./sitolo-[a-z0-9-]+/(CLAUDE\.md|CONTEXT\.md)' || true
+  )
+  for exit_ref in "${exits[@]}"; do
+    target_path="workspaces/${exit_ref#../}"
+    if [[ ! -f "$target_path" ]]; then
+      echo "VIOLATION: broken cross-domain exit: $workspace -> $exit_ref" >&2
+      fail=1
+    fi
+  done
+
+  case "$mode" in
+    executable)
+      executable=$((executable + 1))
+      [[ -d "$ws_root/stages" ]] || {
+        echo "VIOLATION: executable workspace has no stages directory: $workspace" >&2
+        fail=1
+      }
+      ;;
+    routing-only)
+      routing_only=$((routing_only + 1))
+      if [[ -d "$ws_root/stages" ]]; then
+        echo "VIOLATION: routing-only workspace contains an executable stages tree: $workspace" >&2
+        fail=1
+      fi
+      ;;
+  esac
+done < <(
+  awk -F '|' '
+    /^## Workspace registry$/ { in_registry=1; next }
+    /^## Explicit non-domains$/ { in_registry=0 }
+    in_registry && /^\|/ && $2 !~ /ID/ && $2 !~ /---/ {
+      printf "%s|%s|%s|%s|%s\n", $2, $3, $4, $5, $6
+    }
+  ' workspaces/CONTEXT.md
+)
+
+workspace_count="${#registered[@]}"
+if [[ "$workspace_count" -eq 0 ]]; then
+  echo "VIOLATION: workspace registry is empty" >&2
+  fail=1
+fi
+
+echo "Registered workspaces: $workspace_count"
+echo "Executable workspaces: $executable"
+echo "Routing-only workspaces: $routing_only"
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM WORKSPACE CONTRACT CHECK FAILED" >&2
+  exit 1
+fi
+
+echo "ICM WORKSPACE CONTRACT CHECK PASSED"
