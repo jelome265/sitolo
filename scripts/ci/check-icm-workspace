@@ -73,7 +73,7 @@ grep -Fq 'Every organizational task starts at workspaces/CLAUDE.md' CONTEXT.md |
 }
 
 # Validate the organizational workspace contract and routing surfaces.
-if [[ -x scripts/ci/check-icm-workspace-contracts ]]; then
+if [[ -f scripts/ci/check-icm-workspace-contracts ]]; then
   bash scripts/ci/check-icm-workspace-contracts || fail=1
 else
   echo "ICM WORKSPACE VIOLATION: missing workspace contract validator" >&2
