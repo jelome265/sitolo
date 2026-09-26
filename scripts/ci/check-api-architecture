@@ -9,11 +9,13 @@ grep -Fq 'axum = { version = "0.8.9"' Cargo.toml || fail=1
 grep -Fq 'tokio.workspace = true' apps/api/Cargo.toml || fail=1
 grep -Fq '#[tokio::main(flavor = "multi_thread")]' apps/api/src/main.rs || fail=1
 grep -Fq 'tokio::net::TcpListener' apps/api/src/main.rs || fail=1
-grep -Fq 'pub fn router(state: Arc<AppState>) -> Router' apps/api/src/serve.rs || fail=1
-grep -Fq 'axum::serve(listener, app)' apps/api/src/serve.rs || fail=1
+grep -Fq 'pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router' apps/api/src/serve.rs || fail=1
+grep -Fq 'Builder::new(TokioExecutor::new())' apps/api/src/serve.rs || fail=1
+grep -Fq 'serve_connection(TokioIo::new(stream), service)' apps/api/src/serve.rs || fail=1
+grep -Fq 'hyper-util.workspace = true' apps/api/Cargo.toml || fail=1
 grep -Fq 'Router::new()' apps/api/src/serve.rs || fail=1
 grep -Fq 'RequestBodyLimitLayer' apps/api/src/serve.rs || fail=1
-grep -Fq 'ConcurrencyLimitLayer' apps/api/src/serve.rs || fail=1
+grep -Fq 'GlobalConcurrencyLimitLayer' apps/api/src/serve.rs || fail=1
 grep -Fq 'TimeoutLayer' apps/api/src/serve.rs || fail=1
 for bad in TcpStream AsyncReadExt AsyncWriteExt split_whitespace 'HTTP/1.1' 'stream.read('; do
   if grep -Fq "$bad" apps/api/src/serve.rs; then fail=1; fi
@@ -24,4 +26,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "API ARCHITECTURE CHECK PASSED: Axum owns HTTP; Tokio owns runtime/listener lifecycle"
+echo "API ARCHITECTURE CHECK PASSED: Axum owns routing; Hyper owns HTTP transport; Tokio owns runtime/socket lifecycle"
