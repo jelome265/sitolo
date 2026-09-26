@@ -55,6 +55,23 @@ for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" workspaces
   fi
 done
 
+# Root routing invariant: organizational work must enter the workspace router
+# before any domain-specific or engineering workspace is selected.
+if grep -Eq 'workspaces/sitolo-engineering' CLAUDE.md CONTEXT.md; then
+  echo "ICM WORKSPACE VIOLATION: root routing surface bypasses the organizational workspace router" >&2
+  fail=1
+fi
+
+grep -Fq 'Any organizational work | workspaces/CLAUDE.md' CLAUDE.md || {
+  echo "ICM WORKSPACE VIOLATION: root CLAUDE.md lacks mandatory organizational workspace dispatch" >&2
+  fail=1
+}
+
+grep -Fq 'Every organizational task starts at workspaces/CLAUDE.md' CONTEXT.md || {
+  echo "ICM WORKSPACE VIOLATION: root CONTEXT.md lacks mandatory workspace entry invariant" >&2
+  fail=1
+}
+
 # Validate the organizational workspace registry and routing surfaces.
 while IFS="|" read -r _empty id workspace evidence status; do
   workspace="$(printf "%s" "$workspace" | sed "s/^ *//; s/ *$//")"
