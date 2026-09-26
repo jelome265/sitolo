@@ -447,3 +447,149 @@ next-phase dependency
 ```
 
 **End of Phase 13 contract.**
+
+# 12. Procurement Transaction Matrix
+
+| Operation | Authority | Inventory effect | Required evidence |
+|---|---|---|---|
+| supplier create/update | tenant administration | none | audit |
+| PO create | authorized purchaser | none | command |
+| PO approve | approver policy | none | approval |
+| receipt post | receiving authority | ledger increase | receipt + ledger |
+| discrepancy open | receiver/manager | none | discrepancy |
+| receipt correction | explicit correction authority | compensating ledger effect | correction chain |
+| supplier return | authorized correction flow | ledger decrease | return + ledger |
+
+# 13. Quantity and Unit Controls
+
+Every receiving command must resolve:
+
+```text
+SKU
+→ purchase unit
+→ canonical stock unit
+→ validated conversion
+→ accepted quantity
+```
+
+Conversion factors must come from authoritative catalogue/unit state. The receiving path must not trust a client-supplied conversion factor.
+
+Negative, zero or extreme quantities are handled according to domain policy and input bounds; “unexpected quantity” must be a typed failure rather than a silent clamp.
+
+# 14. Approval and Separation of Duties
+
+Where policy requires approval:
+
+```text
+requester ≠ approver
+approver scope includes target
+approval is bound to target/version
+approval cannot be replayed
+approval expiry is explicit
+```
+
+If the PO changes materially after approval, the prior approval must be invalidated or re-evaluated.
+
+# 15. Receipt Posting Algorithm
+
+```text
+authenticate
+→ derive tenant/branch scope
+→ authorize receiving action
+→ validate PO status
+→ validate SKU/unit
+→ validate quantity
+→ validate duplicate receipt identity
+→ record receipt
+→ post inventory atomically
+→ write audit/outbox
+→ commit
+```
+
+If any step fails, neither the receipt nor inventory effect may be partially committed.
+
+# 16. Discrepancy Control
+
+A discrepancy is a first-class operational object, not an exception string.
+
+It should preserve:
+
+```text
+expected quantity
+received quantity
+difference
+reason
+actor
+timestamp
+supplier
+PO/receipt references
+status
+resolution
+approval where needed
+```
+
+Discrepancy resolution must not rewrite the original receipt.
+
+# 17. Supplier-Data Security
+
+Supplier master data may contain bank/payment/contact information. Classification determines whether fields are visible to purchasers, receivers, support users or platform operators.
+
+Bulk supplier export, when supported, must use the Phase 16 controlled export model rather than a custom privileged endpoint.
+
+# 18. Performance Controls
+
+Bound:
+
+```
+PO line count
+receipt line count
+search result size
+supplier lookup rate
+bulk-receive payload
+discrepancy query window
+inventory-posting transaction duration
+```
+
+Large receiving operations must use controlled batching and should not hold long transactions across external supplier calls.
+
+# 19. Failure Catalogue
+
+- approval revoked after receipt preparation;
+- PO modified while receipt is being posted;
+- same receipt submitted twice;
+- partial receipt then process death;
+- over-receipt;
+- unit conversion changed between PO and receipt;
+- inventory posting deadlock;
+- outbox write failure;
+- supplier record suspended during receipt;
+- receipt correction racing with supplier return.
+
+# 20. Evidence Ledger
+
+Evidence should prove:
+
+```text
+PO state
+→ approval state
+→ receipt evidence
+→ inventory ledger posting
+→ discrepancy/reconciliation state
+```
+
+No inventory increase caused by procurement is accepted as complete without this chain.
+
+# 21. No-Go Conditions
+
+Stop at the relevant Part if:
+
+- receipt and inventory posting are not atomic;
+- approvals are not target/version bound;
+- unit conversion is client-authoritative;
+- duplicate receipt identity is not durable;
+- historical receipt evidence can be destructively edited;
+- cross-tenant supplier access is possible.
+
+# 22. Downstream Handoff
+
+Phase 13 exports receipt-to-inventory evidence to Phase 9-derived inventory truth and supplies correction inputs to Phase 14. Phase 16 consumes procurement reporting facts.
