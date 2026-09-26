@@ -1,271 +1,273 @@
-//! Listener lifecycle: bind-gated serving, bounded probes, ordered shutdown
-//! and tenancy HTTP routing (§28 PR-006).
+//! Axum/Tokio HTTP serving boundary.
+//!
+//! Production ingress is implemented exclusively through Axum's router and
+//! Tokio's asynchronous runtime. The API process owns lifecycle and graceful
+//! shutdown here; request routing and transport decoding stay inside Axum.
+#![forbid(unsafe_code)]
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Json, Path, State};
+use axum::http::{Request, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use sitolo_api::tenancy::{
-    CreateBranchRequest, CreateOrganizationRequest, handle_activate_branch,
-    handle_activate_organization, handle_begin_close_branch, handle_begin_close_organization,
-    handle_close_branch, handle_close_organization, handle_create_branch,
-    handle_provision_organization, handle_resume_branch, handle_resume_organization,
-    handle_suspend_branch, handle_suspend_organization,
+    BranchResponse, CreateBranchRequest, CreateOrganizationRequest, OrganizationResponse,
+    handle_activate_branch, handle_activate_organization, handle_begin_close_branch,
+    handle_begin_close_organization, handle_close_branch, handle_close_organization,
+    handle_create_branch, handle_provision_organization, handle_resume_branch,
+    handle_resume_organization, handle_suspend_branch, handle_suspend_organization,
 };
 use sitolo_api::{AppError, ProblemDetails};
 use sitolo_observability::RequestId;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::oneshot;
+use tower::ServiceExt;
+use tower::limit::ConcurrencyLimitLayer;
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 
 use crate::shutdown::{MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
 use crate::state::AppState;
 
-const PROBE_READ_TIMEOUT_SECS: u64 = 5;
-const PROBE_MAX_BYTES: usize = 32 * 1024;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+const REQUEST_BODY_IDLE_TIMEOUT_SECS: u64 = 5;
+const COMPAT_RESPONSE_BODY_MAX_BYTES: usize = 64 * 1024;
 
-/// Serves probes and tenancy APIs until `shutdown` fires, then drains
-/// in-flight connections within [`SHUTDOWN_DRAIN_DEADLINE_SECS`] and stops
-/// subsystems in deterministic order. Returns the completed shutdown order.
+/// Builds the production HTTP application.
+///
+/// Every request enters through this Axum router. Body size, body-idle,
+/// request wall-clock, and concurrency controls are enforced by Tower/Axum
+/// middleware before application handlers run.
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/process/live", get(live))
+        .route("/process/ready", get(ready))
+        .route("/v1/organizations", post(provision_organization))
+        .route(
+            "/v1/organizations/{organization_id}/branches",
+            post(create_branch),
+        )
+        .route(
+            "/v1/organizations/{organization_id}/{action}",
+            post(organization_action),
+        )
+        .route(
+            "/v1/organizations/{organization_id}/branches/{branch_id}/{action}",
+            post(branch_action),
+        )
+        .layer(RequestBodyLimitLayer::new(
+            sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES,
+        ))
+        .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
+            REQUEST_BODY_IDLE_TIMEOUT_SECS,
+        )))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        ))
+        .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT_CONNECTIONS))
+        .with_state(state)
+}
+
+/// Serves the Axum application until shutdown, then waits for in-flight
+/// requests for at most the configured drain deadline.
 pub async fn serve(
-    listener: TcpListener,
+    listener: tokio::net::TcpListener,
     state: Arc<AppState>,
     shutdown: oneshot::Receiver<()>,
 ) -> Vec<Subsystem> {
-    let mut shutdown = shutdown;
-    let semaphore = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
-    let mut in_flight = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
-                let Ok(permit) = semaphore.clone().try_acquire_owned() else { continue };
-                let state = Arc::clone(&state);
-                in_flight.spawn(async move {
-                    let _permit = permit;
-                    handle_connection(stream, &state).await;
-                });
-            }
-        }
-    }
-    let _ = tokio::time::timeout(
-        Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS),
-        in_flight.join_all(),
-    )
-    .await;
+    let app = router(state);
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let _ = shutdown.await;
+    });
+
+    let _ = tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), server).await;
+
     let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
     coordinator.shutdown().to_vec()
 }
 
-async fn handle_connection(mut stream: TcpStream, state: &AppState) {
-    let mut buf = vec![0u8; PROBE_MAX_BYTES];
-    let read = tokio::time::timeout(
-        Duration::from_secs(PROBE_READ_TIMEOUT_SECS),
-        stream.read(&mut buf),
-    )
-    .await;
-    let n = match read {
-        Ok(Ok(n)) if n > 0 => n,
-        _ => return,
-    };
-    let raw = &buf[..n];
-    let header_end = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
-        .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|p| p + 2))
-        .unwrap_or(n);
-    let headers_part = String::from_utf8_lossy(&raw[..header_end]);
-    let body_part = if header_end < n {
-        String::from_utf8_lossy(&raw[header_end..]).into_owned()
-    } else {
-        String::new()
-    };
-    let first_line = headers_part.lines().next().unwrap_or("");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return;
-    }
-    let method = parts[0];
-    let path = parts[1];
-    let (status_str, body) = dispatch_request(method, path, &body_part, state).await;
-    let response = format!(
-        "HTTP/1.1 {status_str}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-        body.len()
+async fn live(State(state): State<Arc<AppState>>) -> Response {
+    let body = format!(
+        "{{\"status\":\"live\",\"service\":\"{}\",\"version\":\"{}\"}}",
+        json_escape(state.service_name()),
+        json_escape(state.service_version())
     );
-    let _ = stream.write_all(response.as_bytes()).await;
+    json_body(StatusCode::OK, body)
 }
 
+async fn ready() -> Response {
+    json_body(StatusCode::OK, "{\"status\":\"ready\"}".to_string())
+}
+
+async fn provision_organization(
+    State(state): State<Arc<AppState>>,
+    payload: Result<Json<CreateOrganizationRequest>, JsonRejection>,
+) -> Response {
+    let Json(req) = match payload {
+        Ok(value) => value,
+        Err(_) => return format_error_response(&AppError::Validation),
+    };
+
+    match handle_provision_organization(state.tenancy_service(), req).await {
+        Ok(response) => json_response(StatusCode::CREATED, response),
+        Err(error) => format_error_response(&error),
+    }
+}
+
+async fn create_branch(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<String>,
+    payload: Result<Json<CreateBranchRequest>, JsonRejection>,
+) -> Response {
+    let Json(req) = match payload {
+        Ok(value) => value,
+        Err(_) => return format_error_response(&AppError::Validation),
+    };
+
+    match handle_create_branch(state.tenancy_service(), &organization_id, req).await {
+        Ok(response) => json_response(StatusCode::CREATED, response),
+        Err(error) => format_error_response(&error),
+    }
+}
+
+async fn organization_action(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, action)): Path<(String, String)>,
+) -> Response {
+    let result = match action.as_str() {
+        "activate" => handle_activate_organization(state.tenancy_service(), &organization_id).await,
+        "suspend" => handle_suspend_organization(state.tenancy_service(), &organization_id).await,
+        "resume" => handle_resume_organization(state.tenancy_service(), &organization_id).await,
+        "begin_close" => {
+            handle_begin_close_organization(state.tenancy_service(), &organization_id).await
+        }
+        "close" => handle_close_organization(state.tenancy_service(), &organization_id).await,
+        _ => return format_error_response(&AppError::NotFound),
+    };
+
+    match result {
+        Ok(response) => json_response(StatusCode::OK, response),
+        Err(error) => format_error_response(&error),
+    }
+}
+
+async fn branch_action(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, branch_id, action)): Path<(String, String, String)>,
+) -> Response {
+    let result = match action.as_str() {
+        "activate" => {
+            handle_activate_branch(state.tenancy_service(), &organization_id, &branch_id).await
+        }
+        "suspend" => {
+            handle_suspend_branch(state.tenancy_service(), &organization_id, &branch_id).await
+        }
+        "resume" => {
+            handle_resume_branch(state.tenancy_service(), &organization_id, &branch_id).await
+        }
+        "begin_close" => {
+            handle_begin_close_branch(state.tenancy_service(), &organization_id, &branch_id).await
+        }
+        "close" => handle_close_branch(state.tenancy_service(), &organization_id, &branch_id).await,
+        _ => return format_error_response(&AppError::NotFound),
+    };
+
+    match result {
+        Ok(response) => json_response(StatusCode::OK, response),
+        Err(error) => format_error_response(&error),
+    }
+}
+fn json_response<T: serde::Serialize>(status: StatusCode, value: T) -> Response {
+    (status, Json(value)).into_response()
+}
+
+fn json_body(status: StatusCode, body: String) -> Response {
+    let mut response = (status, Body::from(body)).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+fn format_error_response(err: &AppError) -> Response {
+    let status =
+        StatusCode::from_u16(err.public().status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let problem = ProblemDetails::from_error(err, &RequestId::new_server());
+    let mut response = (status, Body::from(problem.json())).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/problem+json"),
+    );
+    response
+}
+
+/// Test-only compatibility adapter. It intentionally exercises the same
+/// production Axum router rather than maintaining a second request parser.
 pub async fn dispatch_request(
     method: &str,
     path: &str,
     body: &str,
     state: &AppState,
 ) -> (&'static str, String) {
-    // Liveness / readiness probes remain authoritative and unconditional.
-    if method == "GET" {
-        if path == "/process/live" {
-            return (
-                "200 OK",
-                format!(
-                    "{{\"status\":\"live\",\"service\":\"{}\",\"version\":\"{}\"}}",
-                    json_escape(state.service_name()),
-                    json_escape(state.service_version())
-                ),
-            );
-        } else if path == "/process/ready" {
-            return ("200 OK", "{\"status\":\"ready\"}".to_string());
-        }
-    }
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.as_bytes().len().to_string())
+        .body(Body::from(body.to_owned()))
+        .expect("test request construction must succeed");
 
-    // Tenancy APIs (§28 PR-006). All mutations are bounded (§10.2) and
-    // validated before domain work (§39); tenant binding is enforced
-    // server-side (§27.1).
-    if method == "POST" {
-        let segments: Vec<&str> = path.split('/').collect();
-        if segments.len() >= 3 && segments[1] == "v1" && segments[2] == "organizations" {
-            if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
-                return format_error_response(&AppError::Validation);
-            }
-            let svc = state.tenancy_service();
-            if segments.len() == 3 {
-                // POST /v1/organizations
-                let req: Result<CreateOrganizationRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_provision_organization(svc, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 && segments[4] == "branches" {
-                // POST /v1/organizations/{org_id}/branches
-                let org_id = segments[3];
-                let req: Result<CreateBranchRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_create_branch(svc, org_id, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 {
-                let org_id = segments[3];
-                let action = segments[4];
-                match action {
-                    "activate" => match handle_activate_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => match handle_begin_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "close" => match handle_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            } else if segments.len() == 7 && segments[4] == "branches" {
-                let org_id = segments[3];
-                let branch_id = segments[5];
-                let action = segments[6];
-                match action {
-                    "activate" => match handle_activate_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => {
-                        match handle_begin_close_branch(svc, org_id, branch_id).await {
-                            Ok(res) => {
-                                return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                            }
-                            Err(e) => return format_error_response(&e),
-                        }
-                    }
-                    "close" => match handle_close_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    ("404 Not Found", "{\"status\":\"not_found\"}".to_string())
+    let response = router(Arc::new(state.clone()))
+        .oneshot(request)
+        .await
+        .expect("Axum router is infallible");
+    let status = response.status();
+    let body = to_bytes(response.into_body(), COMPAT_RESPONSE_BODY_MAX_BYTES)
+        .await
+        .expect("test response body must be bounded and readable");
+    let body = String::from_utf8_lossy(&body).into_owned();
+    (status_line(status), body)
 }
 
-fn format_error_response(err: &AppError) -> (&'static str, String) {
-    let status = match err {
-        AppError::Validation => "422 Unprocessable Entity",
-        AppError::Authentication => "401 Unauthorized",
-        AppError::Authorization => "403 Forbidden",
-        AppError::NotFound => "404 Not Found",
-        AppError::Conflict | AppError::IdempotencyConflict => "409 Conflict",
-        AppError::RateLimited => "429 Too Many Requests",
-        AppError::DependencyUnavailable
-        | AppError::UpstreamInvalidResponse
-        | AppError::UpstreamTimeout
-        | AppError::UnknownOutcome
-        | AppError::Internal => "500 Internal Server Error",
-    };
-    let body = ProblemDetails::from_error(err, &RequestId::new_server()).json();
-    (status, body)
+fn status_line(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::OK => "200 OK",
+        StatusCode::CREATED => "201 Created",
+        StatusCode::UNPROCESSABLE_ENTITY => "422 Unprocessable Entity",
+        StatusCode::NOT_FOUND => "404 Not Found",
+        StatusCode::CONFLICT => "409 Conflict",
+        StatusCode::UNAUTHORIZED => "401 Unauthorized",
+        StatusCode::FORBIDDEN => "403 Forbidden",
+        StatusCode::PAYLOAD_TOO_LARGE => "413 Payload Too Large",
+        StatusCode::TOO_MANY_REQUESTS => "429 Too Many Requests",
+        StatusCode::REQUEST_TIMEOUT => "408 Request Timeout",
+        StatusCode::BAD_GATEWAY => "502 Bad Gateway",
+        StatusCode::SERVICE_UNAVAILABLE => "503 Service Unavailable",
+        StatusCode::GATEWAY_TIMEOUT => "504 Gateway Timeout",
+        _ => "500 Internal Server Error",
+    }
 }
 
-/// Minimal JSON string escaping for operator-controlled identity fields.
+/// Minimal JSON escaping for operator-controlled identity fields used by the
+/// liveness projection. Application responses use serde_json/Axum directly.
 fn json_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
             _ => out.push(c),
         }
     }
@@ -277,8 +279,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_escape_neutralizes_quotes() {
-        assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
+    fn json_escape_neutralizes_quotes_and_controls() {
+        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
         assert_eq!(json_escape("plain"), "plain");
+        assert!(json_escape("\u{0001}").contains("\\u0001"));
+    }
+
+    #[test]
+    fn production_router_is_axum_composed() {
+        let state = AppState::new(
+            "sitolo".into(),
+            "test".into(),
+            "fingerprint".into(),
+            sitolo_config::DatabaseTarget {
+                host: "localhost".into(),
+                port: 5432,
+                database: "sitolo".into(),
+                username: "sitolo".into(),
+            },
+            Arc::new(std::sync::Mutex::new(
+                sitolo_observability::TelemetryBuffer::new(8),
+            )),
+        );
+        let _router = router(Arc::new(state));
     }
 }
