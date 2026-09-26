@@ -44,7 +44,7 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 
 ## Security
 
-| [`../workspaces/sitolo-engineering/skills/security-engineering/SKILL.md`](../workspaces/sitolo-engineering/skills/security-engineering/SKILL.md) | Defensive security engineering, real security tests, vulnerability scanning and evidence |\n\n| Document | Purpose |
+| Document | Purpose |\n|---|---|\n| [`../workspaces/sitolo-engineering/skills/security-engineering/SKILL.md`](../workspaces/sitolo-engineering/skills/security-engineering/SKILL.md) | Defensive security engineering, real security tests, vulnerability scanning and evidence |
 |---|---|
 | [`threat_model.md`](threat_model.md) | Threat model and security governance |
 | [`security_architecture_design.md`](security_architecture_design.md) | Security architecture baseline |
