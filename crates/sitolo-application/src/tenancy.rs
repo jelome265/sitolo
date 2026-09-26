@@ -12,16 +12,41 @@
 //! with documented moderate fallbacks.
 //!
 //! Explicitly deferred to later Phase 4 PRs: invitation delivery (outbox,
-//! PR-009), audit emission (PR-009), HTTP routes and DTOs (PR-006). These
-//! methods enforce state-machine and scope correctness, not caller
-//! authorization — actor authority (who may invite, grant, or revoke) is
-//! enforced by the authorization engine (Phase 6) once issuer scope exists.
+//! PR-009), HTTP routes and DTOs (PR-006). These methods enforce
+//! state-machine and scope correctness, not caller authorization — actor
+//! authority (who may invite, grant, or revoke) is enforced by the
+//! authorization engine (Phase 6) once issuer scope exists.
+//!
+//! ## Phase 4 Part 8 evidence (PR-009)
+//!
+//! [`TenancyService::provision_organization`] emits the mandatory
+//! `iam.organization.created` audit record and its paired outbox event
+//! (`docs/phase4_part8_audit_outbox_implementation_contract.md` §5, §29,
+//! §38) through an optional [`TenancyEvidenceSink`]. The audit write and the
+//! outbox write share one PostgreSQL transaction, so that pair is atomic.
+//!
+//! What is **not** yet atomic: [`TenancyDatabase`] is an in-memory reference
+//! store (`sitolo-persistence` lib docs: "PostgreSQL implementations arrive
+//! in Phase 5"), so the organization/membership/branch mutation itself
+//! cannot share a transaction with the PostgreSQL audit/outbox insert. A
+//! process crash between the in-memory commit and the evidence transaction
+//! can therefore still leave a committed organization without its evidence.
+//! This is a disclosed, pre-existing architectural gap tied to Phase 5, not
+//! something this change conceals or claims to close. Closing it fully
+//! requires moving tenancy state into the same PostgreSQL authority Part 8
+//! already uses for audit/outbox — that is Phase 5 work, out of Part 8's
+//! scope (contract §51).
+//!
+//! Other use cases in this file (branch, membership, role, scope,
+//! invitation) do not yet call the evidence sink; that is the deferred
+//! follow-up work, not part of this change.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use sitolo_auth::{AbuseClass, RateLimitDecision, RateLimitRule, RateLimiter};
+use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
+use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, Permission, Role, RoleAssignment, Scope,
     ScopeGrant, authorize_scope, resolve_permissions,
@@ -30,17 +55,50 @@ use sitolo_domain::tenancy::{
     Branch, BranchId, InvitationId, Membership, MembershipId, Organization, OrganizationId,
     RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
 };
+use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores,
+    audit_repository::AuditWriter,
+    outbox_repository::OutboxWriter,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
+use sqlx::PgPool;
+
+/// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
+/// events (contract §5, §29). The audit insert and the outbox insert run in
+/// one PostgreSQL transaction: either both land, or neither does.
+///
+/// See the module-level "Phase 4 Part 8 evidence" note for what this does
+/// and does not make atomic with the (currently in-memory) business
+/// mutation.
+pub struct TenancyEvidenceSink {
+    pool: PgPool,
+    audit: Arc<dyn AuditWriter>,
+    outbox: Arc<dyn OutboxWriter>,
+}
+
+impl TenancyEvidenceSink {
+    #[must_use]
+    pub fn new(pool: PgPool, audit: Arc<dyn AuditWriter>, outbox: Arc<dyn OutboxWriter>) -> Self {
+        TenancyEvidenceSink {
+            pool,
+            audit,
+            outbox,
+        }
+    }
+}
 
 /// The tenancy service (Phase 4 use cases).
 pub struct TenancyService {
     db: Arc<TenancyDatabase>,
     limiter: Mutex<RateLimiter>,
     abuse_rules: Vec<(AbuseClass, RateLimitRule)>,
+    /// Phase 4 Part 8 evidence sink. `None` in deployments/tests that have
+    /// not wired PostgreSQL audit/outbox persistence yet — those callers
+    /// intentionally see the pre-Part-8 behavior (no evidence emitted)
+    /// rather than a hard failure, so this stays additive.
+    evidence: Option<TenancyEvidenceSink>,
 }
 
 /// Fallback abuse rules when the deployment supplies none. These are
@@ -60,7 +118,100 @@ impl TenancyService {
             db,
             limiter: Mutex::new(RateLimiter::new()),
             abuse_rules,
+            evidence: None,
         }
+    }
+
+    /// Wires the Phase 4 Part 8 durable evidence sink. Additive: callers
+    /// that never invoke this keep the pre-Part-8 behavior.
+    #[must_use]
+    pub fn with_evidence(mut self, sink: TenancyEvidenceSink) -> Self {
+        self.evidence = Some(sink);
+        self
+    }
+
+    /// Records one mandatory Phase 4 IAM audit event and its paired outbox
+    /// event atomically (contract §5, §29). No-op success when no evidence
+    /// sink is configured (see the `evidence` field doc).
+    ///
+    /// `aggregate_id`/`payload` describe the outbox envelope (contract
+    /// §14, §19): bounded, versioned, secret-free, independent of Rust
+    /// debug formatting. Callers must not pass raw domain-object debug
+    /// output as `payload`.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_evidence(
+        &self,
+        event_name: IamEventName,
+        organization_id: &OrganizationId,
+        branch_id: Option<&BranchId>,
+        target: TargetRef,
+        actor: ActorRef,
+        action: &'static str,
+        aggregate_type: &'static str,
+        aggregate_id: String,
+        payload: serde_json::Value,
+    ) -> Result<(), TenancyError> {
+        let Some(sink) = self.evidence.as_ref() else {
+            return Ok(());
+        };
+
+        // Globally unique event identity (contract §6.1) — not derived from
+        // timestamps, names, or client-supplied sequential values.
+        let event_id_raw = uuid::Uuid::new_v4().to_string();
+        let event_id = AuditEventId::new(event_id_raw.clone())
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        let audit_event = IamAuditEvent::success(
+            event_id,
+            event_name,
+            organization_id.clone(),
+            branch_id.cloned(),
+            actor,
+            target,
+            action,
+            "tenancy_service",
+        );
+
+        let payload_str =
+            serde_json::to_string(&payload).map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        let outbox_event = OutboxEvent::new(
+            event_id_raw,
+            aggregate_type.to_string(),
+            aggregate_id,
+            event_name.as_str().to_string(),
+            1,
+            organization_id.clone(),
+            branch_id.cloned(),
+            payload_str,
+        )
+        .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        // Audit insert + outbox insert share one transaction: forbidden
+        // per contract §5 to commit the business mutation and then try
+        // each of these best-effort. Here they are already coupled to
+        // each other; see the module doc for the business-mutation leg.
+        let mut tx = sink
+            .pool
+            .begin()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        sink.audit
+            .record_required(&mut tx, &audit_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        sink.outbox
+            .enqueue(&mut tx, &outbox_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        Ok(())
     }
 
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
@@ -89,16 +240,45 @@ impl TenancyService {
         branch_id: BranchId,
         branch_name: &str,
     ) -> Result<ProvisionedOrganization, TenancyError> {
-        self.db
+        let provisioned = self
+            .db
             .provision_organization(
-                organization_id,
+                organization_id.clone(),
                 organization_name,
-                owner_membership_id,
-                owner_user_id,
-                branch_id,
+                owner_membership_id.clone(),
+                owner_user_id.clone(),
+                branch_id.clone(),
                 branch_name,
             )
-            .await
+            .await?;
+
+        // Phase 4 Part 8 (§5, §29, §38): mandatory `iam.organization.created`
+        // audit evidence + paired outbox event. Bootstrap actor is the
+        // organization's own owner — there is no separate issuing principal
+        // for self-serve provisioning.
+        self.record_evidence(
+            IamEventName::OrganizationCreated,
+            &organization_id,
+            Some(&branch_id),
+            TargetRef::Organization(organization_id.clone()),
+            ActorRef {
+                subject_ref: owner_user_id.to_string(),
+                membership_ref: Some(owner_membership_id.to_string()),
+                device_ref: None,
+            },
+            "provision_organization",
+            "organization",
+            organization_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "organization_name": provisioned.organization.name,
+                "owner_membership_id": owner_membership_id.as_str(),
+                "branch_id": branch_id.as_str(),
+            }),
+        )
+        .await?;
+
+        Ok(provisioned)
     }
 
     /// Creates an additional branch under an operating organization.

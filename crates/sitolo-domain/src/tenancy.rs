@@ -44,6 +44,12 @@ macro_rules! tenant_id {
                 &self.0
             }
         }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
     };
 }
 
@@ -92,6 +98,11 @@ pub enum TenancyError {
     InvalidInvitation,
     #[error("invitation rate limited")]
     RateLimited,
+    /// Mandatory Phase 4 Part 8 audit/outbox evidence could not be durably
+    /// recorded for an authoritative transition (contract §5, §10:
+    /// mandatory evidence blocks the transition it describes).
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailed,
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {
