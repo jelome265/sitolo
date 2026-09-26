@@ -26,6 +26,11 @@ trim() {
 
 echo "ICM WORKSPACE CONTRACT CHECK"
 
+if ! section_has_content workspaces/CLAUDE.md "## Selection rule"; then
+  echo "VIOLATION: organizational router lacks deterministic selection rule" >&2
+  fail=1
+fi
+
 while IFS='|' read -r id workspace mode evidence status; do
   id="$(trim "$id")"
   workspace="$(trim "$workspace")"
