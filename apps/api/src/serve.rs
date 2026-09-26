@@ -26,8 +26,8 @@ use sitolo_api::tenancy::{
     handle_suspend_branch, handle_suspend_organization,
 };
 use sitolo_api::{AppError, ProblemDetails};
-use socket2::{SockRef, TcpKeepalive};
 use sitolo_observability::RequestId;
+use socket2::{SockRef, TcpKeepalive};
 use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
@@ -179,7 +179,6 @@ pub async fn serve(
     let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
     coordinator.shutdown().to_vec()
 }
-
 
 fn configure_tcp_keepalive(
     stream: &tokio::net::TcpStream,
