@@ -448,3 +448,137 @@ next-phase dependency
 ```
 
 **End of Phase 14 contract.**
+
+# 12. Correction Entitlement Model
+
+For each correction, calculate:
+
+```text
+original economic fact
+− prior consumed correction entitlement
+− disqualifying current state
+= currently refundable/returnable entitlement
+```
+
+The calculation must be server-authoritative and recomputed at execution time.
+
+# 13. Correction Chain
+
+Every correction references what it corrects:
+
+```text
+sale
+ ├─ void/reversal
+ ├─ return
+ │   └─ refund
+ └─ cash consequence
+```
+
+The system never replaces the sale row with a corrected version.
+
+# 14. Register/Cash State Matrix
+
+| State | Allowed actions | Forbidden actions |
+|---|---|---|
+| OPENING | establish float/open evidence | finalize prior history |
+| ACTIVE | sales/cash events | arbitrary balance rewrite |
+| COUNT_PENDING | count and variance | new normal transactions where policy forbids |
+| CLOSED | reporting/review | mutate prior event history |
+
+A correction after close is a new governed event, not reopening history.
+
+# 15. Refund/Provider Boundary
+
+Refund initiation follows:
+
+```text
+local eligibility
+→ authorization
+→ durable refund intent
+→ external provider call
+→ provider evidence
+→ reconciliation
+```
+
+Unknown provider outcome remains UNKNOWN/RECONCILIATION_REQUIRED. The cash and sale history must not be rewritten based on an uncertain provider response.
+
+# 16. Tax Boundary
+
+Phase 14 does not invent tax correction semantics.
+
+Where a return/refund affects fiscalization, create the explicit Phase 15 work item with the local tax fact and correction reference. Do not alter prior tax evidence to make the correction appear as though it happened originally.
+
+# 17. Fraud and Abuse Signals
+
+The phase should emit bounded signals for:
+
+```text
+high refund frequency
+repeated same-item returns
+manual override frequency
+cash variance outliers
+refund attempts after prior refund
+corrections outside normal time windows
+operator concentration
+support-mediated correction activity
+```
+
+Signals are evidence for investigation, not automatic proof of misconduct.
+
+# 18. Performance and Resource Limits
+
+Bound:
+
+```text
+eligible-line scan
+return-line count
+refund-attempt rate
+cash-event query window
+manual-review queue
+correction search volume
+```
+
+Large historical correction searches must use indexed/read-model paths and cannot starve POS operations.
+
+# 19. Failure Catalogue
+
+- refund request duplicated;
+- provider timeout;
+- return accepted but inventory posting failed;
+- cash close crash;
+- count changed during close;
+- refund entitlement changed between approval and execution;
+- support override races with normal operator action;
+- tax correction unavailable;
+- already-corrected sale presented again.
+
+# 20. Evidence Ledger
+
+For each correction:
+
+```text
+original fact
+eligibility calculation
+authorization
+approval if required
+correction command
+inventory/payment/cash effect
+provider evidence where relevant
+audit
+outbox
+final state
+```
+
+# 21. No-Go Conditions
+
+Do not proceed if:
+
+- the original sale can be destructively edited;
+- correction entitlement is computed from client state;
+- refund and inventory effects can diverge silently;
+- register close can rewrite prior history;
+- unknown refunds are forced into success/failure without evidence.
+
+# 22. Downstream Handoff
+
+Phase 14 provides Phase 15 the tax-relevant correction reference, Phase 16 the corrected-but-reconstructable reporting facts, and Phase 20 the correction-integrity evidence.
