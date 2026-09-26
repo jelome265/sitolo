@@ -444,3 +444,119 @@ next-phase dependency
 ```
 
 **End of Phase 17 contract.**
+
+# 12. Commercial Authority Matrix
+
+| Decision | Owner | Engineering responsibility |
+|---|---|---|
+| plan definition | product/commercial governance | versioned data/config |
+| price | approved commercial authority | deterministic application |
+| subscription status | billing system | state transition enforcement |
+| invoice | billing authority | durable identity |
+| payment observation | provider/reconciliation | evidence ingestion |
+| entitlement | billing policy | authoritative projection |
+| exception | governance/support | scoped audited override |
+
+Engineering must not invent commercial policy where the commercial corpus is authoritative.
+
+# 13. Entitlement Evaluation
+
+At request time:
+
+~~~text
+authenticated subject
+→ tenant
+→ subscription state/version
+→ entitlement policy
+→ feature/resource
+→ effective decision
+~~~
+
+Cached entitlements are optimization only. High-risk operations must re-check current authority according to policy.
+
+# 14. Billing Idempotency
+
+All retryable billing operations need stable identity:
+
+~~~text
+business operation ID
++ billing period
++ tenant
++ attempt context
+~~~
+
+A recurring job may execute twice; it must not create two economic invoices or two provider payments for one logical operation.
+
+# 15. Plan Migration
+
+Plan changes use:
+
+~~~text
+new plan/version
+→ eligibility calculation
+→ effective date
+→ subscription transition
+→ entitlement recalculation
+→ audit
+~~~
+
+Existing invoices retain the plan/version that produced them. Retroactive plan changes require an explicit correction policy.
+
+# 16. Usage Metering
+
+Usage events must originate from authoritative domain events. Client-side counters are hints at most.
+
+Metering must define:
+
+~~~text
+event identity
+deduplication
+event timestamp semantics
+attribution
+tenant scope
+aggregation window
+late-event policy
+correction policy
+~~~
+
+# 17. Customer-Impact States
+
+Entitlement suspension must distinguish:
+
+~~~text
+billing delinquency
+provider outage
+internal processing failure
+manual administrative action
+security hold
+~~~
+
+A technical outage must not masquerade as commercial delinquency.
+
+# 18. Capacity and Resource Controls
+
+Bound invoice-generation batch size, usage-event ingestion rate, entitlement recomputation fan-out, reconciliation polling and notification volume. Apply backpressure rather than unbounded accumulation.
+
+# 19. Evidence Ledger
+
+Required evidence:
+
+~~~text
+commercial decision/version
+→ billing state test
+→ provider evidence
+→ reconciliation result
+→ entitlement result
+→ audit record
+~~~
+
+# 20. No-Go Conditions
+
+Stop if:
+
+- a client can self-grant entitlement;
+- provider retry can duplicate payment;
+- invoice identity is non-durable;
+- plan changes erase historical meaning;
+- outage states are indistinguishable from delinquency;
+- usage can be fabricated by the client.
