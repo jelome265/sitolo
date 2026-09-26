@@ -72,6 +72,10 @@ When a document and current implementation disagree:
 - do not claim implementation completion merely because a contract exists;
 - record implementation gaps in the current audit/remediation plan.
 
+## Phase contract coverage authority
+
+`docs/phase_contract_coverage_register.md` is the canonical reconciliation record for the implementation-phase contract corpus. It owns coverage classification, ICM routing status, implementation/evidence status and remediation tracking for Phases 0–20. It does not override higher-authority product, security, legal, regulatory, provider, domain, database, API or commercial sources.
+
 ## Canonical semantic remediation
 
 The current semantic audit and repair sequence is documented in:
