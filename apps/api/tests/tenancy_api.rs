@@ -324,6 +324,21 @@ async fn rejects_oversized_payload_and_invalid_identifiers() {
     let (status_huge, _) = dispatch_request("POST", "/v1/organizations", &huge_body, &state).await;
     assert_eq!(status_huge, "413 Payload Too Large");
 
+    // A body stream without Content-Length must still surface the
+    // body-limit error as 413 rather than a generic JSON validation error.
+    let chunked_name = "y".repeat(33 * 1024);
+    let chunked_body = format!(
+        r#"{{"organization_id":"org-chunked","organization_name":"{chunked_name}","owner_membership_id":"mem-chunked","owner_user_id":"usr-chunked","default_branch_id":"br-chunked","default_branch_name":"Branch"}}"#
+    );
+    let (status_chunked, _) = crate::serve::dispatch_request_without_content_length(
+        "POST",
+        "/v1/organizations",
+        &chunked_body,
+        &state,
+    )
+    .await;
+    assert_eq!(status_chunked, "413 Payload Too Large");
+
     // Hostile identifier with CR/LF injection -> 422
     let hostile_id_body = r#"{
         "organization_id": "org-001\r\nInject",
