@@ -46,11 +46,17 @@ while IFS='|' read -r id workspace mode evidence status; do
     continue
   fi
 
-  if ! grep -Eq "^Mode: (executable|routing-only)$" "$claude"; then
+  claude_mode="$(sed -n 's/^Mode: //p' "$claude" | head -n1 | tr -d '[:space:]')"
+  if [[ "$claude_mode" != "executable" && "$claude_mode" != "routing-only" ]]; then
     echo "VIOLATION: workspace mode missing or invalid: $workspace" >&2
     fail=1
-  elif [[ "$mode" != "$(sed -n 's/^Mode: //p' "$claude" | head -n1 | tr -d '[:space:]')" ]]; then
+  elif [[ "$mode" != "$claude_mode" ]]; then
     echo "VIOLATION: registry mode disagrees with workspace CLAUDE.md: $workspace" >&2
+    fail=1
+  fi
+
+  if ! grep -Eq '^Primary owner: .+' "$claude"; then
+    echo "VIOLATION: missing primary ownership declaration: $workspace" >&2
     fail=1
   fi
 
@@ -83,14 +89,15 @@ while IFS='|' read -r id workspace mode evidence status; do
   elif ! awk '
       /^## Inputs$/ { found=1; next }
       found && /^## / { exit }
-      found && /\.\.\/|docs\// { ok=1 }
-      END { exit ok ? 0 : 1 }
+      found && /^| .*Scope.*| .*Why.*|$/ { header=1 }
+      found && /\.\.\/|docs\// { source=1 }
+      END { exit (header && source) ? 0 : 1 }
     ' "$context"; then
-    echo "VIOLATION: Inputs do not expose scoped repository/canonical sources: $workspace" >&2
+    echo "VIOLATION: Inputs must identify scoped sources and their purpose: $workspace" >&2
     fail=1
   fi
 
-  if ! grep -q '^**Do NOT load:**' "$context"; then
+  if ! grep -q '^*\*Do NOT load:\*\*' "$context"; then
     echo "VIOLATION: missing negative loading boundary: $workspace" >&2
     fail=1
   fi
