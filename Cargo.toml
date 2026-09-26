@@ -28,6 +28,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 async-trait = { version = "0.1.83", default-features = false }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false }
@@ -39,6 +40,8 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 # std-only, so this is not a no-std regression.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
+tower = { version = "0.5.3", default-features = false, features = ["limit", "util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
 sitolo-security = { path = "crates/sitolo-security" }
 sitolo-auth = { path = "crates/sitolo-auth" }
