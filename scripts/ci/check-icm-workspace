@@ -67,7 +67,7 @@ grep -Fq 'Any organizational work | workspaces/CLAUDE.md' CLAUDE.md || {
   fail=1
 }
 
-grep -Fq 'Every organizational task starts at workspaces/CLAUDE.md' CONTEXT.md || {
+grep -Fq 'Every organizational task starts at `workspaces/CLAUDE.md`' CONTEXT.md || {
   echo "ICM WORKSPACE VIOLATION: root CONTEXT.md lacks mandatory workspace entry invariant" >&2
   fail=1
 }
