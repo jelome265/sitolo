@@ -1,0 +1,26 @@
+name: _diagnose-lock
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+      - name: Show Cargo lock diff
+        run: |
+          git diff -- Cargo.lock
+          if git diff --quiet -- Cargo.lock; then
+            echo 'LOCKFILE_CLEAN'
+          else
+            echo 'LOCKFILE_DIFF_PRESENT'
+            exit 1
+          fi
