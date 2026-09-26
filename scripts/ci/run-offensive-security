@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  echo "OFFENSIVE SECURITY GATE FAILED: $*" >&2
+  exit 1
+}
+
+[[ "${SITOLO_OFFENSIVE_ALLOWED:-}" == "true" ]] ||   fail "explicit authorization flag SITOLO_OFFENSIVE_ALLOWED=true is required"
+
+[[ "${SITOLO_OFFENSIVE_ENV:-}" == "disposable" ]] ||   fail "offensive tests require SITOLO_OFFENSIVE_ENV=disposable"
+
+for var in ADMIN_DATABASE_URL RUNTIME_DATABASE_URL; do
+  [[ -n "${!var:-}" ]] || fail "$var is required for the real PostgreSQL adversarial suite"
+done
+
+case "$ADMIN_DATABASE_URL" in
+  *localhost*|*127.0.0.1*|*postgres*) ;;
+  *) fail "ADMIN_DATABASE_URL must resolve to the authorized disposable PostgreSQL service" ;;
+esac
+
+case "$RUNTIME_DATABASE_URL" in
+  *localhost*|*127.0.0.1*|*postgres*) ;;
+  *) fail "RUNTIME_DATABASE_URL must resolve to the authorized disposable PostgreSQL service" ;;
+esac
+
+echo "==> Authorized offensive security: real PostgreSQL tenant-isolation attacks"
+cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked
+
+echo "==> Authorized offensive security: API boundary/adversarial tests"
+cargo test -p sitolo-api-bin --test tenancy_api --all-features --locked
+
+echo "==> Authorized offensive security: secret-provider boundary tests"
+cargo test -p sitolo-security --test provider_env --all-features --locked
+
+echo "==> Offensive security regression suite passed"
