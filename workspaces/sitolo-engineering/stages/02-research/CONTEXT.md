@@ -4,11 +4,13 @@ One job: establish whether current external evidence is required and, when requi
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Defines the research question |
-| Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
-| Research guide | references/research-evidence.md | Full file | Evidence rules |
+| Working | Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Defines the research question |
+| Reference | Context policy | ../../shared/context-loading.md | Full file | Loading discipline |
+| Reference | Research guide | references/research-evidence.md | Full file | Evidence rules |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 

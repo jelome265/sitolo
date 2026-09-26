@@ -16,6 +16,7 @@ required=(
   "$WORKSPACE/setup/questionnaire.md"
   "$WORKSPACE/_config/workflow-policy.md"
   "$WORKSPACE/shared/context-loading.md"
+  "$WORKSPACE/shared/governance-context/CONTEXT.md"
   "$WORKSPACE/skills/engineering-review/SKILL.md"
   "$WORKSPACE/shared/CONTEXT.md"
   "$WORKSPACE/shared/business-context/CONTEXT.md"
@@ -71,6 +72,16 @@ for stage in "${STAGES[@]}"; do
     fi
   done
 
+  if ! grep -q '^\*\*Do NOT load:\*\*' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: missing explicit negative loading boundary: $context" >&2
+    fail=1
+  fi
+
+  if grep -Fq '../../../../agent.md' "$context"; then
+    echo "ICM WORKSPACE VIOLATION: stage contract must route through the recursive governance context, not agent.md directly: $context" >&2
+    fail=1
+  fi
+
   if grep -Eq '\| \../[^|]+/output/ \|' "$context"; then
     echo "ICM WORKSPACE VIOLATION: stage handoff must name exact artifact path: $context" >&2
     fail=1
@@ -92,8 +103,8 @@ for stage in "${STAGES[@]}"; do
 
   if [[ -d "$output" ]]; then
     while IFS= read -r artifact; do
-      if [[ "$artifact" != "$output/.gitkeep" && "${artifact##*.}" != "md" ]]; then
-        echo "ICM WORKSPACE VIOLATION: stage output must be Markdown: $artifact" >&2
+      if [[ "$artifact" != "$output/.gitkeep" ]]; then
+        echo "ICM WORKSPACE VIOLATION: run artifacts must not be committed inside the reusable factory output shelf: $artifact" >&2
         fail=1
       fi
     done < <(find "$output" -type f -print)
@@ -224,12 +235,12 @@ for process in map/processes/*.md; do
 done
 
 # Formal process-card verification checks current source identity, citations,
-# object links, and current-state evidence for the intentionally ghosted verbs.
+# object links, and current-state evidence for executable movements.
 if [[ -f ./scripts/ci/check-system-map-processes ]]; then
   bash ./scripts/ci/check-system-map-processes || fail=1
 fi
 
-# Cold walk: traverse the actual nine-stage filesystem factory in a disposable
+# Mechanical cold walk: traverse the actual nine-stage filesystem factory in a disposable
 # copy. No human approval is synthesized; this only proves routing/handoff
 # integrity and template instantiation.
 cold_root=$(mktemp -d)
@@ -291,6 +302,7 @@ map_source=$(sed -n 's/^source: //p' "$cold_root/map/objects/runtime/api-boundar
   fail=1
 }
 
+# Conservative byte proxy for the ~2k–8k token target; this is not a tokenizer measurement.
 cold_bytes=$(cat CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" "$WORKSPACE/stages/01-select/CONTEXT.md" | wc -c)
 (( cold_bytes <= 32000 )) || {
   echo "ICM COLD WALK FAILED: entry + first stage exceeds ~8k-token budget" >&2
@@ -303,4 +315,4 @@ if [[ "$fail" -ne 0 ]]; then
 fi
 
 echo "ICM workspace check PASSED"
-echo "ICM COLD WALK PASSED: 9 stages, exact handoffs, no synthetic human approval, System Map source hop"
+echo "ICM MECHANICAL COLD WALK PASSED: 9 stages, exact handoffs, no synthetic human approval, System Map source hop"

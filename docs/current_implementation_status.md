@@ -1,8 +1,8 @@
 # Sitolo — Current Implementation Status
 
 **Status:** Current implementation-state pointer
-**Date:** 2026-09-25
-**Main baseline:** `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`
+**Date:** 2026-09-26
+**Main baseline:** `623f7aed6105664d10d1a2802480fde8316ed5f8`
 
 ## Active product implementation
 
@@ -12,7 +12,7 @@ PR #49 is the active implementation PR for that work. It remains open and is not
 
 ## PR #52
 
-PR #52 (`feat/agentic-workflow`) is an **engineering workflow/documentation architecture change**.
+PR #52 (`feat/agentic-workflow`) was the initial **engineering workflow/documentation architecture change**; the current mainline ICM conformance pass is tracked separately.
 
 It adds and hardens the ICM filesystem workflow, context routing, System Map, documentation authority classification, reference integrity, and documentation remediation controls.
 

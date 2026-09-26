@@ -8,10 +8,7 @@ cd "$ROOT"
 fail=0
 current_tree="HEAD"
 
-process_files=()
-while IFS= read -r process; do
-  [[ "$process" == "map/processes/CONTEXT.md" ]] || process_files+=("$process")
-done < <(find map/processes -maxdepth 1 -type f -name '*.md' | sort)
+mapfile -t process_files < <(find map/processes -maxdepth 1 -type f -name '*.md' ! -name CONTEXT.md | sort)
 
 for process in "${process_files[@]}"; do
   get_field() {
@@ -26,53 +23,24 @@ for process in "${process_files[@]}"; do
   source="$(get_field source)"
   source_citation="$(get_field source_citation)"
 
-  [[ "$type" == "process" ]] || {
-    echo "SYSTEM MAP PROCESS VIOLATION: type is not process: $process" >&2
-    fail=1
-  }
-
-  case "$status" in
-    stub|verified|stale) ;;
-    *)
-      echo "SYSTEM MAP PROCESS VIOLATION: invalid status '$status': $process" >&2
-      fail=1
-      ;;
-  esac
-
-  case "$universe" in
-    live|leftover|ghost) ;;
-    *)
-      echo "SYSTEM MAP PROCESS VIOLATION: invalid universe '$universe': $process" >&2
-      fail=1
-      ;;
-  esac
-
-  [[ -n "$source_citation" ]] || {
-    echo "SYSTEM MAP PROCESS VIOLATION: missing source_citation: $process" >&2
-    fail=1
-  }
+  [[ "$type" == "process" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: type is not process: $process" >&2; fail=1; }
+  [[ "$status" == "verified" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: process cards must be verified: $process" >&2; fail=1; }
+  [[ "$universe" == "live" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: process cards must be live: $process" >&2; fail=1; }
+  [[ -n "$source" && -n "$source_citation" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: missing source/source_citation: $process" >&2; fail=1; }
 
   source_sha="$(printf '%s' "$source_revision" | sed -n 's/.*@\([0-9a-fA-F]\{40\}\)$/\1/p')"
-  if [[ -z "$source_sha" ]]; then
-    source_sha="$(printf '%s' "$source_revision" | grep -Eo '^[0-9a-fA-F]{40}$' || true)"
+  [[ -n "$source_sha" ]] || { echo "SYSTEM MAP PROCESS VIOLATION: source_revision must contain a concrete commit SHA: $process -> $source_revision" >&2; fail=1; }
+
+  if [[ -n "$source_sha" ]] && ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
+    git fetch --no-tags --depth=1 origin "$source_sha" >/dev/null 2>&1 || true
   fi
   if [[ -z "$source_sha" ]]; then
-    echo "SYSTEM MAP PROCESS VIOLATION: source_revision must contain a concrete commit SHA: $process -> $source_revision" >&2
+    echo "SYSTEM MAP PROCESS VIOLATION: source revision cannot be resolved: $process -> $source_revision" >&2
     fail=1
   elif ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
-    # PR jobs intentionally use shallow checkout. Fetch only the exact
-    # immutable revision named by the card instead of requiring full history.
-    git fetch --no-tags --depth=1 origin "$source_sha" >/dev/null 2>&1 || true
-    if ! git cat-file -e "$source_sha^{commit}" 2>/dev/null; then
-      echo "SYSTEM MAP PROCESS VIOLATION: source revision does not resolve after targeted fetch: $process -> $source_revision" >&2
-      fail=1
-    fi
-  fi
-
-  [[ -n "$source" ]] || {
-    echo "SYSTEM MAP PROCESS VIOLATION: missing source: $process" >&2
+    echo "SYSTEM MAP PROCESS VIOLATION: source revision cannot be resolved: $process -> $source_revision" >&2
     fail=1
-  }
+  fi
 
   IFS=';' read -r -a source_list <<< "$source"
   for source_path in "${source_list[@]}"; do
@@ -82,13 +50,11 @@ for process in "${process_files[@]}"; do
       fail=1
       continue
     }
-
     if [[ -n "$source_sha" ]] && git cat-file -e "$source_sha:$source_path" 2>/dev/null; then
       source_blob="$(git rev-parse "$source_sha:$source_path")"
       current_blob="$(git rev-parse "$current_tree:$source_path")"
-      if [[ "$status" != "stale" && "$source_blob" != "$current_blob" ]]; then
-        echo "SYSTEM MAP PROCESS VIOLATION: non-stale card points to an obsolete source revision: $process -> $source_path" >&2
-        echo "  card=$source_sha current=$current_blob" >&2
+      if [[ "$source_blob" != "$current_blob" ]]; then
+        echo "SYSTEM MAP PROCESS VIOLATION: verified process source differs from recorded revision: $process -> $source_path" >&2
         fail=1
       fi
     else
@@ -112,10 +78,10 @@ for process in "${process_files[@]}"; do
 
   while IFS= read -r step; do
     [[ -z "$step" ]] && continue
-    if ! printf '%s\n' "$step" | grep -Eq '\([^)]*(/|\.md|\.rs|\.toml|\.yml|\.yaml)[^)]*\)'; then
-      echo "SYSTEM MAP PROCESS VIOLATION: movement step lacks an inline source citation: $process -> $step" >&2
+    printf '%s\n' "$step" | grep -Eq '\([^)]*(/|\.md|\.rs|\.toml|\.yml|\.yaml)[^)]*\)' || {
+      echo "SYSTEM MAP PROCESS VIOLATION: movement step lacks inline source citation: $process -> $step" >&2
       fail=1
-    fi
+    }
   done < <(printf '%s\n' "$movement" | grep -E '^[[:space:]]*[0-9]+\. ' || true)
 
   for section in "## Consumes" "## Produces"; do
@@ -127,7 +93,7 @@ for process in "${process_files[@]}"; do
       continue
     }
     while IFS= read -r link; do
-      target="$(printf '%s' "$link" | sed -n 's|.*](\(\.\./objects/[^)]*\.md\))|\1|p')"
+      target="$(printf '%s' "$link" | sed 's|.*](\(\.\./objects/[^)]*\.md\))|\1|')"
       [[ -f "map/processes/$target" ]] || {
         echo "SYSTEM MAP PROCESS VIOLATION: broken object link: $process -> $target" >&2
         fail=1
@@ -135,71 +101,15 @@ for process in "${process_files[@]}"; do
     done <<< "$links"
   done
 
-  hits="$(sed -n '/^### Hits$/,/^### Does not hit$/p' "$process" | tail -n +2 | sed '/^### Does not hit$/d')"
-  misses="$(sed -n '/^### Does not hit$/,/^## Verification$/p' "$process" | tail -n +2 | sed '/^## Verification$/d')"
-  [[ -n "$(printf '%s' "$hits" | tr -d '[:space:]')" ]] || {
-    echo "SYSTEM MAP PROCESS VIOLATION: empty Hits: $process" >&2
+  if grep -Eq 'Ghost/unwired|universe: ghost|^status: stub$' "$process"; then
+    echo "SYSTEM MAP PROCESS VIOLATION: process shelf must contain executable movements only; remove target-state/ghost process language: $process" >&2
     fail=1
-  }
-  [[ -n "$(printf '%s' "$misses" | tr -d '[:space:]')" ]] || {
-    echo "SYSTEM MAP PROCESS VIOLATION: empty Does not hit: $process" >&2
-    fail=1
-  }
-
-  if [[ "$status" == "verified" ]]; then
-    [[ "$universe" == "live" ]] || {
-      echo "SYSTEM MAP PROCESS VIOLATION: verified process must be live: $process" >&2
-      fail=1
-    }
-    if grep -q 'Ghost/unwired' "$process"; then
-      echo "SYSTEM MAP PROCESS VIOLATION: verified process still claims ghost/unwired: $process" >&2
-      fail=1
-    fi
-  fi
-
-  if [[ "$universe" == "ghost" ]]; then
-    grep -q 'Ghost/unwired' "$process" || {
-      echo "SYSTEM MAP PROCESS VIOLATION: ghost process lacks explicit unwired evidence: $process" >&2
-      fail=1
-    }
   fi
 done
 
-# Explicit current-state negative evidence for the four process cards in PR #52.
-# These assertions intentionally fail when a process becomes materially wired,
-# forcing its card to be reclassified instead of silently leaving a stale stub.
-if [[ -f crates/sitolo-sync/src/lib.rs ]]; then
-  if grep -Eq '^[[:space:]]*(pub[[:space:]]+)?(fn|struct|enum|trait|impl|type|const|static)[[:space:]]' crates/sitolo-sync/src/lib.rs; then
-    echo "SYSTEM MAP PROCESS VIOLATION: offline-sync source is no longer contract-only; reclassify the process card." >&2
-    fail=1
-  fi
-fi
-
-if [[ -f apps/worker/src/main.rs && -f crates/sitolo-events/src/lib.rs ]]; then
-  grep -Fq 'fn main() {}' apps/worker/src/main.rs || {
-    echo "SYSTEM MAP PROCESS VIOLATION: outbox worker is no longer the expected empty scaffold; reclassify the process card." >&2
-    fail=1
-  }
-  if grep -Eq '^[[:space:]]*(pub[[:space:]]+)?(fn|struct|enum|trait|impl|type|const|static)[[:space:]]' crates/sitolo-events/src/lib.rs; then
-    echo "SYSTEM MAP PROCESS VIOLATION: events source now contains runtime definitions; reclassify the outbox process card." >&2
-    fail=1
-  fi
-fi
-
-if [[ -f apps/api/src/serve.rs ]]; then
-  grep -Fq 'TcpListener' apps/api/src/serve.rs || {
-    echo "SYSTEM MAP PROCESS VIOLATION: request-processing source no longer matches the direct-TCP implementation baseline; re-audit the card." >&2
-    fail=1
-  }
-  if grep -Eq 'extract_bearer\(|establish_context\(' apps/api/src; then
-    echo "SYSTEM MAP PROCESS VIOLATION: authenticated request processing is now wired into the API runtime; reclassify the process card." >&2
-    fail=1
-  fi
-fi
-
-if grep -Rqs 'Transaction<' apps/api/src 2>/dev/null || grep -Rqs 'sitolo-events' apps/api/src 2>/dev/null; then
-  echo "SYSTEM MAP PROCESS VIOLATION: API now contains transactional/event coupling that may materially wire transactional-mutation; re-audit the process card." >&2
-  fail=1
+if [[ "${#process_files[@]}" -eq 0 ]]; then
+  echo "System Map process verification FAILED: no executable process cards" >&2
+  exit 1
 fi
 
 if [[ "$fail" -ne 0 ]]; then
@@ -207,5 +117,4 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-echo "System Map process verification PASSED"
-echo "4 process cards remain explicitly stub/ghost with source-grounded unwired evidence"
+echo "System Map process verification PASSED: ${#process_files[@]} executable process cards are source-grounded and current"

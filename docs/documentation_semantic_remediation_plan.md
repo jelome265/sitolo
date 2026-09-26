@@ -2,7 +2,7 @@
 
 **Document status:** Current remediation plan
 **Audit date:** 2026-09-25
-**Repository baseline:** `feat/agentic-workflow` at the revision containing the ICM workflow and reference-path repairs
+**Repository baseline:** `main` at `623f7aed6105664d10d1a2802480fde8316ed5f8` for the 2026-09-26 conformance pass
 **Purpose:** inventory Markdown references, classify authority, reconcile documented intent with current implementation evidence, and repair stale documentation without creating competing sources of truth.
 
 ---
@@ -229,20 +229,20 @@ The current ICM implementation was compared with Jake Van Clief's current ICM an
 | Template instantiation | PASS | CI cold-walk instantiates all nine artifact templates in an isolated run. |
 | No competing instruction runtimes | PASS | Claude enters through CLAUDE.md; Codex enters through AGENTS.md; both route to the same workspace policy. |
 | Markdown reference integrity | PASS | CI inventories the repository corpus and currently reports zero unresolved, ambiguous, or escaping internal Markdown references. |
-| Cold walk | PASS | CI performs an isolated 9-stage filesystem walk with exact handoffs, artifact instantiation, synthetic gate metadata, and a System Map source hop. |
+| Cold walk | PASS mechanically | CI performs an isolated 9-stage filesystem walk with exact handoffs, artifact instantiation, and a System Map source hop. This does not prove fresh-agent semantic execution. |
 | Human-gated slice discipline | PARTIAL BY DESIGN | The automated cold walk proves the mechanics and state transitions. It cannot prove a real human reviewed each artifact; that remains a required human action during actual engineering runs. |
 | System Map object verification | PASS for verified cards | Verified cards carry current revision, source path, and source citation metadata. Stub/ghost cards remain unpromoted. |
-| System Map process verification | PASS for classification; not live execution | All four process cards now have structured schema, source evidence, Input → Movement → Output, consumes/produces links, Hits/Does not hit, and explicit ghost/unwired evidence. They remain stub + ghost because the complete runtime movements are not wired in the current product implementation. |
+| System Map process verification | PASS for executable-map conformance | The process shelf now contains only two source-grounded executable movements. Unwired target-state flows are kept in governing implementation/status documents rather than represented as process cards. |
 | Effects routing | PASS | `map/effects/CONTEXT.md` is a first-order change-impact catalog and does not become a second specification. |
 | Source authority discipline | PASS | Compatibility, historical, contract, evidence and navigation roles are explicitly separated. |
 
 ### Interpretation
 
-The ICM implementation is now structurally and mechanically verified against the current Jake architecture. The remaining non-green item is not a defect in the framework implementation: a real engineering run still requires an actual human to inspect/edit each stage handoff, and process cards must only become live/verified when the corresponding runtime movements actually execute.
+The ICM implementation is now structurally and mechanically verified against the current Jake architecture. The remaining acceptance work is a true cold-agent walk: a fresh agent must execute a meaningful bounded run using only the routed workspace. Process cards are restricted to current executable movements; target-state flows remain contracts until runtime evidence exists.
 
 The automated verification must therefore be read as:
 
-`framework mechanics proven` + `current System Map state honestly classified` + `human approval still required for real runs`.
+`framework mechanics proven` + `current System Map state honestly classified` + `cold-agent usability still requires a real run` + `human approval still required for consequential handoffs`.
 
 This is the maximum claim supported by repository evidence; the repository must not call the workflow human-approved merely because CI completed the cold walk.
 

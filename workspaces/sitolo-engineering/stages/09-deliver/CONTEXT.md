@@ -4,15 +4,17 @@ One job: prepare the verified change for review and controlled integration.
 
 ## Inputs
 
-| Source | File/Location | Section/Scope | Why |
+| Kind | Source | File/Location | Section/Scope | Why |
 |---|---|---|---|
-| Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Scope |
-| Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended result |
-| Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Change summary |
-| Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings status |
-| Verification | ../08-verify/output/[run-slug]-verification.md | Full file | Evidence |
-| Governance | ../../../../agent.md | Git and review rules | Delivery requirements |
-| Delivery guide | references/delivery.md | Full file | Handoff format |
+| Working | Run brief | ../01-select/output/[run-slug]-brief.md | Full file | Scope |
+| Working | Plan | ../04-plan/output/[run-slug]-plan.md | Full file | Intended result |
+| Working | Implementation | ../05-implement/output/[run-slug]-implementation.md | Full file | Change summary |
+| Working | Audit | ../06-audit/output/[run-slug]-audit.md | Full file | Findings status |
+| Working | Verification | ../08-verify/output/[run-slug]-verification.md | Full file | Evidence |
+| Reference | Governance | ../../shared/governance-context/CONTEXT.md | Git and review rules | Delivery requirements |
+| Reference | Delivery guide | references/delivery.md | Full file | Handoff format |
+
+**Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 
