@@ -14,9 +14,13 @@ Stable security Layer 3 context.
 
 | External standards | ../../../../docs/external_standards_verification_register.md | Full file when version/standard claims matter | Dated external authority |
 
-## Mandatory security engineering skill
+## Mandatory security engineering skills
 
-For security-relevant work, load and apply `../../skills/security-engineering/SKILL.md`. The skill is mandatory for defensive security implementation, vulnerability scanning, negative/security testing, remediation and security evidence. It does not replace the security-control register or higher-authority contracts.
+For security-relevant work, load and apply `../../skills/security-engineering/SKILL.md`. The defensive skill governs real security implementation, vulnerability scanning, negative/security testing, remediation and security evidence.
+
+When the work explicitly challenges, attempts to bypass, or validates resistance of an implemented security control, also load and apply `../../skills/offensive-security/SKILL.md`. The offensive skill governs authorized adversarial testing, scope gates, exploit evidence, regression enforcement, safe failure and defensive handoff.
+
+The offensive skill does not authorize production or third-party testing by itself and does not replace the security-control register or higher-authority contracts.
 
 ## Security applicability rule
 
