@@ -76,7 +76,12 @@ async fn development_boots_and_serves_bounded_probes() {
         .expect("ephemeral bind");
     let addr = listener.local_addr().expect("local addr");
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let serve = tokio::spawn(serve(\n        listener,\n        Arc::clone(dev.state()),\n        shutdown_rx,\n        HttpTransportConfig::from_config(dev.config()),\n    ));
+    let serve = tokio::spawn(serve(
+        listener,
+        Arc::clone(dev.state()),
+        shutdown_rx,
+        HttpTransportConfig::from_config(dev.config()),
+    ));
 
     let live = probe_once(addr, "/process/live").await;
     assert!(live.contains("200 OK"), "unexpected live response: {live}");
