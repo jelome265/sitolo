@@ -102,4 +102,6 @@ jobs:
         with:
           name: offensive-security-evidence
           if-no-files-found: error
-          path: offensive-security.log
+          path: |
+            offensive-security.log
+            target/offensive-security/run.json
