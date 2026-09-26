@@ -63,3 +63,43 @@ jobs:
         uses: github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938
       - name: Analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
+
+  offensive-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: sitolo_offensive
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Run authorized offensive security regression suite
+        env:
+          SITOLO_OFFENSIVE_ALLOWED: true
+          SITOLO_OFFENSIVE_ENV: disposable
+          ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_offensive
+          DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_offensive
+          RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_offensive
+        run: bash ./scripts/ci/run-offensive-security 2>&1 | tee offensive-security.log
+      - name: Publish offensive security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: offensive-security-evidence
+          if-no-files-found: error
+          path: offensive-security.log
