@@ -16,7 +16,7 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use sitolo_api::tenancy::{
-    BranchResponse, CreateBranchRequest, CreateOrganizationRequest, OrganizationResponse,
+    CreateBranchRequest, CreateOrganizationRequest,
     handle_activate_branch, handle_activate_organization, handle_begin_close_branch,
     handle_begin_close_organization, handle_close_branch, handle_close_organization,
     handle_create_branch, handle_provision_organization, handle_resume_branch,
@@ -265,6 +265,7 @@ async fn branch_action(
         Err(error) => format_error_response(&error),
     }
 }
+
 fn json_response<T: serde::Serialize>(status: StatusCode, value: T) -> Response {
     (status, Json(value)).into_response()
 }
@@ -292,6 +293,33 @@ fn format_error_response(err: &AppError) -> Response {
 
 /// Test-only compatibility adapter. It intentionally exercises the same
 /// production Axum router rather than maintaining a second request parser.
+/// Test-only adapter that intentionally omits Content-Length so the
+/// bounded body wrapper itself must surface an oversized request as 413.
+pub async fn dispatch_request_without_content_length(
+    method: &str,
+    path: &str,
+    body: &str,
+    state: &AppState,
+) -> (&'static str, String) {
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_owned()))
+        .expect("test request construction must succeed");
+
+    let response = router(Arc::new(state.clone()), 2 * 1024)
+        .oneshot(request)
+        .await
+        .expect("Axum router is infallible");
+    let status = response.status();
+    let body = to_bytes(response.into_body(), COMPAT_RESPONSE_BODY_MAX_BYTES)
+        .await
+        .expect("test response body must be bounded and readable");
+    let body = String::from_utf8_lossy(&body).into_owned();
+    (status_line(status), body)
+}
+
 pub async fn dispatch_request(
     method: &str,
     path: &str,
