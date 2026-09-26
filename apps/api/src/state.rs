@@ -12,6 +12,7 @@ use sitolo_observability::TelemetryBuffer;
 use sitolo_persistence::TenancyDatabase;
 
 /// Immutable shared application state.
+#[derive(Clone)]
 pub struct AppState {
     service_name: String,
     service_version: String,
