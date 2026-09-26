@@ -37,7 +37,7 @@ for path in   workspaces/sitolo-engineering/stages/01-select/CONTEXT.md   worksp
   grep -Fq '../../shared/security-context/CONTEXT.md' "$path" || {
     echo "SECURITY ICM VIOLATION: missing conditional security-context route: $path" >&2
     fail=1
-  done
+  }
 done
 
 grep -Fq '## Security applicability' workspaces/sitolo-engineering/_templates/run-brief.md || {
