@@ -92,6 +92,18 @@ Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical impleme
 | [`payment_integration_spec.md`](payment_integration_spec.md) | Payment-provider integration contract |
 | [`mra_eis_integration_spec.md`](mra_eis_integration_spec.md) | MRA EIS integration contract |
 
+## Organizational ICM workspaces
+
+The organizational workspace routing is defined by [`workspace_domain_architecture.md`](workspace_domain_architecture.md). The workspace tree is a work-domain router, not a duplicate product/domain model.
+
+| Workspace | Scope |
+|---|---|
+| [`../workspaces/sitolo-engineering/`](../workspaces/sitolo-engineering/) | Engineering implementation, audit and verification |
+| [`../workspaces/sitolo-product/`](../workspaces/sitolo-product/) | Product scope, actors, behavior and product requirements |
+| [`../workspaces/sitolo-commercial/`](../workspaces/sitolo-commercial/) | Strategy, validation, pricing, acquisition, monetization and commercial economics |
+| [`../workspaces/sitolo-customer-operations/`](../workspaces/sitolo-customer-operations/) | Onboarding, support, lifecycle and service operations |
+| [`../workspaces/sitolo-trust-compliance/`](../workspaces/sitolo-trust-compliance/) | Regulatory, privacy, risk, fraud and compliance routing |
+
 ## Commercial operating model
 
 The commercial corpus is physically grouped under [`commercial/`](commercial/). Grouping is navigation, not authority; the canonical source remains each document's declared role and the commercial governance contracts.
