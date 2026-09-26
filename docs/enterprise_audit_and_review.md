@@ -1,8 +1,8 @@
 # Sitolo Codebase Enterprise Audit & Architecture Review
 
 **Target system:** Sitolo — Business Operating System for African SMEs
-**Audit date:** 2026-09-25
-**Source baseline at this review:** `main` at `54bbb0d160684538d8d5467b8cd6b78c87be133d`
+**Audit date:** 2026-09-26
+**Source baseline at this review:** PR #68 feature branch; runtime transport source @ `c936e837a773755c8f1f11450e666c1edf93b037`
 **Documentation-remediation context:** `feat/agentic-workflow`
 **Status:** Current-state enterprise audit
 **Authority:** Current source tree plus the governing documentation hierarchy in `agent.md`
@@ -21,7 +21,7 @@ The remaining production gap is not the absence of an architectural model. It is
 
 The largest current blockers are:
 
-1. **The documented HTTP architecture and the implemented HTTP transport diverge.** Governing documents specify Rust + Axum + Tokio, while the current `apps/api` binary implements a direct TCP request loop and has no Axum dependency. This is an implementation decision gap, not a reason to rewrite the architecture document silently.
+1. **The HTTP architecture has been reconciled.** Governing documents specify Rust + Axum + Tokio; the current `apps/api` boundary uses Tokio for runtime/listener lifecycle, Hyper/Hyper-util for HTTP transport, and Axum/Tower for routing and request controls. The former hand-written HTTP parser has been removed.
 2. **General business-domain execution is incomplete.** The domain crate currently exposes tenancy; product catalogue, inventory, sales, payments, reconciliation and other core business engines remain contract/future work.
 3. **Phase 5 PostgreSQL schema/migration/RLS delivery is not the full current runtime business authority yet.** PostgreSQL connection/authority primitives exist, but the complete business schema and repository implementation remain phase-gated.
 4. **Authentication helpers exist but are not yet the complete production HTTP authentication boundary.**
@@ -105,7 +105,7 @@ At the same time:
 
 | Dimension | Current state | Evidence / implication |
 |---|---|---|
-| 1. Architecture & boundaries | **Strong foundation / gap at HTTP implementation** | Modular-monolith boundaries and dependency direction exist; documented Axum boundary is not what the current API binary implements. |
+| 1. Architecture & boundaries | **Strong foundation / transport reconciled** | Modular-monolith boundaries and dependency direction exist; the HTTP boundary now follows Tokio → Hyper/Hyper-util → Axum/Tower with explicit transport/resource controls. |
 | 2. Application architecture | **Partial** | Application services now orchestrate tenancy/IAM, but the complete command/query/business engine chain is unfinished. |
 | 3. API design & trust boundaries | **Partial** | Bounded DTOs, validation and tenancy handlers exist. General business API surface is not implemented, and production auth wiring is incomplete. |
 | 4. Authentication & authorization | **Partial foundation** | Authentication/security primitives and role/scope models exist. General policy enforcement and complete HTTP integration are still phase-gated. |
