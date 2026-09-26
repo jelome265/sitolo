@@ -1,23 +1,25 @@
 # Sitolo - ICM Root Router
 
-Sitolo uses a filesystem-routed Interpretable Context Methodology workspace for repeatable engineering work.
+Sitolo uses filesystem-routed ICM workspaces. The root router selects the organizational domain first, then the domain workspace selects the task context.
 
 ## Routing
 
 | Task | Go To | Description |
 |---|---|---|
-| Engineering change | workspaces/sitolo-engineering/CLAUDE.md | Routes to the engineering pipeline |
-| Pipeline status | workspaces/sitolo-engineering/CONTEXT.md | Shows stage state |
+| Any organizational work | workspaces/CLAUDE.md | Select the smallest bounded work domain |
+| Engineering change | workspaces/sitolo-engineering/CLAUDE.md | Build, audit and verify the system |
+| Product decision | workspaces/sitolo-product/CLAUDE.md | Product scope, behavior, actors and requirements |
+| Commercial decision | workspaces/sitolo-commercial/CLAUDE.md | Strategy, validation, pricing, acquisition and monetization |
+| Customer operations | workspaces/sitolo-customer-operations/CLAUDE.md | Onboarding, support, lifecycle and service operations |
+| Trust/compliance | workspaces/sitolo-trust-compliance/CLAUDE.md | Regulatory, privacy, risk, fraud and controls |
 | Repository change impact | map/CLAUDE.md | Routes to the ICM System Map of the codebase |
-| Architecture or corpus question | docs/README.md | Routes to authoritative project knowledge |
+| Canonical project knowledge | docs/README.md | Routes to authoritative project knowledge |
 | Workflow integrity | scripts/ci/check-icm-workspace | Mechanical workspace validation |
 
 ## Loading
 
-The root router only chooses a workspace or map. It must not contain stage procedures or duplicate project policy.
-
-When entering the engineering workspace, read its CLAUDE.md, then CONTEXT.md, then the selected stage contract.
+Read this file, then workspaces/CLAUDE.md, then the selected workspace CLAUDE.md and CONTEXT.md. Do not load sibling workspaces unless explicitly routed.
 
 ## Authority
 
-agent.md is the detailed engineering governance contract. docs/README.md is the project documentation map. Workspaces provide workflow routing only.
+agent.md remains the detailed engineering governance contract. docs/README.md and the named canonical documents remain authoritative for project knowledge. Workspace files are routing/control surfaces, not competing sources of truth.
