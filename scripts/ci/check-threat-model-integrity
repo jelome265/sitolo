@@ -17,7 +17,7 @@ for marker in \
   "# 17. Threat → Security-Control Traceability" \
   "## 18.7 Agentic/ICM security suite" \
   "## 14.13 Agentic instruction integrity invariant" \
-  "**Normative HTTP backend:** Rust / Axum / Tokio / SQLx" \
+  "**Normative HTTP backend:** Rust / Axum / Hyper/Hyper-util / Tokio / SQLx" \
   "OWASP AI Agent Security Cheat Sheet" \
   "Axum 0.8.9"; do
   grep -Fq "$marker" docs/threat_model.md || { echo "missing threat-model marker: $marker" >&2; exit 1; }
