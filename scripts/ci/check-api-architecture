@@ -13,12 +13,15 @@ grep -Fq 'pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> 
 grep -Fq 'Builder::new(TokioExecutor::new())' apps/api/src/serve.rs || fail=1
 grep -Fq 'TowerToHyperService::new(service)' apps/api/src/serve.rs || fail=1
 grep -Fq 'hyper-util.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'socket2.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'socket2 = { version = "0.6.5"' Cargo.toml || fail=1
 grep -Fq 'TowerToHyperService::new(service)' apps/api/src/serve.rs || fail=1
 grep -Fq 'Router::new()' apps/api/src/serve.rs || fail=1
 grep -Fq 'RequestBodyLimitLayer' apps/api/src/serve.rs || fail=1
 grep -Fq 'GlobalConcurrencyLimitLayer' apps/api/src/serve.rs || fail=1
 grep -Fq 'Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS)' apps/api/src/serve.rs || fail=1
 grep -Fq 'try_acquire_owned()' apps/api/src/serve.rs || fail=1
+grep -Fq 'SockRef::from(stream).set_tcp_keepalive' apps/api/src/serve.rs || fail=1
 grep -Fq 'TimeoutLayer' apps/api/src/serve.rs || fail=1
 for bad in TcpStream AsyncReadExt AsyncWriteExt split_whitespace 'HTTP/1.1' 'stream.read('; do
   if grep -Fq "$bad" apps/api/src/serve.rs; then fail=1; fi
