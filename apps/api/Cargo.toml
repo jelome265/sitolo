@@ -18,6 +18,8 @@ name = "sitolo_api_bin"
 path = "src/lib.rs"
 
 [dependencies]
+axum.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sitolo-api = { path = "../../crates/sitolo-api" }
 sitolo-application = { path = "../../crates/sitolo-application" }
@@ -26,6 +28,8 @@ sitolo-observability.workspace = true
 sitolo-persistence = { path = "../../crates/sitolo-persistence" }
 sitolo-security.workspace = true
 thiserror.workspace = true
+tower.workspace = true
+tower-http.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
