@@ -474,3 +474,188 @@ next-phase dependency
 ```
 
 **End of Phase 12 contract.**
+
+# 12. Command Envelope Contract
+
+The canonical synchronization envelope must carry enough information to establish identity and replay semantics without embedding authority claims:
+
+```text
+command_id
+command_type
+schema_version
+device_id
+session/security-version context where defined
+tenant/org/branch scope identifiers
+created_at
+sequence/ordering metadata where defined
+payload
+integrity/authentication evidence where required
+```
+
+The server must derive authoritative tenant, membership, permission and resource state from trusted context.
+
+# 13. Conflict Decision Table
+
+| Conflict class | Default behavior | Authority |
+|---|---|---|
+| commutative | accept once per command ID | server |
+| mergeable | deterministic merge under domain rule | server/domain |
+| reject-and-refresh | reject and return current state/version | server |
+| approval-required | queue for explicit approval | policy |
+| server-authoritative | discard conflicting client mutation | server |
+
+Money, inventory, authorization and approvals must never fall through to generic last-write-wins.
+
+# 14. Batch Processing Contract
+
+Every batch has bounded:
+
+```text
+maximum commands
+maximum encoded bytes
+maximum execution time
+maximum database work
+maximum retry attempts
+```
+
+Batch failure semantics must distinguish:
+
+```whole-batch rejected
+partial acceptance
+per-command conflict
+per-command duplicate
+transient server failure
+schema incompatibility
+```
+
+The acknowledgement model must allow the client to know which commands were accepted and which require action.
+
+# 15. Checkpoint Safety
+
+Checkpoint movement is a monotonic protocol:
+
+```text
+client proposes checkpoint C
+        ↓
+server durably proves acceptance through C
+        ↓
+server returns acknowledgement
+        ↓
+client persists C
+```
+
+The client must never advance a checkpoint solely because upload HTTP completed. If response state is lost, the client retries from the previous durable checkpoint and relies on server idempotency.
+
+# 16. Device Revocation Propagation
+
+Device revocation must invalidate all authority that depends on the device:
+
+```text
+device state
+→ session/capability validity
+→ pending command acceptance
+→ queued sync work
+→ future uploads
+```
+
+The server must evaluate revocation against current trusted state during ingestion. A command created before revocation is not automatically entitled to execute after revocation.
+
+# 17. Protocol-Version Migration
+
+Protocol evolution is a security and correctness boundary.
+
+Required sequence:
+
+```text
+publish compatible reader
+→ accept old/new versions during window
+→ migrate clients
+→ observe
+→ tighten accepted versions
+→ retire old version
+```
+
+A new schema version cannot silently redefine an old command's meaning.
+
+# 18. Local-Data Security
+
+Mobile and desktop local storage is a continuity boundary, not a server authority.
+
+Protect:
+
+```text
+session material
+device credentials
+command integrity evidence
+customer-sensitive local state
+payment-related references
+tax credentials
+```
+
+Store only what is necessary. Local database backups and diagnostic exports must follow the same data-classification rules.
+
+# 19. Synchronization Pressure Model
+
+Measure:
+
+```text
+commands/device
+commands/second
+batch bytes
+queue age
+conflict rate
+checkpoint lag
+retry amplification
+database work/command
+```
+
+Define thresholds before load testing. A client must receive an explicit backpressure state rather than indefinitely accumulating an unbounded command queue.
+
+# 20. Deep Failure Catalogue
+
+- process death during local commit;
+- process death after upload before acknowledgement;
+- acknowledgement loss;
+- server crash during command transaction;
+- command duplicated across processes;
+- same command uploaded from another device;
+- revoked device with queued commands;
+- schema version unsupported;
+- partial batch acceptance;
+- checkpoint persisted before acknowledgement;
+- local database corruption;
+- clock skew;
+- stale snapshot used to construct a financially invalid command.
+
+# 21. Evidence Ledger
+
+For every synchronization property record:
+
+```text
+protocol requirement
+fixture
+device/client build
+server revision
+database version
+fault injection
+expected disposition
+observed disposition
+artifact
+reviewer
+```
+
+# 22. No-Go Conditions
+
+Stop implementation if:
+
+- command identity cannot survive process death;
+- checkpoint advancement is not tied to durable server acceptance;
+- revoked devices can continue authoritative ingestion;
+- financial conflicts rely on last-write-wins;
+- partial acceptance cannot be represented;
+- resource bounds are absent;
+- schema incompatibility can be silently accepted.
+
+# 23. Downstream Handoff
+
+Phase 12 exports synchronization evidence and accepted-command semantics to later product phases but does not create new business authority. Phase 20 consumes its replay/recovery evidence for certification.
