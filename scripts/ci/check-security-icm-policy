@@ -15,6 +15,8 @@ required=(
   workspaces/sitolo-engineering/stages/01-select/CONTEXT.md
   workspaces/sitolo-engineering/stages/01-select/references/request-brief.md
   workspaces/sitolo-engineering/_templates/run-brief.md
+  workspaces/sitolo-engineering/_templates/implementation-plan.md
+  workspaces/sitolo-engineering/stages/04-plan/references/plan-contract.md
   workspaces/sitolo-engineering/_templates/implementation-report.md
   workspaces/sitolo-engineering/_templates/audit-report.md
   workspaces/sitolo-engineering/_templates/verification-report.md
@@ -44,6 +46,18 @@ grep -Fq '## Security applicability' workspaces/sitolo-engineering/_templates/ru
 }
 grep -Fq 'security_relevant: yes|no' workspaces/sitolo-engineering/_templates/run-brief.md || {
   echo "SECURITY ICM VIOLATION: run-brief template lacks security applicability field" >&2
+  fail=1
+}
+grep -Fq '## Security controls' workspaces/sitolo-engineering/_templates/implementation-plan.md || {
+  echo "SECURITY ICM VIOLATION: implementation plan lacks security control matrix" >&2
+  fail=1
+}
+grep -Fq 'Control ID | Threat/requirement' workspaces/sitolo-engineering/_templates/implementation-plan.md || {
+  echo "SECURITY ICM VIOLATION: implementation plan security matrix lacks control columns" >&2
+  fail=1
+}
+grep -Fq 'security control ID' workspaces/sitolo-engineering/stages/04-plan/references/plan-contract.md || {
+  echo "SECURITY ICM VIOLATION: plan contract lacks control-ID traceability requirement" >&2
   fail=1
 }
 grep -Fq '## Security impact' workspaces/sitolo-engineering/_templates/implementation-report.md || {
