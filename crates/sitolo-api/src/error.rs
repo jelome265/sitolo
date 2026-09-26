@@ -147,10 +147,14 @@ impl ProblemDetails {
         }
     }
     pub fn json(&self) -> String {
-        format!(
-            "{{\\\"type\\\":\\\"{}\\\",\\\"title\\\":\\\"{}\\\",\\\"status\\\":{},\\\"code\\\":\\\"{}\\\",\\\"request_id\\\":\\\"{}\\\"}}",
-            self.problem_type, self.title, self.status, self.code, self.request_id
-        )
+        serde_json::json!({
+            "type": self.problem_type,
+            "title": self.title,
+            "status": self.status,
+            "code": self.code,
+            "request_id": self.request_id,
+        })
+        .to_string()
     }
 }
 #[cfg(test)]
