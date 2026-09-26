@@ -42,7 +42,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
 tower = { version = "0.5.3", default-features = false, features = ["limit", "util"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }
-hyper-util = { version = "0.1.21", default-features = false, features = ["server-auto", "tokio"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["server-auto", "service", "tokio"] }
 uuid = { version = "1", default-features = false, features = ["v4"] }
 sitolo-security = { path = "crates/sitolo-security" }
 sitolo-auth = { path = "crates/sitolo-auth" }
