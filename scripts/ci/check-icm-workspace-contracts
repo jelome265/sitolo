@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# This validator is independently executable. Do not depend on variables owned by
+# another ICM script; the contract checker must remain a standalone proof surface.
+WORKSPACE="workspaces/sitolo-engineering"
+STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
+
 fail=0
 registered=()
 executable=0
@@ -30,6 +35,32 @@ if ! section_has_content workspaces/CLAUDE.md "## Selection rule"; then
   echo "VIOLATION: organizational router lacks deterministic selection rule" >&2
   fail=1
 fi
+
+# Agent-specific bootstrap adapters must remain thin and must route into the same
+# canonical ICM rather than becoming parallel workflow authorities.
+for adapter in GEMINI.md QWEN.md; do
+  if [[ ! -f "$adapter" ]]; then
+    echo "VIOLATION: missing agent bootstrap adapter: $adapter" >&2
+    fail=1
+    continue
+  fi
+  if (( $(wc -l < "$adapter") > 80 )); then
+    echo "VIOLATION: agent bootstrap adapter exceeds 80 lines: $adapter" >&2
+    fail=1
+  fi
+  grep -Fq 'Read the root `CLAUDE.md` first.' "$adapter" || {
+    echo "VIOLATION: adapter does not route through root CLAUDE.md: $adapter" >&2
+    fail=1
+  }
+  grep -Fq 'workspaces/CLAUDE.md' "$adapter" || {
+    echo "VIOLATION: adapter does not route through organizational workspace router: $adapter" >&2
+    fail=1
+  }
+  grep -Fq 'canonical routing wins' "$adapter" || {
+    echo "VIOLATION: adapter lacks canonical-authority fallback: $adapter" >&2
+    fail=1
+  }
+done
 
 while IFS='|' read -r id workspace mode evidence status; do
   id="$(trim "$id")"
