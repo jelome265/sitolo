@@ -131,19 +131,21 @@ At the same time:
 
 ## 4.1 Axum/Hyper/Tokio transport reconciliation
 
-The governing architecture is Rust + Axum + Hyper/Hyper-util + Tokio, and the transport implementation now follows that boundary:
+The governing architecture is Rust + Axum + Hyper/Hyper-util + Tokio, and the transport implementation follows that boundary:
 
 - `apps/api/src/main.rs` owns the Tokio runtime and `tokio::net::TcpListener` lifecycle;
 - `apps/api/src/serve.rs` owns the Axum `Router` and request extraction;
 - Hyper-util owns HTTP/1/HTTP/2 connection serving and protocol-level transport configuration;
-- Tokio socket keepalive is configured from validated process configuration;
-- Tower/Tower-HTTP enforce bounded request bodies, body-idle timeout, request timeout, and a globally shared request-concurrency limit;
-- the previous hand-written HTTP parser has been removed;
+- `TowerToHyperService` explicitly adapts Axum/Tower's service trait to Hyper's service trait;
+- validated request-body, header-read and keepalive settings are applied at the transport boundary;
+- a Tokio semaphore separately caps accepted connection tasks at `MAX_IN_FLIGHT_CONNECTIONS`;
+- `GlobalConcurrencyLimitLayer` separately caps in-flight application requests across cloned router services;
+- the previous hand-written `TcpStream` HTTP parser has been removed;
 - tenancy integration tests exercise the production Axum router through an in-process adapter.
 
-Audit result:
+Audit disposition:
 
-> **Axum/Tokio architecture reconciled; transport-level configuration is now connected to validated configuration instead of being declared but ignored.**
+> **Transport architecture reconciled. The remaining important distinction is that TCP connection capacity and application-request capacity are separate controls and are now bounded independently.**
 
 ## 4.2 Tenancy and authorization are no longer empty
 
