@@ -349,7 +349,7 @@ pub async fn dispatch_request(
         .method(method)
         .uri(path)
         .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CONTENT_LENGTH, body.as_bytes().len().to_string())
+        .header(header::CONTENT_LENGTH, body.len().to_string())
         .body(Body::from(body.to_owned()))
         .expect("test request construction must succeed");
 
