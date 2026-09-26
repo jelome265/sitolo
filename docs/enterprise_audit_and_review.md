@@ -2,7 +2,7 @@
 
 **Target system:** Sitolo — Business Operating System for African SMEs
 **Audit date:** 2026-09-26
-**Source baseline at this review:** PR #68 feature branch; runtime transport source @ `73f6686c5afdb08ef43fc7a01c7c41a7394652ab`
+**Source baseline at this review:** PR #68 feature branch; runtime transport source @ `b2491549ebe3b72e3c4e62c44788f638f51f60f9`
 **Documentation-remediation context:** `feat/agentic-workflow`
 **Status:** Current-state enterprise audit
 **Authority:** Current source tree plus the governing documentation hierarchy in `agent.md`
