@@ -2,7 +2,7 @@
 
 **Target system:** Sitolo — Business Operating System for African SMEs
 **Audit date:** 2026-09-25
-**Source baseline:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`
+**Source baseline at this review:** `main` at `54bbb0d160684538d8d5467b8cd6b78c87be133d`
 **Documentation-remediation context:** `feat/agentic-workflow`
 **Status:** Current-state enterprise audit
 **Authority:** Current source tree plus the governing documentation hierarchy in `agent.md`
@@ -129,31 +129,19 @@ At the same time:
 
 # 4. Critical Documentation/Implementation Divergences
 
-## 4.1 Axum is documented but not implemented in the current API binary
+## 4.1 Axum/Tokio transport reconciliation
 
-The architecture, API contract, implementation plan and multiple phase/security documents specify Rust + Axum + Tokio.
+The governing architecture specifies Rust + Axum + Tokio, and the implementation now follows that boundary:
 
-The current `apps/api/Cargo.toml` does not depend on Axum. The current `apps/api/src/serve.rs` directly accepts TCP connections and parses HTTP-like requests itself.
+- `apps/api/src/main.rs` owns the Tokio runtime and `tokio::net::TcpListener` lifecycle;
+- `apps/api/src/serve.rs` owns the Axum `Router`, route definitions, request extraction, and `axum::serve(...)`;
+- Tower/Tower-HTTP enforce bounded request bodies, body-idle timeout, request timeout, and concurrency limits;
+- the previous hand-written `TcpStream` HTTP parser has been removed;
+- existing tenancy integration tests exercise the production Axum router through a test-only adapter rather than a second HTTP parser.
 
 Disposition:
 
-> **Implementation gap. Do not downgrade the contract merely to match an intermediate implementation.**
-
-The resolution must be an explicit engineering decision:
-
-```text
-Current custom transport
-        ↓
-decide whether transitional or intentional
-        ↓
-ADR / implementation
-        ↓
-contract and source converge
-```
-
-This is a P0 architectural reconciliation item.
-
----
+> **Reconciled in implementation on PR #68; final closure requires the standard Rust, integration, security, API-architecture, and threat-model integrity gates to pass on the resulting head.**
 
 ## 4.2 Tenancy and authorization are no longer empty
 
