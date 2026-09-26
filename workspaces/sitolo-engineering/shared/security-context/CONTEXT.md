@@ -14,6 +14,10 @@ Stable security Layer 3 context.
 
 | External standards | ../../../../docs/external_standards_verification_register.md | Full file when version/standard claims matter | Dated external authority |
 
+## Mandatory security engineering skill
+
+For security-relevant work, load and apply `../../skills/security-engineering/SKILL.md`. The skill is mandatory for defensive security implementation, vulnerability scanning, negative/security testing, remediation and security evidence. It does not replace the security-control register or higher-authority contracts.
+
 ## Security applicability rule
 
 When Stage 01 marks `security_relevant: yes`, the selected control IDs are carried through Plan, Implement, Audit and Verify. The security path is mandatory for applicable changes, while unrelated runs must not load the entire security corpus.
