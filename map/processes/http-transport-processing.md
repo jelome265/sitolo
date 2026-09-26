@@ -2,25 +2,25 @@
 type: process
 status: verified
 universe: live
-source_revision: main@623f7aed6105664d10d1a2802480fde8316ed5f8
+source_revision: branch@58de49757bffe99af69cd79968390df6b7654577
 source: apps/api/src/serve.rs
-source_citation: apps/api/src/serve.rs:24-84
+source_citation: apps/api/src/serve.rs:45-115
 ---
 
 # HTTP Transport Processing
 
 ## Input
 
-Accepted TCP connection and bounded application state.
+Tokio runtime listener and bounded application state enter the Axum router boundary.
 
 ## Movement
 
-1. Accept connections under the configured in-flight semaphore. (apps/api/src/serve.rs:28-45)
-2. Read request bytes under a five-second timeout into a 32 KiB bounded buffer. (apps/api/src/serve.rs:52-63)
-3. Separate headers/body and parse the first request line into method and path. (apps/api/src/serve.rs:64-82)
-4. Dispatch the parsed request to the current transport handler and build the JSON response. (apps/api/src/serve.rs:83-91)
-5. Write the bounded HTTP response and close the connection. (apps/api/src/serve.rs:92-98)
-
+1. Bind the asynchronous `tokio::net::TcpListener` in the API process. (apps/api/src/main.rs:24-40)
+2. Build the production `axum::Router` with explicit health and tenancy routes. (apps/api/src/serve.rs:45-60)
+3. Enforce request-body, body-idle, request-duration, and in-flight concurrency limits through Tower/Tower-HTTP layers. (apps/api/src/serve.rs:61-76)
+4. Extract paths and JSON bodies with Axum and dispatch typed commands to the tenancy application handlers. (apps/api/src/serve.rs:118-225)
+5. Run the Axum server on the Tokio listener and perform bounded graceful shutdown. (apps/api/src/serve.rs:78-99)
+6. Exercise the same production router in integration tests through an in-process Axum request, not a parallel transport parser. (apps/api/src/serve.rs:264-309)
 ## Output
 
 HTTP response bytes at the API transport boundary.
