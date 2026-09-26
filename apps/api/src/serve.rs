@@ -26,6 +26,7 @@ use sitolo_api::{AppError, ProblemDetails};
 use sitolo_observability::RequestId;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
+use hyper_util::service::TowerToHyperService;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
@@ -147,7 +148,7 @@ pub async fn serve(
                         .keep_alive_timeout(transport.keepalive_timeout);
 
                     if let Err(error) = builder
-                        .serve_connection(TokioIo::new(stream), service)
+                        .serve_connection(TokioIo::new(stream), TowerToHyperService::new(service))
                         .await
                     {
                         tracing::debug!(%error, ?peer, "HTTP connection closed with error");
@@ -337,7 +338,7 @@ pub async fn dispatch_request(
         .body(Body::from(body.to_owned()))
         .expect("test request construction must succeed");
 
-    let response = router(Arc::new(state.clone()))
+    let response = router(Arc::new(state.clone()), 32 * 1024)
         .oneshot(request)
         .await
         .expect("Axum router is infallible");
