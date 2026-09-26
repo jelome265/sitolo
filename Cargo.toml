@@ -43,6 +43,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 tower = { version = "0.5.3", default-features = false, features = ["limit", "util"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["server-auto", "service", "tokio"] }
+socket2 = { version = "0.6.5", default-features = false }
 uuid = { version = "1", default-features = false, features = ["v4"] }
 sitolo-security = { path = "crates/sitolo-security" }
 sitolo-auth = { path = "crates/sitolo-auth" }
