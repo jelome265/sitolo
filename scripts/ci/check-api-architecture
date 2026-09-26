@@ -13,6 +13,7 @@ grep -Fq 'pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> 
 grep -Fq 'Builder::new(TokioExecutor::new())' apps/api/src/serve.rs || fail=1
 grep -Fq 'serve_connection(TokioIo::new(stream), service)' apps/api/src/serve.rs || fail=1
 grep -Fq 'hyper-util.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'TowerToHyperService::new(service)' apps/api/src/serve.rs || fail=1
 grep -Fq 'Router::new()' apps/api/src/serve.rs || fail=1
 grep -Fq 'RequestBodyLimitLayer' apps/api/src/serve.rs || fail=1
 grep -Fq 'GlobalConcurrencyLimitLayer' apps/api/src/serve.rs || fail=1
