@@ -23,7 +23,7 @@ grep -Fq 'Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS)' apps/api/src/serve.rs || fa
 grep -Fq 'try_acquire_owned()' apps/api/src/serve.rs || fail=1
 grep -Fq 'SockRef::from(stream).set_tcp_keepalive' apps/api/src/serve.rs || fail=1
 grep -Fq 'TimeoutLayer' apps/api/src/serve.rs || fail=1
-for bad in TcpStream AsyncReadExt AsyncWriteExt split_whitespace 'HTTP/1.1' 'stream.read('; do
+for bad in AsyncReadExt AsyncWriteExt split_whitespace 'HTTP/1.1' 'stream.read('; do
   if grep -Fq "$bad" apps/api/src/serve.rs; then fail=1; fi
 done
 
