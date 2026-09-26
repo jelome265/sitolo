@@ -15,7 +15,7 @@ One job: establish whether current external evidence is required and, when requi
 
 ## Process
 
-1. Read the run brief security applicability. If `security_relevant: yes`, load `shared/security-context/CONTEXT.md` and the applicable control IDs.
+1. Read the run brief security applicability. If `security_relevant: yes`, load `../../shared/security-context/CONTEXT.md` and the applicable control IDs.
 2. State the exact claim or decision that may require external evidence.
 3. Decide whether repository evidence is sufficient.
 4. If external evidence is required, search authoritative current sources for the relevant jurisdiction, provider, standard, version, or date.
