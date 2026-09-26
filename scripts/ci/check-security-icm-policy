@@ -93,6 +93,29 @@ for workflow_requirement in   "offensive-regression:"   "SITOLO_OFFENSIVE_ALLOWE
   }
 done
 
+# Threat model and current-architecture integrity gates.
+for gate in   "docs/threat_model.md"   "docs/threat_model.integrity.json"   "scripts/ci/check-api-architecture"   "scripts/ci/check-threat-model-integrity"; do
+  [[ -f "$gate" ]] || {
+    echo "SECURITY ICM VIOLATION: missing threat/architecture gate: $gate" >&2
+    fail=1
+  }
+done
+
+grep -Fq "T-023 Repository/Context Poisoning" docs/threat_model.md || { echo "SECURITY ICM VIOLATION: agentic threat coverage missing" >&2; fail=1; }
+grep -Fq "# 17. Threat → Security-Control Traceability" docs/threat_model.md || { echo "SECURITY ICM VIOLATION: threat-to-control traceability missing" >&2; fail=1; }
+grep -Fq "## 18.7 Agentic/ICM security suite" docs/threat_model.md || { echo "SECURITY ICM VIOLATION: agentic security test suite missing" >&2; fail=1; }
+grep -Fq "## 8.1 Current-state synchronization rule" docs/threat_model.md || { echo "SECURITY ICM VIOLATION: current-state synchronization missing" >&2; fail=1; }
+bash scripts/ci/check-api-architecture || fail=1
+bash scripts/ci/check-threat-model-integrity || fail=1
+
+for n in $(seq 1 30); do
+  id=$(printf "T-%03d" "$n")
+  grep -Eq "| $id |.*SC-" docs/threat_model.md || {
+    echo "SECURITY ICM VIOLATION: threat $id has no explicit SC-ID mapping" >&2
+    fail=1
+  }
+done
+
 for id in SC-001 SC-002 SC-003 SC-004 SC-005 SC-006 SC-007 SC-008 SC-009 SC-010 SC-011 SC-012; do
   grep -Fq "| $id |" docs/security_control_register.md || {
     echo "SECURITY ICM VIOLATION: security control missing: $id" >&2
