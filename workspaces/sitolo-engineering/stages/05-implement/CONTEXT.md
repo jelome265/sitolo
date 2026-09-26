@@ -5,7 +5,7 @@ One job: implement the approved plan without broadening scope.
 ## Inputs
 
 | Kind | Source | File/Location | Section/Scope | Why |
-|---|---|---|---|
+|---|---|---|---|---|
 | Working | Implementation plan | ../04-plan/output/[run-slug]-plan.md | Full file | Exact change contract |
 | Working | Investigation | ../03-investigate/output/[run-slug]-investigation.md | Full file | Existing-state constraints |
 | Reference | Governance | ../../shared/governance-context/CONTEXT.md | Relevant sections | Engineering rules |
@@ -26,6 +26,7 @@ One job: implement the approved plan without broadening scope.
 6. Run targeted checks for the changed surface.
 7. Audit the diff against the plan, ownership, and security/integrity controls, including each selected security control ID.
 8. Write an implementation report to output/.
+9. Route every implementation-changing run to Stage 06 Audit next. A green targeted check or CI result never waives the semantic audit; CI is evidence, not a substitute for independent audit.
 
 ## Human Check
 
