@@ -24,25 +24,47 @@ use sitolo_api::tenancy::{
 };
 use sitolo_api::{AppError, ProblemDetails};
 use sitolo_observability::RequestId;
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::server::conn::auto::Builder;
 use tokio::sync::oneshot;
+use tokio::task::JoinSet;
+use tower::ServiceBuilder;
 use tower::ServiceExt;
-use tower::limit::ConcurrencyLimitLayer;
+use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 
-use crate::shutdown::{MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
+use crate::shutdown::{MAX_IN_FLIGHT_REQUESTS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
+use sitolo_config::AppConfig;
 use crate::state::AppState;
 
-const REQUEST_TIMEOUT_SECS: u64 = 30;
 const REQUEST_BODY_IDLE_TIMEOUT_SECS: u64 = 5;
 const COMPAT_RESPONSE_BODY_MAX_BYTES: usize = 64 * 1024;
+
+/// Validated transport controls projected from the process configuration.
+#[derive(Debug, Clone, Copy)]
+pub struct HttpTransportConfig {
+    pub max_request_body_bytes: usize,
+    pub request_header_timeout: Duration,
+    pub keepalive_timeout: Duration,
+}
+
+impl HttpTransportConfig {
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            max_request_body_bytes: config.max_request_body_bytes as usize,
+            request_header_timeout: Duration::from_millis(config.request_header_timeout_ms),
+            keepalive_timeout: Duration::from_millis(config.keepalive_timeout_ms),
+        }
+    }
+}
 
 /// Builds the production HTTP application.
 ///
 /// Every request enters through this Axum router. Body size, body-idle,
 /// request wall-clock, and concurrency controls are enforced by Tower/Axum
 /// middleware before application handlers run.
-pub fn router(state: Arc<AppState>) -> Router {
+pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router {
     Router::new()
         .route("/process/live", get(live))
         .route("/process/ready", get(ready))
@@ -59,17 +81,22 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/organizations/{organization_id}/branches/{branch_id}/{action}",
             post(branch_action),
         )
-        .layer(RequestBodyLimitLayer::new(
-            sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES,
-        ))
-        .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
-            REQUEST_BODY_IDLE_TIMEOUT_SECS,
-        )))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(REQUEST_TIMEOUT_SECS),
-        ))
-        .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT_CONNECTIONS))
+        .layer(
+            ServiceBuilder::new()
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    Duration::from_millis(30_000),
+                ))
+                .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
+                    REQUEST_BODY_IDLE_TIMEOUT_SECS,
+                )))
+                .layer(RequestBodyLimitLayer::new(
+                    max_request_body_bytes.min(
+                        sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES,
+                    ),
+                ))
+                .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
+        )
         .with_state(state)
 }
 
@@ -78,14 +105,65 @@ pub fn router(state: Arc<AppState>) -> Router {
 pub async fn serve(
     listener: tokio::net::TcpListener,
     state: Arc<AppState>,
-    shutdown: oneshot::Receiver<()>,
+    mut shutdown: oneshot::Receiver<()>,
+    transport: HttpTransportConfig,
 ) -> Vec<Subsystem> {
-    let app = router(state);
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-        let _ = shutdown.await;
-    });
+    let app = router(Arc::clone(&state), transport.max_request_body_bytes);
+    let mut connections = JoinSet::new();
 
-    let _ = tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), server).await;
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            accept = listener.accept() => {
+                let (stream, peer) = match accept {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::error!(%error, "failed to accept TCP connection");
+                        continue;
+                    }
+                };
+
+                if let Err(error) = stream.set_keepalive(Some(transport.keepalive_timeout)) {
+                    tracing::warn!(%error, ?peer, "failed to configure TCP keepalive");
+                }
+
+                let service = app.clone();
+                let header_timeout = transport.request_header_timeout;
+                connections.spawn(async move {
+                    let mut builder = Builder::new(TokioExecutor::new());
+                    builder
+                        .http1()
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(header_timeout);
+
+                    builder
+                        .http2()
+                        .timer(TokioTimer::new())
+                        .max_concurrent_streams(MAX_IN_FLIGHT_REQUESTS as u32)
+                        .keep_alive_interval(header_timeout)
+                        .keep_alive_timeout(transport.keepalive_timeout);
+
+                    if let Err(error) = builder
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await
+                    {
+                        tracing::debug!(%error, ?peer, "HTTP connection closed with error");
+                    }
+                });
+            }
+        }
+    }
+
+    let drain = async {
+        while connections.join_next().await.is_some() {}
+    };
+    let _ = tokio::time::timeout(
+        Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS),
+        drain,
+    )
+    .await;
+
+    connections.abort_all();
 
     let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
     coordinator.shutdown().to_vec()
@@ -110,7 +188,12 @@ async fn provision_organization(
 ) -> Response {
     let Json(req) = match payload {
         Ok(value) => value,
-        Err(_) => return format_error_response(&AppError::Validation),
+        Err(rejection) => {
+            if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                return format_error_response(&AppError::PayloadTooLarge);
+            }
+            return format_error_response(&AppError::Validation);
+        },
     };
 
     match handle_provision_organization(state.tenancy_service(), req).await {
@@ -301,6 +384,6 @@ mod tests {
                 sitolo_observability::TelemetryBuffer::new(8),
             )),
         );
-        let _router = router(Arc::new(state));
+        let _router = router(Arc::new(state), 32 * 1024);
     }
 }
