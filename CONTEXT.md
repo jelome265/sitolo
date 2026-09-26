@@ -4,16 +4,24 @@
 
 | Task Type | Go To | Description |
 |---|---|---|
-| Engineering change | workspaces/sitolo-engineering/CLAUDE.md | Routes to the engineering pipeline |
-| Pipeline status | workspaces/sitolo-engineering/CONTEXT.md | Shows the pipeline and status convention |
-| Setup | workspaces/sitolo-engineering/setup/questionnaire.md | Configures stable workspace preferences |
+| Organizational work | workspaces/CLAUDE.md | Select the primary bounded work domain |
+| Engineering | workspaces/sitolo-engineering/CLAUDE.md | Engineering pipeline |
+| Product | workspaces/sitolo-product/CLAUDE.md | Product domain |
+| Commercial | workspaces/sitolo-commercial/CLAUDE.md | Commercial domain |
+| Customer operations | workspaces/sitolo-customer-operations/CLAUDE.md | Customer lifecycle/service |
+| Trust & compliance | workspaces/sitolo-trust-compliance/CLAUDE.md | Regulatory/risk/control domain |
+| Change impact | map/CLAUDE.md | Repository System Map |
 
-## Shared Resources
+## Loading
+
+Start with the workspace router, select one primary workspace, then follow only that workspace's CONTEXT.md and explicit cross-domain routes.
+
+## Authority
 
 | Resource | Location | Contains |
 |---|---|---|
-| Engineering workspace | workspaces/sitolo-engineering/ | Stage contracts and working state |
-| Governance | agent.md | Repository-wide engineering contract |
-| Documentation map | docs/README.md | Canonical project knowledge routing |
+| Engineering governance | agent.md | Repository-wide engineering contract |
+| Documentation map | docs/README.md | Canonical project knowledge |
+| Workspace architecture | docs/workspace_domain_architecture.md | Organizational workspace ownership and exclusions |
 
-Do not bypass the selected workspace and enter a later stage directly.
+Do not bypass the workspace router for organizational tasks or enter a sibling workspace merely because its subject appears in a sentence.
