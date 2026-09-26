@@ -15,18 +15,18 @@ use axum::extract::{Json, Path, State};
 use axum::http::{Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use sitolo_api::tenancy::{
-    CreateBranchRequest, CreateOrganizationRequest,
-    handle_activate_branch, handle_activate_organization, handle_begin_close_branch,
-    handle_begin_close_organization, handle_close_branch, handle_close_organization,
-    handle_create_branch, handle_provision_organization, handle_resume_branch,
-    handle_resume_organization, handle_suspend_branch, handle_suspend_organization,
-};
-use sitolo_api::{AppError, ProblemDetails};
-use sitolo_observability::RequestId;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::service::TowerToHyperService;
+use sitolo_api::tenancy::{
+    CreateBranchRequest, CreateOrganizationRequest, handle_activate_branch,
+    handle_activate_organization, handle_begin_close_branch, handle_begin_close_organization,
+    handle_close_branch, handle_close_organization, handle_create_branch,
+    handle_provision_organization, handle_resume_branch, handle_resume_organization,
+    handle_suspend_branch, handle_suspend_organization,
+};
+use sitolo_api::{AppError, ProblemDetails};
+use sitolo_observability::RequestId;
 use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
@@ -38,8 +38,8 @@ use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 use crate::shutdown::{
     MAX_IN_FLIGHT_CONNECTIONS, MAX_IN_FLIGHT_REQUESTS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem,
 };
-use sitolo_config::AppConfig;
 use crate::state::AppState;
+use sitolo_config::AppConfig;
 
 const REQUEST_BODY_IDLE_TIMEOUT_SECS: u64 = 5;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
@@ -95,9 +95,7 @@ pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router {
                     REQUEST_BODY_IDLE_TIMEOUT_SECS,
                 )))
                 .layer(RequestBodyLimitLayer::new(
-                    max_request_body_bytes.min(
-                        sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES,
-                    ),
+                    max_request_body_bytes.min(sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES),
                 ))
                 .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
         )
@@ -137,16 +135,13 @@ pub async fn serve(
                     }
                 };
 
-                if let Err(error) = stream.set_keepalive(Some(transport.keepalive_timeout)) {
-                    tracing::warn!(%error, ?peer, "failed to configure TCP keepalive");
-                }
-
                 let service = app.clone();
                 let header_timeout = transport.request_header_timeout;
                 connections.spawn(async move {
                     let _connection_permit = permit;
-                    let keepalive_interval =
-                        Duration::from_millis((transport.keepalive_timeout.as_millis() / 2).max(1) as u64);
+                    let keepalive_interval = Duration::from_millis(
+                        (transport.keepalive_timeout.as_millis() / 2).max(1) as u64,
+                    );
                     let mut builder = Builder::new(TokioExecutor::new());
                     builder
                         .http1()
@@ -171,14 +166,8 @@ pub async fn serve(
         }
     }
 
-    let drain = async {
-        while connections.join_next().await.is_some() {}
-    };
-    let _ = tokio::time::timeout(
-        Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS),
-        drain,
-    )
-    .await;
+    let drain = async { while connections.join_next().await.is_some() {} };
+    let _ = tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), drain).await;
 
     connections.abort_all();
 
@@ -210,7 +199,7 @@ async fn provision_organization(
                 return format_error_response(&AppError::PayloadTooLarge);
             }
             return format_error_response(&AppError::Validation);
-        },
+        }
     };
 
     match handle_provision_organization(state.tenancy_service(), req).await {
