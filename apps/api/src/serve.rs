@@ -39,6 +39,7 @@ use sitolo_config::AppConfig;
 use crate::state::AppState;
 
 const REQUEST_BODY_IDLE_TIMEOUT_SECS: u64 = 5;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 const COMPAT_RESPONSE_BODY_MAX_BYTES: usize = 64 * 1024;
 
 /// Validated transport controls projected from the process configuration.
@@ -85,7 +86,7 @@ pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router {
             ServiceBuilder::new()
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
-                    Duration::from_millis(30_000),
+                    Duration::from_secs(REQUEST_TIMEOUT_SECS),
                 ))
                 .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
                     REQUEST_BODY_IDLE_TIMEOUT_SECS,
@@ -130,6 +131,8 @@ pub async fn serve(
                 let service = app.clone();
                 let header_timeout = transport.request_header_timeout;
                 connections.spawn(async move {
+                    let keepalive_interval =
+                        Duration::from_millis((transport.keepalive_timeout.as_millis() / 2).max(1) as u64);
                     let mut builder = Builder::new(TokioExecutor::new());
                     builder
                         .http1()
@@ -140,7 +143,7 @@ pub async fn serve(
                         .http2()
                         .timer(TokioTimer::new())
                         .max_concurrent_streams(MAX_IN_FLIGHT_REQUESTS as u32)
-                        .keep_alive_interval(header_timeout)
+                        .keep_alive_interval(keepalive_interval)
                         .keep_alive_timeout(transport.keepalive_timeout);
 
                     if let Err(error) = builder
