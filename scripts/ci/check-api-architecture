@@ -26,4 +26,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "API ARCHITECTURE CHECK PASSED: Axum owns routing; Hyper owns HTTP transport; Tokio owns runtime/socket lifecycle"
+echo "API ARCHITECTURE CHECK PASSED: Axum owns routing; Hyper/Hyper-util owns HTTP transport; Tokio owns runtime/socket lifecycle"
