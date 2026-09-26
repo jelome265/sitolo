@@ -88,6 +88,11 @@ while IFS="|" read -r _empty id workspace evidence status; do
   }
 done < <(sed -n "/^| ID | Workspace | Evidence basis | Status |$/,/^## Explicit non-domains$/p" workspaces/CONTEXT.md | grep "^| " | tail -n +2)
 
+grep -Fq 'This workspace is valid only after `workspaces/CLAUDE.md` has selected Engineering as the primary work domain.' "$WORKSPACE/CLAUDE.md" || {
+  echo "ICM WORKSPACE VIOLATION: engineering workspace lacks organizational-entry precondition" >&2
+  fail=1
+}
+
 for entry in workspaces/CLAUDE.md workspaces/CONTEXT.md; do
   [[ -f "$entry" ]] || {
     echo "ICM WORKSPACE VIOLATION: missing organizational workspace router: $entry" >&2
