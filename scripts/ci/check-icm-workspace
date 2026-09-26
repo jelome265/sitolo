@@ -37,7 +37,7 @@ required=(
   map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
   map/_meta/schema.md map/_templates/object.md map/_templates/process.md
   map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
-  scripts/ci/check-system-map-processes
+  scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts
   scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
 )
 
@@ -72,26 +72,13 @@ grep -Fq 'Every organizational task starts at workspaces/CLAUDE.md' CONTEXT.md |
   fail=1
 }
 
-# Validate the organizational workspace registry and routing surfaces.
-while IFS="|" read -r _empty id workspace evidence status; do
-  workspace="$(printf "%s" "$workspace" | sed "s/^ *//; s/ *$//")"
-  [[ -z "$workspace" || "$workspace" == "Workspace" || "$workspace" == "---" ]] && continue
-  workspace="${workspace%/}"
-  [[ -d "workspaces/$workspace" ]] || {
-    echo "ICM WORKSPACE VIOLATION: registered workspace directory missing: $workspace" >&2
-    fail=1
-    continue
-  }
-  [[ -f "workspaces/$workspace/CLAUDE.md" && -f "workspaces/$workspace/CONTEXT.md" ]] || {
-    echo "ICM WORKSPACE VIOLATION: registered workspace missing CLAUDE.md or CONTEXT.md: $workspace" >&2
-    fail=1
-  }
-done < <(sed -n "/^| ID | Workspace | Evidence basis | Status |$/,/^## Explicit non-domains$/p" workspaces/CONTEXT.md | grep "^| " | tail -n +2)
-
-grep -Fq 'This workspace is valid only after `workspaces/CLAUDE.md` has selected Engineering as the primary work domain.' "$WORKSPACE/CLAUDE.md" || {
-  echo "ICM WORKSPACE VIOLATION: engineering workspace lacks organizational-entry precondition" >&2
+# Validate the organizational workspace contract and routing surfaces.
+if [[ -x scripts/ci/check-icm-workspace-contracts ]]; then
+  bash scripts/ci/check-icm-workspace-contracts || fail=1
+else
+  echo "ICM WORKSPACE VIOLATION: missing workspace contract validator" >&2
   fail=1
-}
+fi
 
 for entry in workspaces/CLAUDE.md workspaces/CONTEXT.md; do
   [[ -f "$entry" ]] || {
@@ -143,6 +130,11 @@ for stage in "${STAGES[@]}"; do
   fi
 
   if [[ -d "$references" ]]; then
+    reference_count=$(find "$references" -type f -name '*.md' -not -name '.gitkeep' | wc -l)
+    if (( reference_count == 0 )); then
+      echo "ICM WORKSPACE VIOLATION: executable stage has no Layer 3 reference material: $stage" >&2
+      fail=1
+    fi
     while IFS= read -r ref; do
       if (( $(wc -l < "$ref") > 200 )); then
         echo "ICM WORKSPACE VIOLATION: reference exceeds 200 lines: $ref" >&2
@@ -150,6 +142,24 @@ for stage in "${STAGES[@]}"; do
       fi
     done < <(find "$references" -type f -name '*.md' -print)
   fi
+
+  # Layer 4 handoffs must come from an earlier numbered stage. This proves one-way
+  # executable dependencies and rejects accidental forward/circular references.
+  handoff_refs=$(grep -oE '\.\./[0-9]{2}-[^ |]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md' "$context" 2>/dev/null || true)
+  current_num=$((10#${stage%%-*}))
+  if (( current_num > 1 )) && [[ -z "$handoff_refs" ]]; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no Layer 4 handoff input: $stage" >&2
+    fail=1
+  fi
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    target_name=$(basename "$(dirname "$(dirname "$ref")")")
+    target_num=$((10#${target_name%%-*}))
+    if (( target_num >= current_num )); then
+      echo "ICM WORKSPACE VIOLATION: stage dependency is not one-way to an earlier stage: $stage -> $ref" >&2
+      fail=1
+    fi
+  done <<< "$handoff_refs"
 
   if [[ -d "$output" ]]; then
     while IFS= read -r artifact; do
