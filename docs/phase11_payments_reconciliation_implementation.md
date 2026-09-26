@@ -505,3 +505,162 @@ next-phase dependency
 ```
 
 **End of Phase 11 contract.**
+
+# 12. Phase-Specific Control Matrix
+
+| Capability | Authoritative fact | Required authority | Failure boundary | Evidence |
+|---|---|---|---|---|
+| Payment intent | what Sitolo intends to collect | authenticated tenant actor/system | invalid amount/currency/scope | intent + authorization test |
+| Provider attempt | external call identity | payment adapter | timeout/provider ambiguity | attempt trace + retry test |
+| Provider observation | external evidence | verified provider channel | signature/correlation mismatch | callback/status test |
+| Reconciliation | Sitolo economic decision | reconciliation policy | mismatch/unknown | decision evidence |
+| Refund | correction entitlement | sale/payment authority | over-refund/replay | entitlement property test |
+
+## 12.1 Required fields
+
+Every payment operation must preserve, where applicable:
+
+```text
+tenant/org scope
+branch/register context
+payment intent ID
+command/idempotency ID
+provider name/version
+provider reference
+merchant account reference
+currency
+expected amount
+attempt number
+attempt state
+observation timestamp
+reconciliation decision
+actor/system identity
+policy/version
+audit reference
+```
+
+No provider payload field becomes authoritative merely because the provider supplied it.
+
+# 13. Provider Boundary Rules
+
+Adapters MUST expose a stable internal contract and isolate provider-specific request/response types. Provider-specific error values are normalized into Sitolo's semantic taxonomy.
+
+The adapter boundary must answer:
+
+```text
+Did the provider receive our request?
+Did the provider create an external transaction?
+Can the transaction be queried safely?
+Can the same operation be retried?
+What evidence identifies the transaction?
+What state transitions are terminal?
+```
+
+If any answer is unknown, the internal state remains explicit rather than guessed.
+
+# 14. Reconciliation Algorithm
+
+The initial reconciliation evaluator follows:
+
+```text
+load local intent
+  ↓
+load provider observations
+  ↓
+verify authenticity/correlation
+  ↓
+compare merchant/account/currency/amount/reference
+  ↓
+evaluate temporal/state consistency
+  ↓
+ALLOW MATCH
+     or MISMATCH
+     or UNKNOWN
+     or MANUAL REVIEW
+  ↓
+persist decision
+  ↓
+emit audit/outbox
+```
+
+No reconciliation decision may be inferred from one weak signal such as HTTP success, client display state or an unverified callback.
+
+# 15. Resource and Abuse Budgets
+
+Payment endpoints and reconciliation workers require bounded:
+
+```text
+request body size
+callback body size
+provider timeout
+provider retries
+worker concurrency
+reconciliation scan window
+status-query rate
+manual-search rate
+pending-intent retention
+```
+
+Retry backoff must include jitter. A provider outage must not create an exponential retry storm.
+
+# 16. High-Risk Scenario Catalogue
+
+| Scenario | Required result |
+|---|---|
+| timeout after provider accepted | UNKNOWN → reconcile, no blind second charge |
+| two clients initiate same command | one logical operation under idempotency |
+| duplicate callback | no duplicate economic effect |
+| callback for another tenant | reject without information disclosure |
+| amount mismatch | do not mark reconciled |
+| currency mismatch | do not mark reconciled |
+| provider reference collision | explicit anomaly/manual review |
+| refund exceeds entitlement | deny |
+| reconciliation worker crashes after decision commit | retry without duplicate decision |
+| provider credentials rotate mid-flight | preserve attempt state; no secret leakage |
+
+# 17. Phase Evidence Ledger
+
+The Phase 11 evidence set should be maintained as a table with:
+
+```text
+requirement ID
+test ID
+source revision
+provider contract version/date
+environment
+expected result
+actual result
+artifact/report
+reviewer
+status
+```
+
+A green test without an attributable artifact is not sufficient evidence for the release record.
+
+# 18. No-Go Conditions
+
+Implementation must stop at the current Part if any of these are discovered:
+
+- provider contract is materially ambiguous;
+- payment idempotency semantics are unknown;
+- merchant-account scope cannot be trusted;
+- provider callback verification is absent where required;
+- unknown external outcome cannot be represented;
+- refund entitlement cannot be computed authoritatively;
+- audit evidence cannot be durably written;
+- reconciliation can silently convert mismatch to success.
+
+# 19. Downstream Handoff
+
+Phase 11 hands downstream:
+
+```text
+Phase 12 → payment facts safe for sync ingestion
+Phase 14 → bounded refund/correction state
+Phase 15 → payment/economic context for tax workflows
+Phase 16 → reconciled reporting facts
+Phase 17 → only its explicitly separated subscription-billing context
+Phase 20 → provider evidence and release evidence
+```
+
+The handoff must identify the exact contract revision and implementation revision.
