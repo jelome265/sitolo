@@ -95,22 +95,9 @@ Foundational phase package, no
 Missing dedicated phase contracts:       0
 ~~~
 
-Missing dedicated phase contracts:
+No dedicated phase-contract gaps remain for Phases 11–20.
 
-~~~text
-Phase 11 — Payments / Reconciliation
-Phase 12 — Offline Synchronization
-Phase 13 — Procurement / Suppliers
-Phase 14 — Returns / Refunds / Cash
-Phase 15 — MRA EIS
-Phase 16 — Reporting / Exports
-Phase 17 — Billing / Entitlements
-Phase 18 — Admin / Support
-Phase 19 — Hardening / Performance / DR
-Phase 20 — Production Certification
-~~~
-
-Phase 8 has a contract but is materially lighter than the surrounding deep contracts and is not currently exposed through the engineering phase-context router.
+Phase 8 has a contract but remains materially lighter than the surrounding deep contracts.
 
 Phase 0 has a substantial architectural package, but not a single phase-level implementation contract.
 
