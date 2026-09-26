@@ -1,17 +1,18 @@
 # Sitolo — Enterprise Threat Model
 
-**Document:** `threat_model.md`  
-**Phase:** 0 — Architecture / Contract Freeze  
-**File:** 10 of 16  
-**Status:** Design baseline / security governance artifact  
-**Date:** 2026-09-04  
+**Lifecycle:** Active cross-phase security governance baseline  
+**Status:** Maintained and verification-gated  
+**Last reviewed:** 2026-09-26  
 **Primary system:** Sitolo Business Operating System for African SMEs  
 **Primary deployment market:** Malawi-first, controlled African regionalization  
-**Backend baseline:** Rust / Axum / Tokio / SQLx  
+**Normative HTTP backend:** Rust / Axum / Tokio / SQLx  
 **Authoritative server database:** PostgreSQL 18  
 **Primary mobile client:** Flutter / SQLite offline store  
 **Desktop client:** Tauri  
-**Threat-modeling posture:** continuous, adversary-driven, evidence-based
+**Engineering workflow:** repository-driven ICM with security-sensitive agent/tooling boundaries  
+**Threat-modeling posture:** continuous, adversary-driven, evidence-based  
+**Current-state authority:** current source tree + active phase contract + executed CI/security evidence  
+**Integrity posture:** semantic checks + explicit threat/control traceability + content provenance record
 
 ---
 
@@ -502,8 +503,26 @@ Threat analysis assumes attackers may:
 28. induce provider callbacks or duplicates;
 29. intentionally corrupt local cache or command history;
 30. exploit operator mistakes.
+31. provide malicious repository content to an engineering agent;
+32. inject instructions through source, documentation, issues, tests, artifacts, or retrieved context;
+33. cause an agent to request tools beyond its authorized capability boundary;
+34. influence an agent to modify security controls, CI, dependencies, or release configuration;
+35. pivot from an agent/tool credential into repository, CI, cloud, or deployment authority.
 
 No security control may depend on an attacker voluntarily using the official client behavior.
+## 8.1 Current-state synchronization rule
+
+Threat-model evidence is classified explicitly:
+
+CURRENT     = current source tree + executed verification evidence
+TARGET      = active normative contract, not implementation proof
+HISTORICAL  = older audit/revision evidence, valid only at its timestamp
+
+Claims about what Sitolo currently implements MUST come from the current source tree and current executable evidence. A contract defines required behavior but does not prove that behavior exists. Historical audits remain evidence of their recorded baseline only.
+
+The normative HTTP boundary is Rust + Axum + Tokio: Axum owns HTTP routing, extraction, and response composition; Tokio owns asynchronous runtime and network lifecycle. A hand-written production HTTP parser or alternate request loop is an architecture divergence and fails the architecture/security gate.
+
+Material changes to HTTP transport, authentication, authorization, tenant hierarchy, offline/sync, external integrations, CI/CD, agent/tooling permissions, or sensitive-data handling trigger threat-model re-review.
 
 ---
 
@@ -656,6 +675,38 @@ An attacker obtains database backups containing tenant/business secrets.
 ## UC-36 Denial of service with economic impact
 
 Attacker exhausts worker/database/API capacity, preventing merchants from selling or reconciling.
+
+## UC-37 Repository/context poisoning
+
+Attacker places misleading or malicious instructions in repository content, generated artifacts, fixtures, documentation, issues, or retrieved material consumed by an engineering agent.
+
+## UC-38 Direct or indirect instruction injection
+
+Untrusted text attempts to override higher-trust engineering, security, or system instructions and cause the agent to skip controls or change intended scope.
+
+## UC-39 Agent tool overreach
+
+An agent requests or invokes a repository, shell, secret, CI, cloud, deployment, or administrative capability outside the authority required for the task.
+
+## UC-40 Agent-mediated secret exfiltration
+
+Sensitive credentials, source, logs, configuration, or outputs become exposed through model context, tool arguments, memory, traces, generated artifacts, or responses.
+
+## UC-41 Autonomous insecure code modification
+
+An agent introduces a vulnerability, weakens a control, or changes a security-sensitive path without required review, tests, or policy gates.
+
+## UC-42 Agent-to-CI privilege escalation
+
+An agent-authored change reaches privileged CI execution and obtains protected secrets or deployment authority.
+
+## UC-43 Agent-induced dependency/supply-chain compromise
+
+An agent selects or modifies dependencies, actions, tools, or artifact sources without adequate provenance and security validation.
+
+## UC-44 Approval/provenance bypass
+
+Automation bypasses review, protected merge, evidence, provenance, or release verification because the agent is treated as implicitly trusted.
 
 ---
 
@@ -913,6 +964,74 @@ PostgreSQL's own regression infrastructure includes dedicated concurrency/isolat
 
 ---
 
+## T-023 Repository/Context Poisoning
+
+**Attack:** malicious or misleading repository material is consumed as trusted engineering context by an agent.
+
+**Failure condition:** the agent treats untrusted content as higher-priority instruction and changes implementation, security policy, tests, CI, or release behavior accordingly.
+
+**Mapped controls:** SC-004, SC-011, SC-012.
+
+**Mitigation:** trust-label repository inputs, keep higher-trust policy outside repository-controlled context, constrain tools by least privilege, and verify generated changes against independent policy gates.
+
+## T-024 Direct/Indirect Instruction Injection
+
+**Attack:** attacker-controlled text in code, tests, documentation, issues, provider data, or retrieved documents attempts to override authorized instructions.
+
+**Mapped controls:** SC-004, SC-011, SC-012.
+
+**Mitigation:** maintain instruction hierarchy, mark untrusted context, deny arbitrary policy changes requested by untrusted content, and re-run security verification after material agent-driven changes.
+
+## T-025 Agent Tool Authority Escalation
+
+**Attack:** an agent uses a tool credential or capability broader than required for its task.
+
+**Mapped controls:** SC-003, SC-005, SC-011, SC-012.
+
+**Mitigation:** per-tool least privilege, explicit capability allowlists, isolated credentials, scoped repository/cloud permissions, action-level audit, and fail-closed authorization for privileged tools.
+
+## T-026 Agent-Mediated Secret Exfiltration
+
+**Attack:** secrets enter model context, tool arguments, logs, traces, memory, generated artifacts, or outputs.
+
+**Mapped controls:** SC-005, SC-009, SC-011, SC-012.
+
+**Mitigation:** never expose secrets to model context unless strictly required, use redaction and isolated secret brokers, and test adversarial exfiltration paths.
+
+## T-027 Autonomous Insecure Code Modification
+
+**Attack:** an agent introduces a vulnerability or weakens a security control and the change is trusted because it was generated automatically.
+
+**Mapped controls:** SC-003, SC-004, SC-011, SC-012.
+
+**Mitigation:** mandatory diff review, control traceability, compile/test/security gates, protected branches, and explicit human approval for security-sensitive changes.
+
+## T-028 Agent-to-CI Privilege Escalation
+
+**Attack:** an agent-authored repository change reaches privileged CI and accesses protected secrets or deployment authority.
+
+**Mapped controls:** SC-005, SC-011, SC-012.
+
+**Mitigation:** untrusted PR isolation, least-privileged workflow tokens, protected environments, no secrets in untrusted builds, pinned actions, and artifact/provenance verification.
+
+## T-029 Agent-Induced Supply-Chain Compromise
+
+**Attack:** an agent adds or upgrades a dependency, action, tool, or artifact source without adequate provenance/security review.
+
+**Mapped controls:** SC-011.
+
+**Mitigation:** lockfile enforcement, advisory/license/source policy, dependency review, pinned CI actions, and security scanning on the resulting tree.
+
+## T-030 Approval/Provenance Bypass
+
+**Attack:** automation bypasses required review, protected merge, provenance, or release verification because the agent is treated as implicitly trusted.
+
+**Mapped controls:** SC-009, SC-011, SC-012.
+
+**Mitigation:** human approval for protected changes, protected branches, immutable audit evidence, artifact verification, and fail-closed release gates.
+
+---
+
 # 12. Domain-Specific Threat Analysis
 
 ## 12.1 Identity and sessions
@@ -1102,6 +1221,31 @@ Threats:
 
 ---
 
+## 12.13 Agentic engineering / ICM
+
+Threats:
+
+- repository/context poisoning;
+- direct and indirect instruction injection;
+- malicious skill/tool instructions;
+- tool overreach;
+- secret exfiltration through agent context or tooling;
+- unsafe autonomous code changes;
+- agent-to-CI privilege escalation;
+- dependency or artifact manipulation;
+- approval and provenance bypass.
+
+Required controls:
+
+- explicit agent identity and trust classification;
+- task-scoped, least-privileged tools;
+- no implicit authority from repository content;
+- security-sensitive changes require independent gates and human approval;
+- generated code and tests pass the same compilation, testing, and security controls as human-authored changes;
+- credentials are brokered and scoped rather than placed in general context;
+- privileged agent actions are auditable;
+- material agent/model/tool/skill changes trigger threat-model review.
+
 # 13. Data Flow Threat Analysis
 
 ## 13.1 Login flow
@@ -1278,6 +1422,22 @@ logs, telemetry or public artifacts.
 Ambiguous external outcomes are represented as unresolved state until safely reconciled.
 ```
 
+## 14.13 Agentic instruction integrity invariant
+
+Untrusted repository or retrieved context MUST NOT gain higher authority merely by being retrieved, quoted, generated, or surfaced by an agent.
+
+## 14.14 Agent tool authority invariant
+
+An agent MUST NOT access a credential, repository capability, CI secret, cloud action, deployment control, or administrative function beyond its explicit task-scoped authorization.
+
+## 14.15 Agent change provenance invariant
+
+Every security-sensitive agent-authored change MUST remain attributable to the originating task, agent identity/version, tool actions, source revision, review decision, verification evidence, and resulting artifact/revision.
+
+## 14.16 Agent output non-authority invariant
+
+Model output, generated code, generated tests, retrieved text, and tool output are advisory inputs until validated by deterministic policy, compilation, tests, security checks, and required human approval.
+
 ---
 
 # 15. Threat Prioritization
@@ -1409,26 +1569,44 @@ Recovery must preserve historical evidence and avoid “fixing” data through d
 
 ---
 
-# 17. Security Control Mapping
+# 17. Threat → Security-Control Traceability
 
-| Threat family | Primary control | Secondary control | Test evidence |
-|---|---|---|---|
-| Tenant escape | Trusted tenant context | DB scoping/RLS | Cross-tenant suite |
-| BOLA | Object authorization | Query scoping | API negative tests |
-| Role escalation | Server-side IAM | SoD | AuthZ matrix |
-| Replay | Idempotency | Unique constraints | Replay tests |
-| Financial duplication | Transaction + idempotency | Reconciliation | Concurrency suite |
-| Inventory race | DB locking/transaction | Ledger invariants | Isolation tests |
-| Payment forgery | Signature verification | Provider re-query | Contract tests |
-| EIS forgery | Adapter validation | Evidence store | EIS tests |
-| Offline abuse | Device/capability checks | Server revalidation | Sync security suite |
-| Secret leakage | Secret manager | Scanners | Secret tests |
-| SSRF | Destination policy | Egress controls | SSRF suite |
-| File abuse | Parser isolation | Limits/scanning | File-security tests |
-| DoS | Rate limits | Bulkheads/timeouts | Load tests |
-| CI compromise | Branch/workflow controls | Provenance | Pipeline tests |
-| Audit tampering | Append-oriented model | Access control | Audit integrity tests |
-| Backup exposure | Encryption/access control | Restore tests | DR suite |
+Every high-risk threat has an explicit mapping to the authoritative security control register. A threat is not closed merely because a generic threat family maps to a control; each T-ID must map to one or more SC-IDs and to executable evidence.
+
+| Threat | Security control IDs | Required evidence |
+|---|---|---|
+| T-001 | SC-002, SC-003 | Cross-tenant BOLA negative tests |
+| T-002 | SC-002, SC-003 | Cross-branch scope tests |
+| T-003 | SC-001, SC-003 | Auth/session and role-forgery tests |
+| T-004 | SC-003, SC-006, SC-009 | Approval/SoD and audit tests |
+| T-005 | SC-006, SC-009 | Refund invariant and replay tests |
+| T-006 | SC-006, SC-010 | Inventory concurrency/isolation tests |
+| T-007 | SC-007 | Local-state tamper and sync revalidation tests |
+| T-008 | SC-007, SC-009 | Offline replay/idempotency tests |
+| T-009 | SC-001, SC-003, SC-007 | Revocation/offline capability tests |
+| T-010 | SC-006, SC-008, SC-009 | Callback signature/replay/correlation tests |
+| T-011 | SC-006, SC-008, SC-009, SC-010 | Timeout/unknown-outcome recovery tests |
+| T-012 | SC-006, SC-008, SC-009 | EIS acceptance/evidence tests |
+| T-013 | SC-005 | Secret isolation/scanning tests |
+| T-014 | SC-008, SC-010 | External-config freshness tests |
+| T-015 | SC-003, SC-004, SC-005 | Scoped export and sensitivity tests |
+| T-016 | SC-003, SC-009, SC-012 | JIT/SoD/audit tests |
+| T-017 | SC-004, SC-010 | SSRF destination/egress tests |
+| T-018 | SC-004, SC-010 | Upload/parser/resource-limit tests |
+| T-019 | SC-002, SC-005 | DB least-privilege/RLS/SQLi tests |
+| T-020 | SC-011, SC-012 | CI isolation/provenance/dependency tests |
+| T-021 | SC-005, SC-009, SC-011 | Secret/telemetry redaction tests |
+| T-022 | SC-006, SC-010 | Lock/concurrency/resource-limit tests |
+| T-023 | SC-004, SC-011, SC-012 | Context-poisoning adversarial tests |
+| T-024 | SC-004, SC-011, SC-012 | Instruction-injection resistance tests |
+| T-025 | SC-003, SC-005, SC-011, SC-012 | Tool authorization and negative-capability tests |
+| T-026 | SC-005, SC-009, SC-011, SC-012 | Secret-exfiltration/redaction tests |
+| T-027 | SC-003, SC-004, SC-011, SC-012 | Agent change review and verification gate |
+| T-028 | SC-005, SC-011, SC-012 | Privileged-CI isolation tests |
+| T-029 | SC-011 | Dependency/provenance/lockfile tests |
+| T-030 | SC-009, SC-011, SC-012 | Review/provenance/release-gate evidence |
+
+The authoritative control register remains `docs/security_control_register.md`. This table is a traceability layer, not a second security-control authority.
 
 ---
 
@@ -1517,6 +1695,23 @@ Must include:
 - deploy identity restrictions.
 
 ---
+
+## 18.7 Agentic/ICM security suite
+
+Required adversarial tests:
+
+- malicious repository/document instructions do not override higher-trust policy;
+- direct and indirect instruction injection is treated as untrusted data;
+- an agent cannot invoke a tool without the required capability;
+- privileged tools reject low-trust callers;
+- secrets are not exposed through model context, tool arguments, logs, traces, or outputs;
+- generated changes cannot bypass compile/test/security gates;
+- agent-authored workflow changes cannot obtain protected CI secrets from untrusted execution;
+- agent-selected dependency changes remain subject to lockfile/advisory/source policy;
+- security-sensitive changes retain review/provenance evidence;
+- material agent/model/tool/skill changes trigger threat-model re-review.
+
+Agent-specific tests must be deterministic and repeatable at the application/control boundary. Model refusal alone is not sufficient evidence when deterministic authorization or sandbox controls are required.
 
 # 19. Abuse-Resistant Resource Controls
 
@@ -2427,9 +2622,15 @@ This document is considered implementation-ready only when:
 [X] residual risks recorded
 [X] review triggers defined
 [X] evidence requirements defined
+[X] current vs target vs historical state rules defined
+[X] every T-ID mapped to authoritative SC-IDs
+[X] agentic/ICM attack surface modeled
+[X] agentic adversarial tests defined
+[X] API architecture reconciliation rule defined
+[X] threat-model content provenance/integrity requirement defined
 ```
 
-Implementation is **not** considered threat-model complete until code and infrastructure produce evidence for the controls identified here.
+Implementation is not considered threat-model complete until code and infrastructure produce evidence for the controls identified here, the current architecture matches the normative implementation boundary, and the integrity gate passes.
 
 ---
 
@@ -2509,7 +2710,7 @@ This threat model is therefore not a static document intended to declare Sitolo 
 1. OWASP Threat Modeling Cheat Sheet — threat modeling as a structured, repeatable and continuously maintained process.  
    https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html
 
-2. OWASP Application Security Verification Standard 5.0.0 — current stable application-security verification baseline as of 2026-09-04.  
+2. OWASP Application Security Verification Standard 5.0.0 — current stable application-security verification baseline as of 2026-09-26.  
    https://owasp.org/www-project-application-security-verification-standard/
 
 3. OWASP API Security Top 10 2023 — API-specific authorization, authentication, resource-consumption, SSRF, misconfiguration and unsafe third-party API risks.  
@@ -2527,8 +2728,20 @@ This threat model is therefore not a static document intended to declare Sitolo 
 7. OpenTelemetry Semantic Conventions — standardized semantic names across traces, metrics, logs and resources.  
    https://opentelemetry.io/docs/specs/semconv/
 
-8. SLSA 1.2 specification — current SLSA specification baseline.  
-   https://slsa.dev/spec/v1.2/
+8. NIST SP 800-218 SSDF 1.1 — secure software development practices and evidence-oriented development controls.  
+   https://csrc.nist.gov/pubs/sp/800/218/final
+
+9. OWASP AI Agent Security Cheat Sheet — prompt injection, tool abuse, privilege escalation, memory poisoning, secret exposure, and adversarial agent validation.  
+   https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html
+
+10. Axum 0.8.9 — HTTP routing and serving baseline for the Sitolo API boundary.  
+    https://docs.rs/axum/0.8.9/
+
+11. Tokio — asynchronous Rust runtime and networking foundation.  
+    https://tokio.rs/tokio/tutorial
+
+12. SLSA 1.2 specification — current SLSA specification baseline.  
+    https://slsa.dev/spec/v1.2/
 
 ---
 
@@ -2560,8 +2773,8 @@ testing_strategy.md
 
 Threat-model changes that invalidate one of these documents require explicit reconciliation rather than allowing contradictory security assumptions to coexist.
 
-The next implementation contract is `docs/observability_spec.md`.
+Current-state synchronization is verified against the current source tree and executable CI/security gates. No future-phase contract may be cited as proof that an implementation exists.
 
 ---
 
-**Document end — Sitolo Enterprise Threat Model, Phase 0 / File 10 of 16.**
+**Document end — Sitolo Enterprise Threat Model, continuously maintained security governance baseline.**
