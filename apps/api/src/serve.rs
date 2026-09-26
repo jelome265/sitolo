@@ -27,7 +27,7 @@ use sitolo_observability::RequestId;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::service::TowerToHyperService;
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
 use tower::ServiceExt;
@@ -35,7 +35,9 @@ use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 
-use crate::shutdown::{MAX_IN_FLIGHT_REQUESTS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
+use crate::shutdown::{
+    MAX_IN_FLIGHT_CONNECTIONS, MAX_IN_FLIGHT_REQUESTS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem,
+};
 use sitolo_config::AppConfig;
 use crate::state::AppState;
 
@@ -112,6 +114,7 @@ pub async fn serve(
 ) -> Vec<Subsystem> {
     let app = router(Arc::clone(&state), transport.max_request_body_bytes);
     let mut connections = JoinSet::new();
+    let connection_permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
 
     loop {
         tokio::select! {
@@ -125,6 +128,15 @@ pub async fn serve(
                     }
                 };
 
+                let permit = match connection_permits.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        tracing::warn!(?peer, "rejecting connection at concurrency ceiling");
+                        drop(stream);
+                        continue;
+                    }
+                };
+
                 if let Err(error) = stream.set_keepalive(Some(transport.keepalive_timeout)) {
                     tracing::warn!(%error, ?peer, "failed to configure TCP keepalive");
                 }
@@ -132,6 +144,7 @@ pub async fn serve(
                 let service = app.clone();
                 let header_timeout = transport.request_header_timeout;
                 connections.spawn(async move {
+                    let _connection_permit = permit;
                     let keepalive_interval =
                         Duration::from_millis((transport.keepalive_timeout.as_millis() / 2).max(1) as u64);
                     let mut builder = Builder::new(TokioExecutor::new());
