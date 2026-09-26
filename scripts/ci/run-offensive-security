@@ -18,13 +18,13 @@ for var in ADMIN_DATABASE_URL RUNTIME_DATABASE_URL; do
 done
 
 case "$ADMIN_DATABASE_URL" in
-  *localhost*|*127.0.0.1*|*postgres*) ;;
-  *) fail "ADMIN_DATABASE_URL must resolve to the authorized disposable PostgreSQL service" ;;
+  *127.0.0.1*|*localhost*) ;;
+  *) fail "ADMIN_DATABASE_URL must resolve to the authorized local disposable PostgreSQL service" ;;
 esac
 
 case "$RUNTIME_DATABASE_URL" in
-  *localhost*|*127.0.0.1*|*postgres*) ;;
-  *) fail "RUNTIME_DATABASE_URL must resolve to the authorized disposable PostgreSQL service" ;;
+  *127.0.0.1*|*localhost*) ;;
+  *) fail "RUNTIME_DATABASE_URL must resolve to the authorized local disposable PostgreSQL service" ;;
 esac
 
 echo "==> Authorized offensive security: real PostgreSQL tenant-isolation attacks"
