@@ -1063,6 +1063,7 @@ dependencies = [
  "sitolo-observability",
  "sitolo-persistence",
  "sitolo-security",
+ "socket2",
  "thiserror",
  "tokio",
  "tower",
