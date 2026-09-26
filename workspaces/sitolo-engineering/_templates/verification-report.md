@@ -13,6 +13,11 @@ run_slug: "[run-slug]"
 
 ## Environment
 
+## Security control evidence
+
+| Control ID | Gate/test | Result | Evidence | Limitation |
+|---|---|---|---|---|
+
 ## Evidence
 
 ## Limitations

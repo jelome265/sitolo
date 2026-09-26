@@ -10,6 +10,8 @@ A run brief records:
 - acceptance criteria;
 - external-evidence requirement;
 - known constraints;
-- unresolved decisions.
+- unresolved decisions;
+- security applicability (`yes|no`), rationale and affected security boundaries;
+- candidate security control IDs when relevant.
 
 Do not put implementation design here. The plan stage owns implementation design.

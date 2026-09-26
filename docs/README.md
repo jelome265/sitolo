@@ -50,6 +50,10 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | [`security_implementation_spec.md`](security_implementation_spec.md) | Implementation-level security controls |
 | [`security_test_harness.md`](security_test_harness.md) | Security verification harness |
 | [`ci_enforcement.md`](ci_enforcement.md) | CI/release enforcement contract |
+| [`security_control_register.md`](security_control_register.md) | Security control traceability, ownership, implementation and evidence |
+| [`security_incident_response.md`](security_incident_response.md) | Security incident response and recovery contract |
+| [`security_exception_register.md`](security_exception_register.md) | Security exception and risk-acceptance governance |
+| [`security_cryptography_and_key_management.md`](security_cryptography_and_key_management.md) | Cryptography and key lifecycle control standard |
 
 ## Phase implementation contracts
 

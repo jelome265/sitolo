@@ -14,6 +14,7 @@ on:
       - "AGENTS.md"
       - "workspaces/**"
       - "scripts/ci/check-icm-workspace"
+      - "scripts/ci/check-security-icm-policy"
       - "scripts/ci/check-system-map-processes"
       - "scripts/ci/check-doc-references"
       - "scripts/ci/verify"

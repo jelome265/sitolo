@@ -60,6 +60,8 @@ The specification establishes:
 - failure semantics;
 - implementation sequence;
 - evidence requirements;
+- security control traceability;
+- security incident/exception/key-management integration;
 - definition of ready and definition of done.
 
 The central implementation principle is:

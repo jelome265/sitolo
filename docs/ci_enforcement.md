@@ -23,6 +23,8 @@ CI is a release-control boundary. Local success is useful evidence; protected CI
 
 ### Security
 
+The security ICM path is conditionally enforced for security-relevant Engineering runs through the Stage 01 applicability decision and the control trace carried into Plan, Audit and Verify.
+
 - security test suite/harness;
 - static/security checks defined by the security workflow;
 - secret/configuration boundary checks;
@@ -68,6 +70,7 @@ CI verifies the filesystem workflow; CI does not become the workflow engine. The
 - `scripts/ci/verify.ps1`
 - `scripts/ci/check-workflow-policy`
 - `scripts/ci/check-icm-workspace`
+- `scripts/ci/check-security-icm-policy`
 - `docs/security_implementation_spec.md`
 - `docs/testing_strategy.md`
 

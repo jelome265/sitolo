@@ -18,12 +18,14 @@ One job: turn the user request into a bounded engineering run.
 1. Classify the request as feature, bug, security, migration, refactor, documentation, or review.
 2. Identify the affected capability and likely bounded context.
 3. Record requirements, explicit exclusions, open decisions, and success conditions.
-4. Always route through Stage 02. That stage records whether external research is required.
-5. Write the run brief to output/.
+4. Determine `security_relevant: yes|no` from affected trust boundaries and control families. Record the rationale and candidate control IDs in the run brief.
+5. If security is relevant, route through the security context; do not guess or silently defer applicability.
+6. Always route through Stage 02. That stage records whether external research is required.
+7. Write the run brief to output/.
 
 ## Human Check
 
-Review the brief for scope and exclusions. Edit it in place. Do not let later stages invent missing scope.
+Review the brief for scope and exclusions. Edit it in place. Do not let later stages invent missing scope or silently change the security applicability decision. A security-relevant run cannot pass planning without a control mapping.
 
 ## Outputs
 

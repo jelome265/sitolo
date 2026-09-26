@@ -27,7 +27,7 @@ required=(
   "$WORKSPACE/shared/phase-context/CONTEXT.md"
   "$WORKSPACE/_templates/CONTEXT.md"
   docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
-  docs/current_implementation_status.md
+  docs/current_implementation_status.md docs/security_control_register.md docs/security_incident_response.md docs/security_exception_register.md docs/security_cryptography_and_key_management.md
   docs/workspace_domain_architecture.md
   workspaces/CLAUDE.md workspaces/CONTEXT.md
   workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md
@@ -37,7 +37,7 @@ required=(
   map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
   map/_meta/schema.md map/_templates/object.md map/_templates/process.md
   map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
-  scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts
+  scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts scripts/ci/check-security-icm-policy
   scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
 )
 
@@ -71,6 +71,13 @@ grep -Fq 'Every organizational task starts at `workspaces/CLAUDE.md`' CONTEXT.md
   echo "ICM WORKSPACE VIOLATION: root CONTEXT.md lacks mandatory workspace entry invariant" >&2
   fail=1
 }
+
+if [[ -f scripts/ci/check-security-icm-policy ]]; then
+  bash scripts/ci/check-security-icm-policy || fail=1
+else
+  echo "ICM SECURITY VIOLATION: missing security ICM policy validator" >&2
+  fail=1
+fi
 
 # Validate the organizational workspace contract and routing surfaces.
 if [[ -f scripts/ci/check-icm-workspace-contracts ]]; then

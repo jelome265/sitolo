@@ -13,6 +13,11 @@ run_slug: "[run-slug]"
 | Requirement | Implementation | Evidence | Status |
 |---|---|---|---|
 
+## Security control trace
+
+| Control ID | Requirement | Implementation | Security test/evidence | Status | Residual risk/exception |
+|---|---|---|---|---|---|
+
 ## Security and integrity findings
 
 ## Concurrency and failure findings

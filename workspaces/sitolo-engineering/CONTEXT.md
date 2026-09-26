@@ -13,6 +13,10 @@ Primary owner: Engineering technical architecture, implementation, testing, depl
 | Security context | shared/security-context/CONTEXT.md | Relevant threat/control sections | Security invariants and evidence |
 | Phase context | shared/phase-context/CONTEXT.md | Current phase/contract | Current implementation boundaries |
 
+## Security gate
+
+Security-sensitive runs are conditionally routed through `shared/security-context/CONTEXT.md`. Stage 01 records `security_relevant: yes|no`; when yes, control IDs are selected and preserved through planning, implementation, audit and verification.
+
 ## Workflow destination
 
 Primary destination: `stages/01-select/CONTEXT.md` for a new run; continue at the current stage CONTEXT.md for an existing run; verified work terminates at `stages/09-deliver/CONTEXT.md`.

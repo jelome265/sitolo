@@ -14,6 +14,10 @@ Stable security Layer 3 context.
 
 | External standards | ../../../../docs/external_standards_verification_register.md | Full file when version/standard claims matter | Dated external authority |
 
+## Security applicability rule
+
+When Stage 01 marks `security_relevant: yes`, the selected control IDs are carried through Plan, Implement, Audit and Verify. The security path is mandatory for applicable changes, while unrelated runs must not load the entire security corpus.
+
 ## Integrity note
 
 The formerly missing `security_architecture_design.md` reference has been restored. It is a reconstructed canonical baseline, while the current source tree remains the implementation evidence. The standing reference-integrity policy is `docs/icm_reference_integrity.md`. The external standards register must be rechecked before using version-sensitive security claims.

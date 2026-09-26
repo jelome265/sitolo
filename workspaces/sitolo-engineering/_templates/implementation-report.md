@@ -18,6 +18,12 @@ run_slug: "[run-slug]"
 
 ## Security impact
 
+- security_relevant: yes|no
+- control IDs addressed:
+- security tests/evidence:
+- residual risk / exception:
+
+
 ## Data and migration impact
 
 ## Operational impact
