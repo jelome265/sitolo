@@ -28,6 +28,12 @@ required=(
   "$WORKSPACE/_templates/CONTEXT.md"
   docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
   docs/current_implementation_status.md
+  docs/workspace_domain_architecture.md
+  workspaces/CLAUDE.md workspaces/CONTEXT.md
+  workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md
+  workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md
+  workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md
+  workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md
   map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
   map/_meta/schema.md map/_templates/object.md map/_templates/process.md
   map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
@@ -42,13 +48,35 @@ for path in "${required[@]}"; do
   fi
 done
 
-for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" map/CLAUDE.md map/CONTEXT.md; do
+for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" workspaces/CLAUDE.md workspaces/CONTEXT.md workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md map/CLAUDE.md map/CONTEXT.md; do
   if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
     echo "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry" >&2
     fail=1
   fi
 done
 
+# Validate the organizational workspace registry and routing surfaces.
+while IFS="|" read -r _id workspace _evidence _status; do
+  workspace="$(printf "%s" "$workspace" | sed "s/^ *//; s/ *$//")"
+  [[ -z "$workspace" || "$workspace" == "Workspace" ]] && continue
+  workspace="${workspace%/}"
+  [[ -d "workspaces/$workspace" ]] || {
+    echo "ICM WORKSPACE VIOLATION: registered workspace directory missing: $workspace" >&2
+    fail=1
+    continue
+  }
+  [[ -f "workspaces/$workspace/CLAUDE.md" && -f "workspaces/$workspace/CONTEXT.md" ]] || {
+    echo "ICM WORKSPACE VIOLATION: registered workspace missing CLAUDE.md or CONTEXT.md: $workspace" >&2
+    fail=1
+  }
+done < <(sed -n "/^| ID | Workspace | Evidence basis | Status |$/,/^## Explicit non-domains$/p" workspaces/CONTEXT.md | grep "^| " | tail -n +2)
+
+for entry in workspaces/CLAUDE.md workspaces/CONTEXT.md; do
+  [[ -f "$entry" ]] || {
+    echo "ICM WORKSPACE VIOLATION: missing organizational workspace router: $entry" >&2
+    fail=1
+  }
+done
 for stage in "${STAGES[@]}"; do
   context="$WORKSPACE/stages/$stage/CONTEXT.md"
   references="$WORKSPACE/stages/$stage/references"
