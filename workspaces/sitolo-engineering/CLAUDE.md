@@ -22,6 +22,10 @@ stages/
   08-verify/
   09-deliver/
 
+## Entry condition
+
+This workspace is valid only after `workspaces/CLAUDE.md` has selected Engineering as the primary work domain. The presence of code, a repository, infrastructure, or an implementation request does not by itself authorize entry here.
+
 ## Triggers
 
 | Keyword | Action |
