@@ -12,16 +12,56 @@
 //! with documented moderate fallbacks.
 //!
 //! Explicitly deferred to later Phase 4 PRs: invitation delivery (outbox,
-//! PR-009), audit emission (PR-009), HTTP routes and DTOs (PR-006). These
-//! methods enforce state-machine and scope correctness, not caller
-//! authorization — actor authority (who may invite, grant, or revoke) is
-//! enforced by the authorization engine (Phase 6) once issuer scope exists.
+//! PR-009), HTTP routes and DTOs (PR-006). These methods enforce
+//! state-machine and scope correctness, not caller authorization — actor
+//! authority (who may invite, grant, or revoke) is enforced by the
+//! authorization engine (Phase 6) once issuer scope exists.
+//!
+//! ## Phase 4 Part 8 evidence (PR-009)
+//!
+//! Every named IAM state transition in this file — organization and branch
+//! provisioning and lifecycle, membership invite/accept/suspend/resume/
+//! revoke, invitation acceptance, and role/scope grant and revocation —
+//! emits its mandatory audit record and paired outbox event
+//! (`docs/phase4_part8_audit_outbox_implementation_contract.md` §5, §29,
+//! §38) through an optional [`TenancyEvidenceSink`], via the shared
+//! `record_evidence`/`record_organization_evidence`/`record_branch_evidence`
+//! helpers. The audit write and the outbox write for one transition share
+//! one PostgreSQL transaction, so that pair is atomic with each other.
+//!
+//! Each of these methods takes an `actor: ActorRef` parameter identifying
+//! who is performing the transition, because the audit record's actor
+//! fields must reflect the true caller — there is no authenticated
+//! principal available yet to derive this automatically (actor *authority*,
+//! as opposed to actor *identity*, remains Phase 6's job per the existing
+//! deferral note above). Callers construct `ActorRef` from whatever caller
+//! context they have; there is no default or synthesized actor.
+//!
+//! A few transitions are deliberately **not** wired: `mark_member_pending`,
+//! `expire_invitation`, `expire_invitations`, `create_invitation`, and
+//! `revoke_invitation` have no corresponding variant in `IamEventName`
+//! (`sitolo-audit`). Inventing an event name locally would mean this crate,
+//! rather than the contract, defines the audit vocabulary; each such method
+//! carries a doc comment explaining the specific gap.
+//!
+//! What is **not** yet atomic with any of this: [`TenancyDatabase`] is an
+//! in-memory reference store (`sitolo-persistence` lib docs: "PostgreSQL
+//! implementations arrive in Phase 5"), so the business mutation itself
+//! cannot share a transaction with the PostgreSQL audit/outbox insert. A
+//! process crash between the in-memory commit and the evidence transaction
+//! can therefore still leave committed state without its evidence. This is
+//! a disclosed, pre-existing architectural gap tied to Phase 5, not
+//! something this change conceals or claims to close. Closing it fully
+//! requires moving tenancy state into the same PostgreSQL authority Part 8
+//! already uses for audit/outbox — that is Phase 5 work, out of Part 8's
+//! scope (contract §51).
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use sitolo_auth::{AbuseClass, RateLimitDecision, RateLimitRule, RateLimiter};
+use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
+use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, Permission, Role, RoleAssignment, Scope,
     ScopeGrant, authorize_scope, resolve_permissions,
@@ -30,17 +70,50 @@ use sitolo_domain::tenancy::{
     Branch, BranchId, InvitationId, Membership, MembershipId, Organization, OrganizationId,
     RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
 };
+use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores,
+    audit_repository::AuditWriter,
+    outbox_repository::OutboxWriter,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
+use sqlx::PgPool;
+
+/// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
+/// events (contract §5, §29). The audit insert and the outbox insert run in
+/// one PostgreSQL transaction: either both land, or neither does.
+///
+/// See the module-level "Phase 4 Part 8 evidence" note for what this does
+/// and does not make atomic with the (currently in-memory) business
+/// mutation.
+pub struct TenancyEvidenceSink {
+    pool: PgPool,
+    audit: Arc<dyn AuditWriter>,
+    outbox: Arc<dyn OutboxWriter>,
+}
+
+impl TenancyEvidenceSink {
+    #[must_use]
+    pub fn new(pool: PgPool, audit: Arc<dyn AuditWriter>, outbox: Arc<dyn OutboxWriter>) -> Self {
+        TenancyEvidenceSink {
+            pool,
+            audit,
+            outbox,
+        }
+    }
+}
 
 /// The tenancy service (Phase 4 use cases).
 pub struct TenancyService {
     db: Arc<TenancyDatabase>,
     limiter: Mutex<RateLimiter>,
     abuse_rules: Vec<(AbuseClass, RateLimitRule)>,
+    /// Phase 4 Part 8 evidence sink. `None` in deployments/tests that have
+    /// not wired PostgreSQL audit/outbox persistence yet — those callers
+    /// intentionally see the pre-Part-8 behavior (no evidence emitted)
+    /// rather than a hard failure, so this stays additive.
+    evidence: Option<TenancyEvidenceSink>,
 }
 
 /// Fallback abuse rules when the deployment supplies none. These are
@@ -60,7 +133,100 @@ impl TenancyService {
             db,
             limiter: Mutex::new(RateLimiter::new()),
             abuse_rules,
+            evidence: None,
         }
+    }
+
+    /// Wires the Phase 4 Part 8 durable evidence sink. Additive: callers
+    /// that never invoke this keep the pre-Part-8 behavior.
+    #[must_use]
+    pub fn with_evidence(mut self, sink: TenancyEvidenceSink) -> Self {
+        self.evidence = Some(sink);
+        self
+    }
+
+    /// Records one mandatory Phase 4 IAM audit event and its paired outbox
+    /// event atomically (contract §5, §29). No-op success when no evidence
+    /// sink is configured (see the `evidence` field doc).
+    ///
+    /// `aggregate_id`/`payload` describe the outbox envelope (contract
+    /// §14, §19): bounded, versioned, secret-free, independent of Rust
+    /// debug formatting. Callers must not pass raw domain-object debug
+    /// output as `payload`.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_evidence(
+        &self,
+        event_name: IamEventName,
+        organization_id: &OrganizationId,
+        branch_id: Option<&BranchId>,
+        target: TargetRef,
+        actor: ActorRef,
+        action: &'static str,
+        aggregate_type: &'static str,
+        aggregate_id: String,
+        payload: serde_json::Value,
+    ) -> Result<(), TenancyError> {
+        let Some(sink) = self.evidence.as_ref() else {
+            return Ok(());
+        };
+
+        // Globally unique event identity (contract §6.1) — not derived from
+        // timestamps, names, or client-supplied sequential values.
+        let event_id_raw = uuid::Uuid::new_v4().to_string();
+        let event_id = AuditEventId::new(event_id_raw.clone())
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        let audit_event = IamAuditEvent::success(
+            event_id,
+            event_name,
+            organization_id.clone(),
+            branch_id.cloned(),
+            actor,
+            target,
+            action,
+            "tenancy_service",
+        );
+
+        let payload_str =
+            serde_json::to_string(&payload).map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        let outbox_event = OutboxEvent::new(
+            event_id_raw,
+            aggregate_type.to_string(),
+            aggregate_id,
+            event_name.as_str().to_string(),
+            1,
+            organization_id.clone(),
+            branch_id.cloned(),
+            payload_str,
+        )
+        .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        // Audit insert + outbox insert share one transaction: forbidden
+        // per contract §5 to commit the business mutation and then try
+        // each of these best-effort. Here they are already coupled to
+        // each other; see the module doc for the business-mutation leg.
+        let mut tx = sink
+            .pool
+            .begin()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        sink.audit
+            .record_required(&mut tx, &audit_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        sink.outbox
+            .enqueue(&mut tx, &outbox_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+        Ok(())
     }
 
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
@@ -89,16 +255,45 @@ impl TenancyService {
         branch_id: BranchId,
         branch_name: &str,
     ) -> Result<ProvisionedOrganization, TenancyError> {
-        self.db
+        let provisioned = self
+            .db
             .provision_organization(
-                organization_id,
+                organization_id.clone(),
                 organization_name,
-                owner_membership_id,
-                owner_user_id,
-                branch_id,
+                owner_membership_id.clone(),
+                owner_user_id.clone(),
+                branch_id.clone(),
                 branch_name,
             )
-            .await
+            .await?;
+
+        // Phase 4 Part 8 (§5, §29, §38): mandatory `iam.organization.created`
+        // audit evidence + paired outbox event. Bootstrap actor is the
+        // organization's own owner — there is no separate issuing principal
+        // for self-serve provisioning.
+        self.record_evidence(
+            IamEventName::OrganizationCreated,
+            &organization_id,
+            Some(&branch_id),
+            TargetRef::Organization(organization_id.clone()),
+            ActorRef {
+                subject_ref: owner_user_id.to_string(),
+                membership_ref: Some(owner_membership_id.to_string()),
+                device_ref: None,
+            },
+            "provision_organization",
+            "organization",
+            organization_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "organization_name": provisioned.organization.name,
+                "owner_membership_id": owner_membership_id.as_str(),
+                "branch_id": branch_id.as_str(),
+            }),
+        )
+        .await?;
+
+        Ok(provisioned)
     }
 
     /// Creates an additional branch under an operating organization.
@@ -107,8 +302,29 @@ impl TenancyService {
         id: BranchId,
         organization_id: OrganizationId,
         name: &str,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.create_branch(id, organization_id, name).await
+        let branch = self
+            .db
+            .create_branch(id.clone(), organization_id.clone(), name)
+            .await?;
+        self.record_evidence(
+            IamEventName::BranchCreated,
+            &organization_id,
+            Some(&id),
+            TargetRef::Branch(id.clone()),
+            actor,
+            "create_branch",
+            "branch",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "branch_id": id.as_str(),
+                "branch_name": branch.name,
+            }),
+        )
+        .await?;
+        Ok(branch)
     }
 
     /// Invites a user into an organization (section 8): records the
@@ -120,13 +336,38 @@ impl TenancyService {
         id: MembershipId,
         organization_id: OrganizationId,
         user_id: TenantUserId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.db
-            .invite_membership(id, organization_id, user_id)
-            .await
+        let membership = self
+            .db
+            .invite_membership(id.clone(), organization_id.clone(), user_id.clone())
+            .await?;
+        self.record_evidence(
+            IamEventName::MembershipInvited,
+            &organization_id,
+            None,
+            TargetRef::Membership(id.clone()),
+            actor,
+            "invite_member",
+            "membership",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": id.as_str(),
+                "user_id": user_id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(membership)
     }
 
     /// Advances an invitation to pending acceptance.
+    ///
+    /// Not wired to evidence emission: `IamEventName` (contract-defined
+    /// vocabulary) has no variant for this intermediate transition
+    /// (`Invited -> PendingAcceptance`) — only the invite, activation,
+    /// suspension, and revocation edges are named events. Adding an event
+    /// name is a contract change, not something to invent locally.
     pub async fn mark_member_pending(
         &self,
         organization_id: &OrganizationId,
@@ -140,8 +381,25 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.db.activate_membership(organization_id, id).await
+        let membership = self.db.activate_membership(organization_id, id).await?;
+        self.record_evidence(
+            IamEventName::MembershipActivated,
+            organization_id,
+            None,
+            TargetRef::Membership(id.clone()),
+            actor,
+            "accept_member",
+            "membership",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(membership)
     }
 
     /// Temporarily removes authority with reactivation possible (20.1).
@@ -149,17 +407,57 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.db.suspend_membership(organization_id, id).await
+        let membership = self.db.suspend_membership(organization_id, id).await?;
+        self.record_evidence(
+            IamEventName::MembershipSuspended,
+            organization_id,
+            None,
+            TargetRef::Membership(id.clone()),
+            actor,
+            "suspend_member",
+            "membership",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(membership)
     }
 
     /// Restores a suspended membership.
+    ///
+    /// Emitted as [`IamEventName::MembershipActivated`]: the contract's
+    /// event vocabulary has no separate "resumed" event for memberships
+    /// (unlike organizations/branches, which do have a dedicated
+    /// `...Resumed` name) — reactivation and initial acceptance share the
+    /// same terminal state and the same named event.
     pub async fn resume_member(
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.db.resume_membership(organization_id, id).await
+        let membership = self.db.resume_membership(organization_id, id).await?;
+        self.record_evidence(
+            IamEventName::MembershipActivated,
+            organization_id,
+            None,
+            TargetRef::Membership(id.clone()),
+            actor,
+            "resume_member",
+            "membership",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(membership)
     }
 
     /// Permanently terminates the membership for ordinary purposes (20.2).
@@ -169,11 +467,33 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.db.revoke_membership(organization_id, id).await
+        let membership = self.db.revoke_membership(organization_id, id).await?;
+        self.record_evidence(
+            IamEventName::MembershipRevoked,
+            organization_id,
+            None,
+            TargetRef::Membership(id.clone()),
+            actor,
+            "revoke_member",
+            "membership",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(membership)
     }
 
     /// Expires a lapsed enrollment window.
+    ///
+    /// Not wired to evidence emission: no `IamEventName` variant exists for
+    /// membership expiry (distinct from revocation) — see the
+    /// `mark_member_pending` doc for the same contract-vocabulary
+    /// limitation.
     pub async fn expire_invitation(
         &self,
         organization_id: &OrganizationId,
@@ -186,6 +506,13 @@ impl TenancyService {
     /// membership and the `Issued` invitation atomically. The raw token is
     /// caller-minted high-entropy material — hashed on entry, never stored,
     /// never logged. Throttled per organization (section 38).
+    ///
+    /// Not wired to evidence emission: no `IamEventName` variant names
+    /// "invitation created" distinctly from `MembershipInvited` (which
+    /// [`Self::invite_member`] already emits for the direct-invite path),
+    /// and reusing that name here would record two different transitions
+    /// under one event name. See `mark_member_pending` for the same
+    /// contract-vocabulary limitation.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_invitation(
         &self,
@@ -233,6 +560,7 @@ impl TenancyService {
         raw_token: &str,
         assignment_id: RoleAssignmentId,
         grant_id: Option<ScopeGrantId>,
+        actor: ActorRef,
     ) -> Result<AcceptedInvitation, InvitationError> {
         Invitation::validate_raw_token(raw_token).map_err(|_| InvitationError::Invalid)?;
         let token_hash = Invitation::hash_token(raw_token);
@@ -243,13 +571,36 @@ impl TenancyService {
             return Err(InvitationError::RateLimited);
         }
         let now = SystemTime::now();
-        self.db
+        let accepted = self
+            .db
             .accept_invitation(token_hash, assignment_id, grant_id, now)
-            .await
+            .await?;
+        self.record_evidence(
+            IamEventName::MembershipInvitationAccepted,
+            &accepted.membership.organization_id,
+            None,
+            TargetRef::Membership(accepted.membership.id.clone()),
+            actor,
+            "accept_invitation",
+            "membership",
+            accepted.membership.id.to_string(),
+            serde_json::json!({
+                "organization_id": accepted.membership.organization_id.as_str(),
+                "membership_id": accepted.membership.id.as_str(),
+                "invitation_id": accepted.invitation.id.as_str(),
+            }),
+        )
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        Ok(accepted)
     }
 
     /// Withdraws an issued invitation and releases the linked membership
     /// for re-enrollment.
+    ///
+    /// Not wired to evidence emission: no `IamEventName` variant exists for
+    /// invitation withdrawal. See `mark_member_pending` for the same
+    /// contract-vocabulary limitation.
     pub async fn revoke_invitation(
         &self,
         organization_id: &OrganizationId,
@@ -262,6 +613,11 @@ impl TenancyService {
 
     /// Sweeps lapsed issued invitations to expired, releasing their linked
     /// memberships. Returns the count transitioned.
+    ///
+    /// Not wired to evidence emission: no `IamEventName` variant exists for
+    /// invitation expiry, and this is a batch sweep rather than one
+    /// (organization, actor)-scoped command — see `mark_member_pending`
+    /// for the underlying contract-vocabulary limitation.
     pub async fn expire_invitations(&self) -> u64 {
         self.db.expire_invitations(SystemTime::now()).await
     }
@@ -276,10 +632,34 @@ impl TenancyService {
         membership_id: MembershipId,
         assignment_id: RoleAssignmentId,
         role: Role,
+        actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
-        self.db
-            .assign_role(organization_id, membership_id, assignment_id, role)
-            .await
+        let assignment = self
+            .db
+            .assign_role(
+                organization_id.clone(),
+                membership_id.clone(),
+                assignment_id.clone(),
+                role,
+            )
+            .await?;
+        self.record_evidence(
+            IamEventName::RoleAssigned,
+            &organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "assign_role",
+            "role_assignment",
+            assignment_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "assignment_id": assignment_id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(assignment)
     }
 
     /// Ends an effective grant. History is preserved; re-granting creates a
@@ -289,10 +669,26 @@ impl TenancyService {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
         role: Role,
+        actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
-        self.db
-            .revoke_role(organization_id, membership_id, role)
-            .await
+        let assignment = self.db.revoke_role(organization_id, membership_id, role).await?;
+        self.record_evidence(
+            IamEventName::RoleRemoved,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "revoke_role",
+            "role_assignment",
+            assignment.id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "assignment_id": assignment.id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(assignment)
     }
 
     /// Full grant history for a membership, all states.
@@ -316,10 +712,34 @@ impl TenancyService {
         membership_id: MembershipId,
         grant_id: ScopeGrantId,
         scope: Scope,
+        actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
-        self.db
-            .grant_scope(organization_id, membership_id, grant_id, scope)
-            .await
+        let grant = self
+            .db
+            .grant_scope(
+                organization_id.clone(),
+                membership_id.clone(),
+                grant_id.clone(),
+                scope,
+            )
+            .await?;
+        self.record_evidence(
+            IamEventName::ScopeGranted,
+            &organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "grant_scope",
+            "scope_grant",
+            grant_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "grant_id": grant_id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(grant)
     }
 
     /// Lifts one narrowing entry. Remaining active grants still apply.
@@ -327,8 +747,25 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         grant_id: &ScopeGrantId,
+        actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
-        self.db.revoke_scope_grant(organization_id, grant_id).await
+        let grant = self.db.revoke_scope_grant(organization_id, grant_id).await?;
+        self.record_evidence(
+            IamEventName::ScopeRevoked,
+            organization_id,
+            None,
+            TargetRef::Membership(grant.membership_id.clone()),
+            actor,
+            "revoke_scope_grant",
+            "scope_grant",
+            grant_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "grant_id": grant_id.as_str(),
+            }),
+        )
+        .await?;
+        Ok(grant)
     }
 
     /// Active and revoked narrowing entries for a membership.
@@ -367,40 +804,138 @@ impl TenancyService {
         resolve_permissions(&assignments)
     }
 
+    /// Records evidence for an organization-lifecycle transition whose
+    /// result is the organization itself (contract §5, §29).
+    async fn record_organization_evidence(
+        &self,
+        event_name: IamEventName,
+        organization: &Organization,
+        actor: ActorRef,
+        action: &'static str,
+    ) -> Result<(), TenancyError> {
+        self.record_evidence(
+            event_name,
+            &organization.id,
+            None,
+            TargetRef::Organization(organization.id.clone()),
+            actor,
+            action,
+            "organization",
+            organization.id.to_string(),
+            serde_json::json!({
+                "organization_id": organization.id.as_str(),
+                "state": format!("{:?}", organization.state),
+            }),
+        )
+        .await
+    }
+
+    /// Records evidence for a branch-lifecycle transition whose result is
+    /// the branch itself (contract §5, §29).
+    async fn record_branch_evidence(
+        &self,
+        event_name: IamEventName,
+        branch: &Branch,
+        actor: ActorRef,
+        action: &'static str,
+    ) -> Result<(), TenancyError> {
+        self.record_evidence(
+            event_name,
+            &branch.organization_id,
+            Some(&branch.id),
+            TargetRef::Branch(branch.id.clone()),
+            actor,
+            action,
+            "branch",
+            branch.id.to_string(),
+            serde_json::json!({
+                "organization_id": branch.organization_id.as_str(),
+                "branch_id": branch.id.as_str(),
+                "state": format!("{:?}", branch.state),
+            }),
+        )
+        .await
+    }
+
     /// Organization lifecycle transitions (section 6).
     pub async fn activate_organization(
         &self,
         id: &OrganizationId,
+        actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
-        self.db.activate_organization(id).await
+        let organization = self.db.activate_organization(id).await?;
+        self.record_organization_evidence(
+            IamEventName::OrganizationActivated,
+            &organization,
+            actor,
+            "activate_organization",
+        )
+        .await?;
+        Ok(organization)
     }
 
     pub async fn suspend_organization(
         &self,
         id: &OrganizationId,
+        actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
-        self.db.suspend_organization(id).await
+        let organization = self.db.suspend_organization(id).await?;
+        self.record_organization_evidence(
+            IamEventName::OrganizationSuspended,
+            &organization,
+            actor,
+            "suspend_organization",
+        )
+        .await?;
+        Ok(organization)
     }
 
     pub async fn resume_organization(
         &self,
         id: &OrganizationId,
+        actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
-        self.db.resume_organization(id).await
+        let organization = self.db.resume_organization(id).await?;
+        self.record_organization_evidence(
+            IamEventName::OrganizationResumed,
+            &organization,
+            actor,
+            "resume_organization",
+        )
+        .await?;
+        Ok(organization)
     }
 
     pub async fn begin_close_organization(
         &self,
         id: &OrganizationId,
+        actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
-        self.db.begin_close_organization(id).await
+        let organization = self.db.begin_close_organization(id).await?;
+        self.record_organization_evidence(
+            IamEventName::OrganizationClosingStarted,
+            &organization,
+            actor,
+            "begin_close_organization",
+        )
+        .await?;
+        Ok(organization)
     }
 
     pub async fn close_organization(
         &self,
         id: &OrganizationId,
+        actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
-        self.db.close_organization(id).await
+        let organization = self.db.close_organization(id).await?;
+        self.record_organization_evidence(
+            IamEventName::OrganizationClosed,
+            &organization,
+            actor,
+            "close_organization",
+        )
+        .await?;
+        Ok(organization)
     }
 
     /// Branch lifecycle transitions (section 14.1). All scope-carrying: a
@@ -409,40 +944,85 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         id: &BranchId,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.activate_branch(organization_id, id).await
+        let branch = self.db.activate_branch(organization_id, id).await?;
+        self.record_branch_evidence(
+            IamEventName::BranchActivated,
+            &branch,
+            actor,
+            "activate_branch",
+        )
+        .await?;
+        Ok(branch)
     }
 
     pub async fn suspend_branch(
         &self,
         organization_id: &OrganizationId,
         id: &BranchId,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.suspend_branch(organization_id, id).await
+        let branch = self.db.suspend_branch(organization_id, id).await?;
+        self.record_branch_evidence(
+            IamEventName::BranchSuspended,
+            &branch,
+            actor,
+            "suspend_branch",
+        )
+        .await?;
+        Ok(branch)
     }
 
     pub async fn resume_branch(
         &self,
         organization_id: &OrganizationId,
         id: &BranchId,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.resume_branch(organization_id, id).await
+        let branch = self.db.resume_branch(organization_id, id).await?;
+        self.record_branch_evidence(
+            IamEventName::BranchResumed,
+            &branch,
+            actor,
+            "resume_branch",
+        )
+        .await?;
+        Ok(branch)
     }
 
     pub async fn begin_close_branch(
         &self,
         organization_id: &OrganizationId,
         id: &BranchId,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.begin_close_branch(organization_id, id).await
+        let branch = self.db.begin_close_branch(organization_id, id).await?;
+        self.record_branch_evidence(
+            IamEventName::BranchClosingStarted,
+            &branch,
+            actor,
+            "begin_close_branch",
+        )
+        .await?;
+        Ok(branch)
     }
 
     pub async fn close_branch(
         &self,
         organization_id: &OrganizationId,
         id: &BranchId,
+        actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
-        self.db.close_branch(organization_id, id).await
+        let branch = self.db.close_branch(organization_id, id).await?;
+        self.record_branch_evidence(
+            IamEventName::BranchClosed,
+            &branch,
+            actor,
+            "close_branch",
+        )
+        .await?;
+        Ok(branch)
     }
 
     /// Resolves the effective scope for persisted records (sections 5.1, 54).
@@ -545,6 +1125,20 @@ mod tests {
         TenantUserId::new(value).unwrap()
     }
 
+    /// Test-only actor identity. No evidence sink is wired in these unit
+    /// tests (`service()`/`strict_service()` never call `.with_evidence`),
+    /// so this value is never persisted or asserted on here — it exists
+    /// only to satisfy the `actor: ActorRef` parameter these methods now
+    /// require. Postgres-backed evidence assertions live in
+    /// `tests/part8_provision_organization_evidence_tests.rs`.
+    fn actor(subject: &str) -> ActorRef {
+        ActorRef {
+            subject_ref: subject.to_string(),
+            membership_ref: None,
+            device_ref: None,
+        }
+    }
+
     fn service() -> TenancyService {
         TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
     }
@@ -599,17 +1193,17 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-            )
+             actor("test"))
             .await
             .unwrap();
         assert!(!invited.has_authority());
         // Cannot skip to Active.
         assert_eq!(
-            service.accept_member(org, &invited.id).await,
+            service.accept_member(org, &invited.id, actor("test")).await,
             Err(TenancyError::InvalidTransition)
         );
         service.mark_member_pending(org, &invited.id).await.unwrap();
-        let active = service.accept_member(org, &invited.id).await.unwrap();
+        let active = service.accept_member(org, &invited.id, actor("test")).await.unwrap();
         assert!(active.has_authority());
 
         let scope = service
@@ -618,14 +1212,14 @@ mod tests {
             .unwrap();
         assert_eq!(scope.organization_id, *org);
 
-        service.suspend_member(org, &active.id).await.unwrap();
+        service.suspend_member(org, &active.id, actor("test")).await.unwrap();
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
         );
-        service.resume_member(org, &active.id).await.unwrap();
+        service.resume_member(org, &active.id, actor("test")).await.unwrap();
         assert!(service.effective_scope(org, &active.id, None).await.is_ok());
-        service.revoke_member(org, &active.id).await.unwrap();
+        service.revoke_member(org, &active.id, actor("test")).await.unwrap();
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
@@ -682,7 +1276,7 @@ mod tests {
                 bundle.owner_membership.id.clone(),
                 RoleAssignmentId::new("ra-owner").unwrap(),
                 Role::Owner,
-            )
+             actor("test"))
             .await
             .unwrap();
         let owner_permissions = service
@@ -696,18 +1290,18 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-            )
+             actor("test"))
             .await
             .unwrap();
         service.mark_member_pending(org, &cashier.id).await.unwrap();
-        service.accept_member(org, &cashier.id).await.unwrap();
+        service.accept_member(org, &cashier.id, actor("test")).await.unwrap();
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier").unwrap(),
                 Role::Cashier,
-            )
+             actor("test"))
             .await
             .unwrap();
         assert_eq!(
@@ -717,7 +1311,7 @@ mod tests {
 
         // Revocation drains authority without deleting history.
         service
-            .revoke_role(org, &cashier.id, Role::Cashier)
+            .revoke_role(org, &cashier.id, Role::Cashier, actor("test"))
             .await
             .unwrap();
         assert!(
@@ -735,10 +1329,10 @@ mod tests {
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier-2").unwrap(),
                 Role::Cashier,
-            )
+             actor("test"))
             .await
             .unwrap();
-        service.suspend_member(org, &cashier.id).await.unwrap();
+        service.suspend_member(org, &cashier.id, actor("test")).await.unwrap();
         assert!(
             service
                 .member_permissions(org, &cashier.id)
@@ -795,7 +1389,7 @@ mod tests {
         // from the server-loaded record only (sections 9.2, T4). A tampered
         // client cannot smuggle OWNER through any argument.
         let accepted = service
-            .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-inv").unwrap(), None)
+            .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-inv").unwrap(), None, actor("test"))
             .await
             .unwrap();
         assert!(accepted.membership.has_authority());
@@ -814,7 +1408,7 @@ mod tests {
                     INVITE_TOKEN,
                     RoleAssignmentId::new("ra-replay").unwrap(),
                     None,
-                )
+                 actor("test"))
                 .await,
             Err(InvitationError::AlreadyAccepted)
         );
@@ -833,14 +1427,14 @@ mod tests {
                     "tok-unknown-0123456789abcdefghijkl",
                     RoleAssignmentId::new("ra-ghost").unwrap(),
                     None,
-                )
+                 actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
         // Malformed tokens never reach the store.
         assert_eq!(
             service
-                .accept_invitation("short", RoleAssignmentId::new("ra-x").unwrap(), None)
+                .accept_invitation("short", RoleAssignmentId::new("ra-x").unwrap(), None, actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -878,7 +1472,7 @@ mod tests {
                     INVITE_TOKEN_2,
                     RoleAssignmentId::new("ra-scoped").unwrap(),
                     None,
-                )
+                 actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -887,7 +1481,7 @@ mod tests {
                 INVITE_TOKEN_2,
                 RoleAssignmentId::new("ra-scoped").unwrap(),
                 Some(ScopeGrantId::new("g-scoped").unwrap()),
-            )
+             actor("test"))
             .await
             .unwrap();
         let grant = accepted.scope_grant.expect("proposed scope granted");
@@ -934,7 +1528,7 @@ mod tests {
                     INVITE_TOKEN,
                     RoleAssignmentId::new("ra-dead").unwrap(),
                     None,
-                )
+                 actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -1005,13 +1599,13 @@ mod tests {
         let throttle = strict_service();
         assert_eq!(
             throttle
-                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None,)
+                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None, actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
         assert_eq!(
             throttle
-                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None,)
+                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None, actor("test"))
                 .await,
             Err(InvitationError::RateLimited)
         );
@@ -1033,15 +1627,15 @@ mod tests {
                 owner.clone(),
                 RoleAssignmentId::new("ra-owner").unwrap(),
                 Role::Owner,
-            )
+             actor("test"))
             .await
             .unwrap();
         let second_branch = service
-            .create_branch(BranchId::new("b2").unwrap(), org.clone(), "Second Branch")
+            .create_branch(BranchId::new("b2").unwrap(), org.clone(), "Second Branch", actor("test"))
             .await
             .unwrap();
         service
-            .activate_branch(org, &second_branch.id)
+            .activate_branch(org, &second_branch.id, actor("test"))
             .await
             .unwrap();
 
@@ -1066,7 +1660,7 @@ mod tests {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
-            )
+             actor("test"))
             .await
             .unwrap();
         assert!(
@@ -1092,18 +1686,18 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-            )
+             actor("test"))
             .await
             .unwrap();
         service.mark_member_pending(org, &cashier.id).await.unwrap();
-        service.accept_member(org, &cashier.id).await.unwrap();
+        service.accept_member(org, &cashier.id, actor("test")).await.unwrap();
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier").unwrap(),
                 Role::Cashier,
-            )
+             actor("test"))
             .await
             .unwrap();
         service
@@ -1115,7 +1709,7 @@ mod tests {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
-            )
+             actor("test"))
             .await
             .unwrap();
         assert!(
@@ -1131,7 +1725,7 @@ mod tests {
 
         // Lifting the narrowing restores organization-wide authority.
         service
-            .revoke_scope_grant(org, &ScopeGrantId::new("g-main").unwrap())
+            .revoke_scope_grant(org, &ScopeGrantId::new("g-main").unwrap(), actor("test"))
             .await
             .unwrap();
         service

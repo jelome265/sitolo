@@ -119,6 +119,17 @@ pub enum InvitationError {
     AlreadyAccepted,
     #[error("invitation rate limited")]
     RateLimited,
+    /// Mandatory Phase 4 Part 8 audit/outbox evidence could not be durably
+    /// recorded after the invitation was validly redeemed. Distinct from
+    /// the token-validity codes above by design: this is an internal
+    /// persistence failure on an otherwise-successful redemption, not a
+    /// statement about the token, so it must not be folded into `Invalid`
+    /// (that would misreport a real evidence outage as a bad token) nor
+    /// exposed to the caller under a token-validity code (a future HTTP
+    /// mapping should treat this as a 5xx, not one of the 4xx invitation
+    /// codes in `code()`).
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailed,
 }
 
 impl InvitationError {
@@ -130,6 +141,7 @@ impl InvitationError {
             InvitationError::Expired => "INVITATION_EXPIRED",
             InvitationError::AlreadyAccepted => "INVITATION_ALREADY_ACCEPTED",
             InvitationError::RateLimited => "INVITATION_RATE_LIMITED",
+            InvitationError::EvidencePersistenceFailed => "INVITATION_EVIDENCE_PERSISTENCE_FAILED",
         }
     }
 }

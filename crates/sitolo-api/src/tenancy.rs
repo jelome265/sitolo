@@ -9,6 +9,7 @@
 //! unknown fields are rejected (§10.1).
 
 use serde::{Deserialize, Serialize};
+use sitolo_audit::ActorRef;
 use sitolo_application::TenancyService;
 use sitolo_domain::tenancy::{
     Branch, BranchId, BranchState, MembershipId, Organization, OrganizationId, OrganizationState,
@@ -17,6 +18,23 @@ use sitolo_domain::tenancy::{
 use sitolo_persistence::ProvisionedOrganization;
 
 use crate::error::AppError;
+
+/// Placeholder actor for Phase 4 Part 8 audit evidence (contract §5, §29)
+/// until authentication middleware lands (PR-007). These handlers have no
+/// authenticated principal to draw a real actor from yet — `serve.rs` calls
+/// them with no security context at all. Rather than fabricate a
+/// caller-looking subject, this records the true current state: there is no
+/// authenticated actor. Every call site below must be revisited once
+/// `SecurityContext`/`AuthenticatedPrincipal` (Phase 3) is threaded through
+/// routing, so the audit trail reflects the real caller instead of this
+/// marker.
+fn unauthenticated_actor() -> ActorRef {
+    ActorRef {
+        subject_ref: "unauthenticated-pending-pr007".to_string(),
+        membership_ref: None,
+        device_ref: None,
+    }
+}
 
 /// Bounded input limits for tenancy requests (§39, §10.2).
 pub mod bounds {
@@ -207,6 +225,10 @@ pub fn map_tenancy_error(err: &TenancyError) -> AppError {
             AppError::Conflict
         }
         TenancyError::RateLimited => AppError::RateLimited,
+        // Business mutation already succeeded; the mandatory Part 8
+        // audit/outbox evidence write failed (contract §5, §10). This is a
+        // downstream persistence outage, not a problem with the request.
+        TenancyError::EvidencePersistenceFailed => AppError::DependencyUnavailable,
     }
 }
 
@@ -248,7 +270,7 @@ pub async fn handle_create_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let branch_id = BranchId::new(&req.branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .create_branch(branch_id, org_id, &req.name)
+        .create_branch(branch_id, org_id, &req.name, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))
@@ -263,7 +285,7 @@ pub async fn handle_activate_organization(
     validate_identifier(organization_id)?;
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let org = service
-        .activate_organization(&org_id)
+        .activate_organization(&org_id, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(OrganizationResponse::from(&org))
@@ -276,7 +298,7 @@ pub async fn handle_suspend_organization(
     validate_identifier(organization_id)?;
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let org = service
-        .suspend_organization(&org_id)
+        .suspend_organization(&org_id, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(OrganizationResponse::from(&org))
@@ -289,7 +311,7 @@ pub async fn handle_resume_organization(
     validate_identifier(organization_id)?;
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let org = service
-        .resume_organization(&org_id)
+        .resume_organization(&org_id, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(OrganizationResponse::from(&org))
@@ -302,7 +324,7 @@ pub async fn handle_begin_close_organization(
     validate_identifier(organization_id)?;
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let org = service
-        .begin_close_organization(&org_id)
+        .begin_close_organization(&org_id, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(OrganizationResponse::from(&org))
@@ -315,7 +337,7 @@ pub async fn handle_close_organization(
     validate_identifier(organization_id)?;
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let org = service
-        .close_organization(&org_id)
+        .close_organization(&org_id, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(OrganizationResponse::from(&org))
@@ -331,7 +353,7 @@ pub async fn handle_activate_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .activate_branch(&org_id, &bid)
+        .activate_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))
@@ -347,7 +369,7 @@ pub async fn handle_suspend_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .suspend_branch(&org_id, &bid)
+        .suspend_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))
@@ -363,7 +385,7 @@ pub async fn handle_resume_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .resume_branch(&org_id, &bid)
+        .resume_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))
@@ -379,7 +401,7 @@ pub async fn handle_begin_close_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .begin_close_branch(&org_id, &bid)
+        .begin_close_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))
@@ -395,7 +417,7 @@ pub async fn handle_close_branch(
     let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
-        .close_branch(&org_id, &bid)
+        .close_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))

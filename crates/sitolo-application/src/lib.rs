@@ -16,4 +16,4 @@ mod identity;
 mod tenancy;
 
 pub use identity::IdentityService;
-pub use tenancy::TenancyService;
+pub use tenancy::{TenancyEvidenceSink, TenancyService};

@@ -9,6 +9,7 @@ license.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 sitolo-application = { path = "../sitolo-application" }
+sitolo-audit.workspace = true
 sitolo-auth = { path = "../sitolo-auth" }
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-observability = { path = "../sitolo-observability" }

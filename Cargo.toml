@@ -43,6 +43,7 @@ uuid = { version = "1", default-features = false, features = ["v4"] }
 sitolo-security = { path = "crates/sitolo-security" }
 sitolo-auth = { path = "crates/sitolo-auth" }
 sitolo-audit = { path = "crates/sitolo-audit" }
+sitolo-events = { path = "crates/sitolo-events" }
 sitolo-observability = { path = "crates/sitolo-observability" }
 sitolo-persistence = { path = "crates/sitolo-persistence" }
 sitolo-config = { path = "crates/sitolo-config" }

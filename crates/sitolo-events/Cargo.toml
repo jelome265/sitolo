@@ -6,3 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+sitolo-domain = { path = "../sitolo-domain" }
+thiserror = { workspace = true }
