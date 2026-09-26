@@ -98,6 +98,10 @@ grep -Fq '## Security control evidence' workspaces/sitolo-engineering/_templates
   fail=1
 }
 
+grep -Fq '../../skills/security-engineering/SKILL.md' workspaces/sitolo-engineering/shared/security-context/CONTEXT.md || {
+  echo "SECURITY ICM VIOLATION: security context does not route the mandatory security-engineering skill" >&2
+  fail=1
+}
 grep -Fq 'security_relevant: yes|no' workspaces/sitolo-engineering/stages/01-select/CONTEXT.md || {
   echo "SECURITY ICM VIOLATION: Stage 01 does not define the security applicability field"
   fail=1
