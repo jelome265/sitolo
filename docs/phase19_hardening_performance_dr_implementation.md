@@ -447,3 +447,139 @@ next-phase dependency
 ```
 
 **End of Phase 19 contract.**
+
+# 12. Performance Engineering Method
+
+Every optimization follows:
+
+~~~text
+measure
+→ identify bottleneck
+→ form hypothesis
+→ change one bounded variable
+→ benchmark
+→ correctness/security regression
+→ retain evidence
+~~~
+
+No performance change is accepted from a single synthetic benchmark.
+
+# 13. Workload Model
+
+At minimum model:
+
+~~~text
+steady-state POS
+sales peak
+inventory receiving burst
+payment/reconciliation backlog
+sync reconnect storm
+report/export workload
+administrative workload
+dependency brownout
+database failover/recovery
+~~~
+
+Use realistic tenant sizes and concurrent users/devices.
+
+# 14. Resource Budget Register
+
+| Resource | Budget |
+|---|---|
+| HTTP request body | bounded bytes |
+| request CPU | bounded duration |
+| DB pool | fixed maximum |
+| worker concurrency | bounded |
+| retry attempts | bounded |
+| queue depth | bounded |
+| export size | bounded |
+| sync batch | bounded |
+| memory | workload-specific ceiling |
+
+The numerical values belong in deployment/configuration contracts after measurement; this phase governs that they exist and are enforced.
+
+# 15. Chaos / Failure Matrix
+
+Inject, where safe:
+
+~~~text
+database latency
+database unavailability
+connection exhaustion
+worker termination
+queue delay
+object-storage failure
+secret-provider failure
+DNS failure
+provider timeout
+partial network loss
+application process crash
+~~~
+
+Every injection needs a stop condition and a data-integrity oracle.
+
+# 16. Restore Drill
+
+The restore drill must prove:
+
+~~~text
+backup discoverable
+→ restore
+→ schema/migration validation
+→ integrity checks
+→ application reconnect
+→ critical transaction verification
+→ external-state reconciliation
+→ evidence capture
+~~~
+
+A successful backup job is insufficient.
+
+# 17. RPO/RTO Measurement
+
+Record:
+
+~~~text
+objective
+observed value
+test conditions
+data volume
+failure type
+recovery steps
+variance
+remediation
+~~~
+
+RPO is measured data loss tolerance, not “last backup time”. RTO is measured time to usable service, not merely process startup.
+
+# 18. Rollback Safety
+
+Application rollback is allowed only when database and external-side-effect compatibility is demonstrated.
+
+If a candidate has changed payment/tax/idempotency semantics, rollback must explicitly account for already-created external references and durable local state.
+
+# 19. Evidence Ledger
+
+Keep exact source/artifact identity for:
+
+~~~text
+load test
+soak test
+chaos scenario
+restore drill
+rollback rehearsal
+capacity measurement
+security regression
+migration rehearsal
+~~~
+
+# 20. No-Go Conditions
+
+Do not close Phase 19 if:
+
+- RPO/RTO are only asserted;
+- restore has not been executed;
+- rollback is incompatible with the database;
+- load tests do not exercise realistic critical paths;
+- resource ceilings can be bypassed;
+- hardening changed business/security semantics without review.
