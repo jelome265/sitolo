@@ -64,6 +64,10 @@ Security-relevant actions must produce sufficient audit evidence. Logs/metrics/t
 
 Pinned toolchains/actions, dependency governance, lockfile integrity, vulnerability scanning, formatting/lint/test gates and security tests are release controls.
 
+## Security governance and evidence
+
+Security controls are managed through `security_control_register.md`. Material changes are traced from threat/obligation → control ID → owner → implementation evidence → security test/evidence → CI/release gate → residual risk or exception. Incident handling, exceptions and cryptographic key lifecycle are governed by the dedicated security operations documents routed through the Engineering security context.
+
 ## Security verification
 
 Security controls are release-blocking where the governing implementation contracts mark them mandatory. Negative tests must cover cross-tenant access, scope escalation, stale/revoked identity, replay, authorization bypass, unsafe integration behavior and relevant data-boundary failures.

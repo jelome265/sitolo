@@ -16,6 +16,13 @@ run_slug: "[run-slug]"
 
 ## Acceptance criteria
 
+## Security applicability
+
+- security_relevant: yes|no
+- rationale:
+- affected security boundaries:
+- candidate security control IDs:
+
 ## External evidence required
 
 ## Known constraints

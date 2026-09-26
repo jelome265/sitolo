@@ -12,18 +12,22 @@ One job: produce reproducible evidence that the approved implementation and re-a
 | Reference | Governance | ../../shared/governance-context/CONTEXT.md | Definitions of done | Verification requirements |
 | Reference | Project docs | ../../../../docs/README.md | Applicable testing/deployment docs | Required evidence |
 | Reference | Verification guide | references/verification.md | Full file | Gate selection |
+| Reference | Security control register | ../../../../docs/security_control_register.md | Applicable control IDs | Security proof and release status |
+| Reference | Security context | ../../shared/security-context/CONTEXT.md | Conditional when security_relevant=yes | Security verification and current standards |
 
 **Do NOT load:** unrelated stage contracts, unrelated reference families, the full documentation corpus, or the full `agent.md`; use the routed governance context and exact inputs only.
 
 ## Process
 
-1. Determine required targeted checks from the plan and audit.
-2. Run the canonical verifier: ./scripts/ci/verify.
-3. Run additional integration/security/contract tests required by the change.
-4. Record exact commands, results, environment limitations, and unverified claims.
-5. Confirm that the latest audit has no unresolved material findings.
-6. Write the verification report to output/.
-7. If verification fails, record the failure and hand control back to 07-remediate; otherwise continue to 09-deliver.
+1. Read security applicability and control IDs from the latest plan/audit. If `security_relevant: yes`, load the security context and control register before selecting gates.
+2. Determine required targeted checks from the plan and audit.
+3. Run the canonical verifier: ./scripts/ci/verify.
+4. Run additional integration/security/contract tests required by the change.
+5. For security-relevant work, record control ID → test/gate → result → evidence reference → limitation.
+6. Record exact commands, results, environment limitations, and unverified claims.
+7. Confirm that the latest audit has no unresolved material findings and no applicable security control remains unproven.
+8. Write the verification report to output/.
+9. If verification fails, record the failure and hand control back to 07-remediate; otherwise continue to 09-deliver.
 
 ## Human Check
 

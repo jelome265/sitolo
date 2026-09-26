@@ -24,6 +24,11 @@ run_slug: "[run-slug]"
 
 ## API and compatibility impact
 
+## Security controls
+
+| Control ID | Threat/requirement | Planned implementation | Negative test/evidence | CI/release gate | Residual risk/exception |
+|---|---|---|---|---|---|
+
 ## Tests
 
 ## Observability

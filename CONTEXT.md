@@ -4,16 +4,21 @@
 
 | Task Type | Go To | Description |
 |---|---|---|
-| Engineering change | workspaces/sitolo-engineering/CLAUDE.md | Routes to the engineering pipeline |
-| Pipeline status | workspaces/sitolo-engineering/CONTEXT.md | Shows the pipeline and status convention |
-| Setup | workspaces/sitolo-engineering/setup/questionnaire.md | Configures stable workspace preferences |
+| Organizational work | workspaces/CLAUDE.md | Mandatory primary-domain dispatch |
+| Change impact | map/CLAUDE.md | System Map routing after primary domain selection, or for an explicit map-only request |
 
-## Shared Resources
+## Loading
+
+Every organizational task starts at `workspaces/CLAUDE.md`. Select exactly one primary workspace before entering a domain-specific workflow. Do not bypass the workspace router because a task includes code, repository, infrastructure, security, payments, documentation, or implementation language.
+
+After primary-domain selection, read only that workspace's CONTEXT.md and explicit cross-domain routes. Engineering is selected by the workspace router only when Engineering owns the primary work; it is never inferred from the presence of implementation work.
+
+## Authority
 
 | Resource | Location | Contains |
 |---|---|---|
-| Engineering workspace | workspaces/sitolo-engineering/ | Stage contracts and working state |
-| Governance | agent.md | Repository-wide engineering contract |
-| Documentation map | docs/README.md | Canonical project knowledge routing |
+| Engineering governance | agent.md | Repository-wide engineering contract |
+| Documentation map | docs/README.md | Canonical project knowledge |
+| Workspace architecture | docs/workspace_domain_architecture.md | Organizational workspace ownership and exclusions |
 
-Do not bypass the selected workspace and enter a later stage directly.
+Do not enter a domain workspace directly from this root context.

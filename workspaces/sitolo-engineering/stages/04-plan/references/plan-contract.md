@@ -13,6 +13,7 @@ A plan must identify:
 - tests and evidence;
 - observability;
 - rollback or disable path;
+- security control ID → threat/requirement → implementation → negative test/evidence → CI/release gate → residual risk/exception mapping when security-relevant;
 - unresolved decisions.
 
 The plan specifies what and when. It must not silently settle an open architectural decision.

@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+# This validator is independently executable. Do not depend on variables owned by
+# another ICM script; the contract checker must remain a standalone proof surface.
+WORKSPACE="workspaces/sitolo-engineering"
+STAGES=(01-select 02-research 03-investigate 04-plan 05-implement 06-audit 07-remediate 08-verify 09-deliver)
+
+fail=0
+registered=()
+executable=0
+routing_only=0
+
+section_has_content() {
+  local file="$1"
+  local heading="$2"
+  awk -v heading="$heading" '
+    $0 == heading { found=1; next }
+    found && /^## / { exit }
+    found && $0 !~ /^[[:space:]]*$/ { has=1 }
+    END { exit has ? 0 : 1 }
+  ' "$file"
+}
+
+trim() {
+  printf "%s" "$1" | sed 's/^ *//; s/ *$//'
+}
+
+echo "ICM WORKSPACE CONTRACT CHECK"
+
+if ! section_has_content workspaces/CLAUDE.md "## Selection rule"; then
+  echo "VIOLATION: organizational router lacks deterministic selection rule" >&2
+  fail=1
+fi
+
+# Agent-specific bootstrap adapters must remain thin and must route into the same
+# canonical ICM rather than becoming parallel workflow authorities.
+for adapter in GEMINI.md QWEN.md; do
+  if [[ ! -f "$adapter" ]]; then
+    echo "VIOLATION: missing agent bootstrap adapter: $adapter" >&2
+    fail=1
+    continue
+  fi
+  if (( $(wc -l < "$adapter") > 80 )); then
+    echo "VIOLATION: agent bootstrap adapter exceeds 80 lines: $adapter" >&2
+    fail=1
+  fi
+  grep -Fq 'Read the root `CLAUDE.md` first.' "$adapter" || {
+    echo "VIOLATION: adapter does not route through root CLAUDE.md: $adapter" >&2
+    fail=1
+  }
+  grep -Fq 'workspaces/CLAUDE.md' "$adapter" || {
+    echo "VIOLATION: adapter does not route through organizational workspace router: $adapter" >&2
+    fail=1
+  }
+  grep -Fq 'canonical routing wins' "$adapter" || {
+    echo "VIOLATION: adapter lacks canonical-authority fallback: $adapter" >&2
+    fail=1
+  }
+done
+
+while IFS='|' read -r id workspace mode evidence status; do
+  id="$(trim "$id")"
+  workspace="$(trim "$workspace")"
+  mode="$(trim "$mode")"
+  status="$(trim "$status")"
+
+  [[ -z "$id" || "$id" == "ID" || "$id" == "---" ]] && continue
+
+  workspace="${workspace%/}"
+  registered+=("$workspace")
+  ws_root="workspaces/$workspace"
+  claude="$ws_root/CLAUDE.md"
+  context="$ws_root/CONTEXT.md"
+
+  if [[ ! -f "$claude" || ! -f "$context" ]]; then
+    echo "VIOLATION: registered workspace missing CLAUDE.md or CONTEXT.md: $workspace" >&2
+    fail=1
+    continue
+  fi
+
+  claude_mode="$(sed -n 's/^Mode: //p' "$claude" | head -n1 | tr -d '[:space:]')"
+  if [[ "$claude_mode" != "executable" && "$claude_mode" != "routing-only" ]]; then
+    echo "VIOLATION: workspace mode missing or invalid: $workspace" >&2
+    fail=1
+  elif [[ "$mode" != "$claude_mode" ]]; then
+    echo "VIOLATION: registry mode disagrees with workspace CLAUDE.md: $workspace" >&2
+    fail=1
+  fi
+
+  if ! grep -Eq '^Primary owner: .+' "$claude"; then
+    echo "VIOLATION: missing primary ownership declaration: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Entry condition"; then
+    echo "VIOLATION: missing/empty entry condition: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Workflow destination"; then
+    echo "VIOLATION: missing/empty workflow destination: $workspace" >&2
+    fail=1
+  elif ! awk '
+      /^## Workflow destination$/ { found=1; next }
+      found && /^## / { exit }
+      found && /^Primary destination:/ { ok=1 }
+      END { exit ok ? 0 : 1 }
+    ' "$claude"; then
+    echo "VIOLATION: workflow destination must declare Primary destination: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$claude" "## Cross-domain exits"; then
+    echo "VIOLATION: missing/empty cross-domain exits: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$context" "## Inputs"; then
+    echo "VIOLATION: missing/empty scoped inputs: $workspace" >&2
+    fail=1
+  elif ! awk '
+      /^## Inputs$/ { found=1; next }
+      found && /^## / { exit }
+      found && /^\| .*Scope.*\| .*Why.*\|$/ { header=1 }
+      found && /\.\.\/|docs\// { source=1 }
+      END { exit (header && source) ? 0 : 1 }
+    ' "$context"; then
+    echo "VIOLATION: Inputs must identify scoped sources and their purpose: $workspace" >&2
+    fail=1
+  fi
+
+  if ! section_has_content "$context" "## Do NOT load"; then
+    echo "VIOLATION: missing negative loading boundary: $workspace" >&2
+    fail=1
+  fi
+
+  if ! grep -Fq "$workspace/" workspaces/CLAUDE.md; then
+    echo "VIOLATION: registered workspace is unreachable from organizational router: $workspace" >&2
+    fail=1
+  fi
+
+  mapfile -t exits < <(
+    sed -n '/^## Cross-domain exits$/,/^## /p' "$claude" |
+      grep -oE '\.\./sitolo-[a-z0-9-]+/(CLAUDE\.md|CONTEXT\.md)' || true
+  )
+  for exit_ref in "${exits[@]}"; do
+    target_path="workspaces/${exit_ref#../}"
+    if [[ ! -f "$target_path" ]]; then
+      echo "VIOLATION: broken cross-domain exit: $workspace -> $exit_ref" >&2
+      fail=1
+    fi
+  done
+
+  case "$mode" in
+    executable)
+      executable=$((executable + 1))
+      [[ -d "$ws_root/stages" ]] || {
+        echo "VIOLATION: executable workspace has no stages directory: $workspace" >&2
+        fail=1
+      }
+      ;;
+    routing-only)
+      routing_only=$((routing_only + 1))
+      if [[ -d "$ws_root/stages" ]]; then
+        echo "VIOLATION: routing-only workspace contains an executable stages tree: $workspace" >&2
+        fail=1
+      fi
+      ;;
+  esac
+done < <(
+  awk -F '|' '
+    /^## Workspace registry$/ { in_registry=1; next }
+    /^## Explicit non-domains$/ { in_registry=0 }
+    in_registry && /^\|/ && $2 !~ /ID/ && $2 !~ /---/ {
+      printf "%s|%s|%s|%s|%s\n", $2, $3, $4, $5, $6
+    }
+  ' workspaces/CONTEXT.md
+)
+
+workspace_count="${#registered[@]}"
+if [[ "$workspace_count" -eq 0 ]]; then
+  echo "VIOLATION: workspace registry is empty" >&2
+  fail=1
+fi
+
+echo "Registered workspaces: $workspace_count"
+echo "Executable workspaces: $executable"
+echo "Routing-only workspaces: $routing_only"
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "ICM WORKSPACE CONTRACT CHECK FAILED" >&2
+  exit 1
+fi
+
+# Stage 06 semantic-audit enforcement: this is independent of CI success.
+audit_contract_path="workspaces/sitolo-engineering/stages/06-audit/references/audit-contract.md"
+security_checks_path="workspaces/sitolo-engineering/stages/06-audit/references/security-checks.md"
+correctness_checks_path="workspaces/sitolo-engineering/stages/06-audit/references/correctness-checks.md"
+
+for path in "$audit_contract_path" "$security_checks_path" "$correctness_checks_path"; do
+  [[ -f "$path" ]] || {
+    echo "VIOLATION: Stage 06 semantic-audit reference missing: $path" >&2
+    fail=1
+  }
+done
+
+if [[ -f workspaces/sitolo-engineering/stages/06-audit/references/audit-method.md ]]; then
+  echo "VIOLATION: obsolete Stage 06 audit-method.md remains alongside canonical audit-contract.md" >&2
+  fail=1
+fi
+
+grep -Fq 'Route every implementation-changing run to Stage 06 Audit next' workspaces/sitolo-engineering/stages/05-implement/CONTEXT.md || {
+  echo "VIOLATION: implementation stage does not require mandatory semantic audit" >&2
+  fail=1
+}
+
+grep -Fq 'a green CI result does not satisfy semantic audit by itself' workspaces/sitolo-engineering/stages/06-audit/CONTEXT.md || {
+  echo "VIOLATION: Stage 06 does not explicitly distinguish semantic audit from CI success" >&2
+  fail=1
+}
+
+grep -Fq '../06-audit/output/[run-slug]-audit.md' workspaces/sitolo-engineering/stages/07-remediate/CONTEXT.md || {
+  echo "VIOLATION: remediation stage is not connected to the Stage 06 audit artifact" >&2
+  fail=1
+}
+
+grep -Fq '../06-audit/output/[run-slug]-audit.md' workspaces/sitolo-engineering/stages/08-verify/CONTEXT.md || {
+  echo "VIOLATION: verification stage is not consuming the Stage 06 audit artifact" >&2
+  fail=1
+}
+
+# Jake's ICM factory has five layers; stage folders are Layer 2+ shelves and use
+# CONTEXT.md as the stage contract. A stage-local CLAUDE.md would introduce an
+# extra routing layer and is therefore rejected.
+for stage in "${STAGES[@]}"; do
+  if [[ -f "$WORKSPACE/stages/$stage/CLAUDE.md" ]]; then
+    echo "VIOLATION: stage-local CLAUDE.md is not part of the ICM stage contract; use CONTEXT.md: $stage" >&2
+    fail=1
+  fi
+done
+
+echo "ICM WORKSPACE CONTRACT CHECK PASSED"

@@ -50,6 +50,10 @@ Source of authority: [`agent.md`](../agent.md) at the repository root. When docu
 | [`security_implementation_spec.md`](security_implementation_spec.md) | Implementation-level security controls |
 | [`security_test_harness.md`](security_test_harness.md) | Security verification harness |
 | [`ci_enforcement.md`](ci_enforcement.md) | CI/release enforcement contract |
+| [`security_control_register.md`](security_control_register.md) | Security control traceability, ownership, implementation and evidence |
+| [`security_incident_response.md`](security_incident_response.md) | Security incident response and recovery contract |
+| [`security_exception_register.md`](security_exception_register.md) | Security exception and risk-acceptance governance |
+| [`security_cryptography_and_key_management.md`](security_cryptography_and_key_management.md) | Cryptography and key lifecycle control standard |
 
 ## Phase implementation contracts
 
@@ -91,6 +95,18 @@ Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical impleme
 |---|---|
 | [`payment_integration_spec.md`](payment_integration_spec.md) | Payment-provider integration contract |
 | [`mra_eis_integration_spec.md`](mra_eis_integration_spec.md) | MRA EIS integration contract |
+
+## Organizational ICM workspaces
+
+The organizational workspace routing is defined by [`workspace_domain_architecture.md`](workspace_domain_architecture.md). The workspace tree is a work-domain router, not a duplicate product/domain model.
+
+| Workspace | Scope |
+|---|---|
+| [`../workspaces/sitolo-engineering/`](../workspaces/sitolo-engineering/) | Engineering implementation, audit and verification |
+| [`../workspaces/sitolo-product/`](../workspaces/sitolo-product/) | Product scope, actors, behavior and product requirements |
+| [`../workspaces/sitolo-commercial/`](../workspaces/sitolo-commercial/) | Strategy, validation, pricing, acquisition, monetization and commercial economics |
+| [`../workspaces/sitolo-customer-operations/`](../workspaces/sitolo-customer-operations/) | Onboarding, support, lifecycle and service operations |
+| [`../workspaces/sitolo-trust-compliance/`](../workspaces/sitolo-trust-compliance/) | Regulatory, privacy, risk, fraud and compliance routing |
 
 ## Commercial operating model
 

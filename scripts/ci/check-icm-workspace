@@ -27,11 +27,17 @@ required=(
   "$WORKSPACE/shared/phase-context/CONTEXT.md"
   "$WORKSPACE/_templates/CONTEXT.md"
   docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
-  docs/current_implementation_status.md
+  docs/current_implementation_status.md docs/security_control_register.md docs/security_incident_response.md docs/security_exception_register.md docs/security_cryptography_and_key_management.md
+  docs/workspace_domain_architecture.md
+  workspaces/CLAUDE.md workspaces/CONTEXT.md
+  workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md
+  workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md
+  workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md
+  workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md
   map/CLAUDE.md map/AGENTS.md map/routing.md map/CONTEXT.md
   map/_meta/schema.md map/_templates/object.md map/_templates/process.md
   map/objects/CONTEXT.md map/objects/_index.md map/processes/CONTEXT.md map/effects/CONTEXT.md
-  scripts/ci/check-system-map-processes
+  scripts/ci/check-system-map-processes scripts/ci/check-icm-workspace-contracts scripts/ci/check-security-icm-policy
   scripts/ci/generate-system-map-routing scripts/ci/generate-system-map-index
 )
 
@@ -42,13 +48,51 @@ for path in "${required[@]}"; do
   fi
 done
 
-for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" map/CLAUDE.md map/CONTEXT.md; do
+for entry in CLAUDE.md "$WORKSPACE/CLAUDE.md" "$WORKSPACE/CONTEXT.md" workspaces/CLAUDE.md workspaces/CONTEXT.md workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md workspaces/sitolo-commercial/CLAUDE.md workspaces/sitolo-commercial/CONTEXT.md workspaces/sitolo-customer-operations/CLAUDE.md workspaces/sitolo-customer-operations/CONTEXT.md workspaces/sitolo-trust-compliance/CLAUDE.md workspaces/sitolo-trust-compliance/CONTEXT.md map/CLAUDE.md map/CONTEXT.md; do
   if [[ -f "$entry" ]] && (( $(wc -l < "$entry") > 80 )); then
     echo "ICM WORKSPACE VIOLATION: routing/context exceeds 80 lines: $entry" >&2
     fail=1
   fi
 done
 
+# Root routing invariant: organizational work must enter the workspace router
+# before any domain-specific or engineering workspace is selected.
+if grep -Eq 'workspaces/sitolo-engineering' CLAUDE.md CONTEXT.md; then
+  echo "ICM WORKSPACE VIOLATION: root routing surface bypasses the organizational workspace router" >&2
+  fail=1
+fi
+
+grep -Fq 'Any organizational work | workspaces/CLAUDE.md' CLAUDE.md || {
+  echo "ICM WORKSPACE VIOLATION: root CLAUDE.md lacks mandatory organizational workspace dispatch" >&2
+  fail=1
+}
+
+grep -Fq 'Every organizational task starts at `workspaces/CLAUDE.md`' CONTEXT.md || {
+  echo "ICM WORKSPACE VIOLATION: root CONTEXT.md lacks mandatory workspace entry invariant" >&2
+  fail=1
+}
+
+if [[ -f scripts/ci/check-security-icm-policy ]]; then
+  bash scripts/ci/check-security-icm-policy || fail=1
+else
+  echo "ICM SECURITY VIOLATION: missing security ICM policy validator" >&2
+  fail=1
+fi
+
+# Validate the organizational workspace contract and routing surfaces.
+if [[ -f scripts/ci/check-icm-workspace-contracts ]]; then
+  bash scripts/ci/check-icm-workspace-contracts || fail=1
+else
+  echo "ICM WORKSPACE VIOLATION: missing workspace contract validator" >&2
+  fail=1
+fi
+
+for entry in workspaces/CLAUDE.md workspaces/CONTEXT.md; do
+  [[ -f "$entry" ]] || {
+    echo "ICM WORKSPACE VIOLATION: missing organizational workspace router: $entry" >&2
+    fail=1
+  }
+done
 for stage in "${STAGES[@]}"; do
   context="$WORKSPACE/stages/$stage/CONTEXT.md"
   references="$WORKSPACE/stages/$stage/references"
@@ -92,6 +136,14 @@ for stage in "${STAGES[@]}"; do
     fail=1
   fi
 
+  # Layer 3 is declared through Reference inputs. ICM allows stage-local
+  # references as well as shared/_config/skills material, so the contract is
+  # checked at the Inputs boundary rather than by requiring a local reference file.
+  if ! sed -n '/^## Inputs$/,/^## /p' "$context" | grep -Eq '^\| Reference \|'; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no declared Layer 3 Reference input: $stage" >&2
+    fail=1
+  fi
+
   if [[ -d "$references" ]]; then
     while IFS= read -r ref; do
       if (( $(wc -l < "$ref") > 200 )); then
@@ -100,6 +152,24 @@ for stage in "${STAGES[@]}"; do
       fi
     done < <(find "$references" -type f -name '*.md' -print)
   fi
+
+  # Layer 4 handoffs must come from an earlier numbered stage. This proves one-way
+  # executable dependencies and rejects accidental forward/circular references.
+  handoff_refs=$(grep -oE '\.\./[0-9]{2}-[^ |]+/output/\[run-slug\]-[A-Za-z0-9_-]+\.md' "$context" 2>/dev/null || true)
+  current_num=$((10#${stage%%-*}))
+  if (( current_num > 1 )) && [[ -z "$handoff_refs" ]]; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no Layer 4 handoff input: $stage" >&2
+    fail=1
+  fi
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    target_name=$(basename "$(dirname "$(dirname "$ref")")")
+    target_num=$((10#${target_name%%-*}))
+    if (( target_num >= current_num )); then
+      echo "ICM WORKSPACE VIOLATION: stage dependency is not one-way to an earlier stage: $stage -> $ref" >&2
+      fail=1
+    fi
+  done <<< "$handoff_refs"
 
   if [[ -d "$output" ]]; then
     while IFS= read -r artifact; do
