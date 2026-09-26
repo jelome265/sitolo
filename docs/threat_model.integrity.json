@@ -1,0 +1,13 @@
+{
+  "schema": "sitolo.threat-model-integrity.v1",
+  "document": "docs/threat_model.md",
+  "git_blob_sha": "52be54601d25076c19c7bedf2993755e4fde583f",
+  "last_reviewed": "2026-09-26",
+  "authority": "current source tree + active phase contract + executed CI/security evidence",
+  "integrity_basis": [
+    "git blob hash",
+    "semantic marker checks",
+    "exhaustive T-001..T-030 presence",
+    "exhaustive SC-001..SC-012 presence"
+  ]
+}
