@@ -330,7 +330,7 @@ async fn rejects_oversized_payload_and_invalid_identifiers() {
     let chunked_body = format!(
         r#"{{"organization_id":"org-chunked","organization_name":"{chunked_name}","owner_membership_id":"mem-chunked","owner_user_id":"usr-chunked","default_branch_id":"br-chunked","default_branch_name":"Branch"}}"#
     );
-    let (status_chunked, _) = crate::serve::dispatch_request_without_content_length(
+    let (status_chunked, _) = sitolo_api_bin::serve::dispatch_request_without_content_length(
         "POST",
         "/v1/organizations",
         &chunked_body,
