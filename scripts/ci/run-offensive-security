@@ -4,6 +4,42 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+EVIDENCE_DIR="${SITOLO_OFFENSIVE_EVIDENCE_DIR:-target/offensive-security}"
+mkdir -p "$EVIDENCE_DIR"
+SOURCE_REVISION="$(git rev-parse HEAD)"
+
+write_evidence() {
+  local status="$1"
+  local exit_code="$2"
+  cat > "$EVIDENCE_DIR/run.json" <<EOF
+{
+  "schema": "sitolo.offensive-security.v1",
+  "status": "$status",
+  "exit_code": $exit_code,
+  "source_revision": "$SOURCE_REVISION",
+  "repository": "jelome265/sitolo",
+  "environment": "${SITOLO_OFFENSIVE_ENV:-unset}",
+  "authorized": "${SITOLO_OFFENSIVE_ALLOWED:-false}",
+  "tests": [
+    "cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked",
+    "cargo test -p sitolo-api-bin --test tenancy_api --all-features --locked",
+    "cargo test -p sitolo-security --test provider_env --all-features --locked"
+  ]
+}
+EOF
+}
+
+on_exit() {
+  local code=$?
+  if [[ "$code" -eq 0 ]]; then
+    write_evidence "passed" 0
+  else
+    write_evidence "failed" "$code"
+  fi
+  exit "$code"
+}
+trap on_exit EXIT
+
 fail() {
   echo "OFFENSIVE SECURITY GATE FAILED: $*" >&2
   exit 1
