@@ -134,6 +134,24 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             ceilings::REQUEST_HEADER_TIMEOUT_CEILING_MS,
         ),
         (
+            "request_timeout_ms", b.request_timeout_ms, ceilings::REQUEST_TIMEOUT_CEILING_MS,
+        ),
+        (
+            "request_body_idle_timeout_ms", b.request_body_idle_timeout_ms, ceilings::REQUEST_BODY_IDLE_TIMEOUT_CEILING_MS,
+        ),
+        (
+            "http1_idle_timeout_ms", b.http1_idle_timeout_ms, ceilings::HTTP1_IDLE_TIMEOUT_CEILING_MS,
+        ),
+        (
+            "http2_ping_interval_ms", b.http2_ping_interval_ms, ceilings::HTTP2_PING_INTERVAL_CEILING_MS,
+        ),
+        (
+            "response_body_timeout_ms", b.response_body_timeout_ms, ceilings::RESPONSE_BODY_TIMEOUT_CEILING_MS,
+        ),
+        (
+            "http2_keep_alive_timeout_ms", b.http2_keep_alive_timeout_ms, ceilings::HTTP2_KEEP_ALIVE_TIMEOUT_CEILING_MS,
+        ),
+        (
             "keepalive_timeout_ms",
             b.keepalive_timeout_ms,
             ceilings::KEEPALIVE_TIMEOUT_CEILING_MS,

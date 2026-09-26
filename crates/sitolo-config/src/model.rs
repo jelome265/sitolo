@@ -15,6 +15,13 @@ pub mod ceilings {
     pub const MAX_REQUEST_BODY_CEILING_BYTES: u64 = 26_214_400;
     pub const REQUEST_HEADER_TIMEOUT_CEILING_MS: u64 = 30_000;
     pub const KEEPALIVE_TIMEOUT_CEILING_MS: u64 = 300_000;
+    pub const REQUEST_TIMEOUT_CEILING_MS: u64 = 60_000;
+    pub const REQUEST_BODY_IDLE_TIMEOUT_CEILING_MS: u64 = 30_000;
+    pub const HTTP1_IDLE_TIMEOUT_CEILING_MS: u64 = 300_000;
+    pub const HTTP2_PING_INTERVAL_CEILING_MS: u64 = 60_000;
+    pub const RESPONSE_BODY_TIMEOUT_CEILING_MS: u64 = 300_000;
+    pub const HTTP2_KEEP_ALIVE_TIMEOUT_CEILING_MS: u64 = 60_000;
+
     pub const DB_ACQUIRE_TIMEOUT_CEILING_MS: u64 = 60_000;
     pub const OTEL_EXPORT_TIMEOUT_CEILING_MS: u64 = 60_000;
     pub const OTEL_MAX_QUEUE_CEILING: u32 = 1_048_576;
@@ -103,6 +110,12 @@ pub struct AppConfig {
     pub bind_address: SocketAddr,
     pub max_request_body_bytes: u64,
     pub request_header_timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub request_body_idle_timeout_ms: u64,
+    pub http1_idle_timeout_ms: u64,
+    pub http2_ping_interval_ms: u64,
+    pub response_body_timeout_ms: u64,
+    pub http2_keep_alive_timeout_ms: u64,
     pub keepalive_timeout_ms: u64,
     pub db_host: String,
     pub db_port: u16,
@@ -210,7 +223,19 @@ pub mod defaults {
         pub bind_address: SocketAddr,
         pub max_request_body_bytes: u64,
         pub request_header_timeout_ms: u64,
-        pub keepalive_timeout_ms: u64,
+        pub request_timeout_ms: u64,
+        pub request_body_idle_timeout_ms: u64,
+        pub http1_idle_timeout_ms: u64,
+        pub http2_ping_interval_ms: u64,
+        pub response_body_timeout_ms: u64,
+        pub http2_keep_alive_timeout_ms: u64,
+        pub request_timeout_ms: u64,
+    pub request_body_idle_timeout_ms: u64,
+    pub http1_idle_timeout_ms: u64,
+    pub http2_ping_interval_ms: u64,
+    pub response_body_timeout_ms: u64,
+    pub http2_keep_alive_timeout_ms: u64,
+    pub keepalive_timeout_ms: u64,
         pub db_host: String,
         pub db_port: u16,
         pub db_name: String,
@@ -238,6 +263,12 @@ pub mod defaults {
                 bind_address: "0.0.0.0:8080".parse().expect("static default"),
                 max_request_body_bytes: 2_097_152,
                 request_header_timeout_ms: 5_000,
+                request_timeout_ms: 30_000,
+                request_body_idle_timeout_ms: 5_000,
+                http1_idle_timeout_ms: 60_000,
+                http2_ping_interval_ms: 30_000,
+                response_body_timeout_ms: 60_000,
+                http2_keep_alive_timeout_ms: 30_000,
                 keepalive_timeout_ms: 30_000,
                 db_host: "localhost".to_string(),
                 db_port: 5432,

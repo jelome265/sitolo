@@ -30,7 +30,7 @@ use tower::ServiceBuilder;
 use tower::ServiceExt;
 use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::limit::RequestBodyLimitLayer;
-use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
+use tower_http::timeout::{RequestBodyTimeoutLayer, ResponseBodyTimeoutLayer, TimeoutLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::shutdown::{
@@ -64,6 +64,12 @@ impl HttpTransportConfig {
             max_request_body_bytes: config.max_request_body_bytes as usize,
             request_header_timeout: Duration::from_millis(config.request_header_timeout_ms),
             keepalive_timeout: Duration::from_millis(config.keepalive_timeout_ms),
+            request_timeout: Duration::from_millis(config.request_timeout_ms),
+            request_body_idle_timeout: Duration::from_millis(config.request_body_idle_timeout_ms),
+            http1_idle_timeout: Duration::from_millis(config.http1_idle_timeout_ms),
+            http2_ping_interval: Duration::from_millis(config.http2_ping_interval_ms),
+            response_body_timeout: Duration::from_millis(config.response_body_timeout_ms),
+
             request_timeout: Duration::from_secs(REQUEST_TIMEOUT_SECS),
             request_body_idle_timeout: Duration::from_secs(REQUEST_BODY_IDLE_TIMEOUT_SECS),
             http1_idle_timeout: Duration::from_secs(HTTP1_IDLE_TIMEOUT_SECS),
@@ -73,7 +79,7 @@ impl HttpTransportConfig {
     }
 }
 
-pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router {
+pub fn router(state: Arc<AppState>, max_request_body_bytes: usize, transport: HttpTransportConfig) -> Router {
     Router::new()
         .route("/process/live", get(live))
         .route("/process/ready", get(ready))
@@ -81,11 +87,35 @@ pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router {
         .route("/v1/organizations/{organization_id}/branches", post(create_branch))
         .route("/v1/organizations/{organization_id}/{action}", post(organization_action))
         .route("/v1/organizations/{organization_id}/branches/{branch_id}/{action}", post(branch_action))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request| {
+                    let request_id = request
+                        .headers()
+                        .get("x-request-id")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| sitolo_observability::RequestId::new_server().to_string());
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        request_id = %request_id,
+                    )
+                })
+                .on_response(|response: &Response, latency: std::time::Duration, _span: &tracing::Span| {
+                    tracing::info!(
+                        status = %response.status().as_u16(),
+                        latency_ms = latency.as_millis(),
+                        "request completed"
+                    );
+                })
+        )
         .layer(
             ServiceBuilder::new()
-                .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(REQUEST_TIMEOUT_SECS)))
-                .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(REQUEST_BODY_IDLE_TIMEOUT_SECS)))
+                .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, transport.request_timeout))
+                .layer(RequestBodyTimeoutLayer::new(transport.request_body_idle_timeout))
+                .layer(ResponseBodyTimeoutLayer::new(transport.response_body_timeout))
                 .layer(RequestBodyLimitLayer::new(max_request_body_bytes.min(sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES)))
                 .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
         )
@@ -98,14 +128,17 @@ pub async fn serve(
     mut shutdown: oneshot::Receiver<()>,
     transport: HttpTransportConfig,
 ) -> Vec<Subsystem> {
-    let app = router(Arc::clone(&state), transport.max_request_body_bytes);
+    let app = router(Arc::clone(&state), transport.max_request_body_bytes, transport);
     let mut connections = JoinSet::new();
     let connection_permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     loop {
         tokio::select! {
-            _ = &mut shutdown => break,
+            _ = &mut shutdown => {
+                state.readiness().mark_draining();
+                break;
+            },
             accept = listener.accept() => {
                 let (stream, peer) = match accept {
                     Ok(value) => value,
@@ -122,23 +155,37 @@ pub async fn serve(
                 let header_timeout = transport.request_header_timeout;
                 let keepalive = transport.keepalive_timeout;
                 let h2_ping = transport.http2_ping_interval;
+                let h2_keepalive = transport.http2_keep_alive_timeout;
                 let mut conn_shutdown_rx = shutdown_rx.clone();
                 
                 connections.spawn(async move {
                     let _connection_permit = permit;
                     let mut builder = Builder::new(TokioExecutor::new());
-                    builder.http1().timer(TokioTimer::new()).header_read_timeout(header_timeout);
+                    builder.http1().timer(TokioTimer::new()).header_read_timeout(header_timeout).keep_alive(true);
                     builder.http2().timer(TokioTimer::new()).max_concurrent_streams(MAX_IN_FLIGHT_REQUESTS as u32)
-                        .keep_alive_interval(h2_ping).keep_alive_timeout(keepalive);
+                        .keep_alive_interval(h2_ping).keep_alive_timeout(h2_keepalive);
 
                     let io = TokioIo::new(stream);
                     let hyper_service = TowerToHyperService::new(service);
-                    tokio::select! {
-                        res = builder.serve_connection(io, hyper_service) => {
-                            if let Err(error) = res { tracing::debug!(%error, ?peer, "HTTP connection closed with error"); }
-                        }
-                        _ = conn_shutdown_rx.changed() => {
-                            tracing::debug!(?peer, "connection draining initiated");
+                    let mut conn = builder.serve_connection(io, hyper_service);
+                    tokio::pin!(conn);
+                    let idle_sleep = tokio::time::sleep(transport.http1_idle_timeout);
+                    tokio::pin!(idle_sleep);
+                    loop {
+                        tokio::select! {
+                            res = &mut conn => {
+                                if let Err(error) = res { tracing::debug!(%error, ?peer, "HTTP connection closed with error"); }
+                                break;
+                            }
+                            _ = &mut idle_sleep => {
+                                tracing::debug!(?peer, "HTTP/1 idle eviction");
+                                conn.as_mut().graceful_shutdown();
+                                break;
+                            }
+                            _ = conn_shutdown_rx.changed() => {
+                                tracing::debug!(?peer, "connection draining initiated");
+                                conn.as_mut().graceful_shutdown();
+                            }
                         }
                     }
                 });

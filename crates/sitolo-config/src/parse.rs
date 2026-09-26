@@ -61,6 +61,12 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
         }
         "HTTP__MAX_BODY_BYTES" => b.max_request_body_bytes = number(key, value)?,
         "HTTP__REQUEST_HEADER_TIMEOUT_MS" => b.request_header_timeout_ms = number(key, value)?,
+        "HTTP__REQUEST_TIMEOUT_MS" => b.request_timeout_ms = number(key, value)?,
+        "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS" => b.request_body_idle_timeout_ms = number(key, value)?,
+        "HTTP__HTTP1_IDLE_TIMEOUT_MS" => b.http1_idle_timeout_ms = number(key, value)?,
+        "HTTP__HTTP2_PING_INTERVAL_MS" => b.http2_ping_interval_ms = number(key, value)?,
+        "HTTP__RESPONSE_BODY_TIMEOUT_MS" => b.response_body_timeout_ms = number(key, value)?,
+        "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS" => b.http2_keep_alive_timeout_ms = number(key, value)?,
         "HTTP__KEEPALIVE_TIMEOUT_MS" => b.keepalive_timeout_ms = number(key, value)?,
         "DATABASE__HOST" => b.db_host = value.into(),
         "DATABASE__PORT" => b.db_port = number(key, value)?,
