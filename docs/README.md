@@ -72,6 +72,16 @@ Phase documents are normative requirements and implementation sequencing artifac
 | [`phase8_product_catalogue_implementation.md`](phase8_product_catalogue_implementation.md) | Product catalogue target-state contract |
 | [`phase9_inventory_ledger_implementation.md`](phase9_inventory_ledger_implementation.md) | Inventory ledger target/implementation contract |
 | [`phase10_pos_sales_implementation.md`](phase10_pos_sales_implementation.md) | POS/sales target/implementation contract |
+| [`phase11_payments_reconciliation_implementation.md`](phase11_payments_reconciliation_implementation.md) | Payments/reconciliation implementation contract |
+| [`phase12_offline_synchronization_implementation.md`](phase12_offline_synchronization_implementation.md) | Offline synchronization implementation contract |
+| [`phase13_procurement_suppliers_implementation.md`](phase13_procurement_suppliers_implementation.md) | Procurement/suppliers implementation contract |
+| [`phase14_returns_refunds_cash_implementation.md`](phase14_returns_refunds_cash_implementation.md) | Returns/refunds/cash implementation contract |
+| [`phase15_mra_eis_implementation.md`](phase15_mra_eis_implementation.md) | MRA EIS implementation/certification contract |
+| [`phase16_reporting_exports_implementation.md`](phase16_reporting_exports_implementation.md) | Reporting/exports implementation contract |
+| [`phase17_billing_entitlements_implementation.md`](phase17_billing_entitlements_implementation.md) | Billing/entitlements implementation contract |
+| [`phase18_admin_support_implementation.md`](phase18_admin_support_implementation.md) | Admin/support implementation contract |
+| [`phase19_hardening_performance_dr_implementation.md`](phase19_hardening_performance_dr_implementation.md) | Hardening/performance/disaster-recovery implementation contract |
+| [`phase20_production_certification_implementation.md`](phase20_production_certification_implementation.md) | Production certification implementation contract |
 
 Completed PR-specific contracts for Phase 4 Parts 6 and 7 are historical implementation records; active work is represented by the current phase/PR status documents and the Part 8 binding contract. Additional Phase 2 and Phase 4 remediation/execution contracts remain in this directory. Their status must be read from metadata and current implementation evidence, not inferred from filename or existence. PR-specific review documents are snapshots and must be checked against the current PR head.
 
