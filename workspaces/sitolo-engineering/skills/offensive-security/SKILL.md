@@ -672,6 +672,27 @@ remove callback verification
     → forged-callback test fails
 ~~~
 
+### Security-control mapping
+
+The offensive suite MUST preserve the repository's existing control IDs:
+
+| Control | Adversarial challenge |
+|---|---|
+| SC-001 | authentication/session/device bypass, replay, revocation |
+| SC-002 | cross-tenant/cross-branch IDOR and scope substitution |
+| SC-003 | authorization and privilege-escalation bypass |
+| SC-004 | malformed input, injection, SSRF, traversal and parser abuse |
+| SC-005 | secret/configuration exposure and cryptographic misuse |
+| SC-006 | financial/inventory mutation, replay and invariant abuse |
+| SC-007 | offline tampering, revoked-device and checkpoint/replay abuse |
+| SC-008 | forged, modified and replayed external callbacks |
+| SC-009 | audit/evidence suppression, corruption or attribution abuse |
+| SC-010 | rate-limit, concurrency and resource-exhaustion abuse |
+| SC-011 | dependency, workflow and release-integrity abuse |
+| SC-012 | support/admin escalation, impersonation and break-glass abuse |
+
+Every applicable control must have at least one executable adversarial challenge. If a control has no implemented attack surface yet, record that as not-applicable-to-current-implementation rather than claiming coverage.
+
 ---
 
 ## 7. Test Authenticity
