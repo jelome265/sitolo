@@ -5,7 +5,7 @@
 **Last reviewed:** 2026-09-26  
 **Primary system:** Sitolo Business Operating System for African SMEs  
 **Primary deployment market:** Malawi-first, controlled African regionalization  
-**Normative HTTP backend:** Rust / Axum / Tokio / SQLx  
+**Normative HTTP backend:** Rust / Axum / Hyper/Hyper-util / Tokio / SQLx  
 **Authoritative server database:** PostgreSQL 18  
 **Primary mobile client:** Flutter / SQLite offline store  
 **Desktop client:** Tauri  
@@ -520,7 +520,7 @@ HISTORICAL  = older audit/revision evidence, valid only at its timestamp
 
 Claims about what Sitolo currently implements MUST come from the current source tree and current executable evidence. A contract defines required behavior but does not prove that behavior exists. Historical audits remain evidence of their recorded baseline only.
 
-The normative HTTP boundary is Rust + Axum + Tokio: Axum owns HTTP routing, extraction, and response composition; Tokio owns asynchronous runtime and network lifecycle. A hand-written production HTTP parser or alternate request loop is an architecture divergence and fails the architecture/security gate.
+The normative HTTP boundary is Rust + Axum + Hyper/Hyper-util + Tokio: Axum owns routing, request extraction, and response composition; Hyper/Hyper-util owns HTTP/1/HTTP/2 connection parsing and protocol transport controls; Tokio owns asynchronous runtime, listener and socket lifecycle. A hand-written production HTTP parser or alternate request loop is an architecture divergence and fails the architecture/security gate.
 
 Material changes to HTTP transport, authentication, authorization, tenant hierarchy, offline/sync, external integrations, CI/CD, agent/tooling permissions, or sensitive-data handling trigger threat-model re-review.
 
