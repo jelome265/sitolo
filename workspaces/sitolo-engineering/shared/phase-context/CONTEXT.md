@@ -6,6 +6,7 @@ Implementation-specific Layer 3 context.
 
 | Phase | Location | Use |
 |---|---|---|
+| Phase contract coverage | ../../../../docs/phase_contract_coverage_register.md | Authoritative phase 0–20 contract coverage, routing, implementation/evidence status and remediation register |
 | Phase 1 | ../../../../docs/phase1_repository_rust_workspace_ci_deep_implementation.md | Repository and CI controls |
 | Phase 2 | ../../../../docs/phase2_config_secrets_logging_errors_telemetry_implementation.md | Runtime configuration and telemetry |
 | Phase 3 | ../../../../docs/phase3_identity_sessions_mfa_device_identity_implementation.md | Identity, session and device controls |

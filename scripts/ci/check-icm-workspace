@@ -27,7 +27,7 @@ required=(
   "$WORKSPACE/shared/phase-context/CONTEXT.md"
   "$WORKSPACE/_templates/CONTEXT.md"
   docs/icm_reference_integrity.md docs/documentation_semantic_remediation_plan.md
-  docs/current_implementation_status.md docs/security_control_register.md docs/security_incident_response.md docs/security_exception_register.md docs/security_cryptography_and_key_management.md
+  docs/current_implementation_status.md docs/phase_contract_coverage_register.md docs/security_control_register.md docs/security_incident_response.md docs/security_exception_register.md docs/security_cryptography_and_key_management.md
   docs/workspace_domain_architecture.md
   workspaces/CLAUDE.md workspaces/CONTEXT.md
   workspaces/sitolo-product/CLAUDE.md workspaces/sitolo-product/CONTEXT.md
