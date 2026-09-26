@@ -89,7 +89,7 @@ while IFS='|' read -r id workspace mode evidence status; do
   elif ! awk '
       /^## Inputs$/ { found=1; next }
       found && /^## / { exit }
-      found && /^| .*Scope.*| .*Why.*|$/ { header=1 }
+      found && /^\| .*Scope.*\| .*Why.*\|$/ { header=1 }
       found && /\.\.\/|docs\// { source=1 }
       END { exit (header && source) ? 0 : 1 }
     ' "$context"; then
@@ -97,7 +97,7 @@ while IFS='|' read -r id workspace mode evidence status; do
     fail=1
   fi
 
-  if ! grep -q '^*\*Do NOT load:\*\*' "$context"; then
+  if ! grep -Fq '**Do NOT load:**' "$context"; then
     echo "VIOLATION: missing negative loading boundary: $workspace" >&2
     fail=1
   fi
