@@ -16,7 +16,19 @@ Implementation-specific Layer 3 context.
 | Phase 5 | ../../../../docs/phase5_postgresql_schema_migrations_constraints_rls_implementation.md | Schema and RLS |
 | Phase 6 | ../../../../docs/phase6_authorization_engine_policy_enforcement_implementation.md | Authorization |
 | Phase 7 | ../../../../docs/phase7_security_test_framework_implementation.md | Security tests |
-| Phase 9-10 | ../../../../docs/phase9_inventory_ledger_implementation.md; ../../../../docs/phase10_pos_sales_implementation.md | Inventory and sales |
+| Phase 8 | ../../../../docs/phase8_product_catalogue_implementation.md | Product catalogue and pricing target contract |
+| Phase 9 | ../../../../docs/phase9_inventory_ledger_implementation.md | Inventory ledger |
+| Phase 10 | ../../../../docs/phase10_pos_sales_implementation.md | POS and sales |
+| Phase 11 | ../../../../docs/phase11_payments_reconciliation_implementation.md | Payments and reconciliation |
+| Phase 12 | ../../../../docs/phase12_offline_synchronization_implementation.md | Offline synchronization |
+| Phase 13 | ../../../../docs/phase13_procurement_suppliers_implementation.md | Procurement and suppliers |
+| Phase 14 | ../../../../docs/phase14_returns_refunds_cash_implementation.md | Returns, refunds and cash |
+| Phase 15 | ../../../../docs/phase15_mra_eis_implementation.md | MRA EIS integration and certification |
+| Phase 16 | ../../../../docs/phase16_reporting_exports_implementation.md | Reporting and exports |
+| Phase 17 | ../../../../docs/phase17_billing_entitlements_implementation.md | Billing and entitlements |
+| Phase 18 | ../../../../docs/phase18_admin_support_implementation.md | Admin and support |
+| Phase 19 | ../../../../docs/phase19_hardening_performance_dr_implementation.md | Hardening, performance and disaster recovery |
+| Phase 20 | ../../../../docs/phase20_production_certification_implementation.md | Production certification |
 
 ## Historical Part 4 records
 
