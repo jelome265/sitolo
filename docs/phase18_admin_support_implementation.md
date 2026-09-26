@@ -447,3 +447,126 @@ next-phase dependency
 ```
 
 **End of Phase 18 contract.**
+
+# 12. Privileged Operation Catalog
+
+Every admin/support operation must have machine-readable metadata:
+
+~~~text
+operation ID
+actor class
+target resource
+required authentication assurance
+permission
+tenant/global scope
+maximum scope
+approval requirement
+maximum duration
+audit class
+data sensitivity
+reversibility
+incident linkage
+~~~
+
+Operations without an inventory entry are not production-ready.
+
+# 13. JIT Access Contract
+
+~~~text
+request
+→ reason
+→ target scope
+→ capability
+→ approval
+→ activation
+→ expiry/revocation
+→ post-use review
+~~~
+
+A support session cannot extend itself. Renewal is a new authorization decision.
+
+# 14. Break-Glass Contract
+
+Break-glass is used only when normal authority paths are unavailable or insufficient for incident response.
+
+It requires:
+
+~~~text
+strong identity
+explicit reason
+specific incident/reference
+minimal scope
+short expiry
+heightened audit
+automatic review trigger
+~~~
+
+Break-glass does not remove the requirement to preserve evidence.
+
+# 15. Data Access Minimization
+
+Support interfaces should prefer:
+
+~~~text
+masked fields
+narrow search
+redacted payloads
+bounded result counts
+purpose-specific views
+~~~
+
+Raw production data is not a default support capability.
+
+# 16. Privileged Mutation Safety
+
+Administrative mutation must use the same business invariants as ordinary product operations unless an explicit, governed repair operation exists.
+
+A support operator cannot bypass a financial invariant simply because the interface is internal.
+
+# 17. Audit Integrity
+
+Privileged evidence must connect:
+
+~~~text
+operator
+→ grant
+→ reason
+→ target
+→ action
+→ result
+→ timestamp
+→ session
+→ review
+~~~
+
+Failure to record required privileged evidence must fail the sensitive operation where policy requires it.
+
+# 18. Resource Controls
+
+Bound tenant search size, bulk operations, queue inspection, audit queries, credential rotation jobs and support session concurrency.
+
+# 19. Evidence Ledger
+
+Evidence includes:
+
+~~~text
+privileged operation inventory
+JIT lifecycle tests
+break-glass tests
+scope-isolation tests
+session revocation tests
+audit completeness tests
+post-use review evidence
+credential rotation evidence
+~~~
+
+# 20. No-Go Conditions
+
+Do not proceed if:
+
+- a hidden global admin path exists;
+- support scope can be client-selected;
+- break-glass has no expiry;
+- privileged actions lack durable audit;
+- an internal tool bypasses domain invariants;
+- expired grants remain usable.
