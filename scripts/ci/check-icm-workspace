@@ -129,12 +129,15 @@ for stage in "${STAGES[@]}"; do
     fail=1
   fi
 
+  # Layer 3 is declared through Reference inputs. ICM allows stage-local
+  # references as well as shared/_config/skills material, so the contract is
+  # checked at the Inputs boundary rather than by requiring a local reference file.
+  if ! sed -n '/^## Inputs$/,/^## /p' "$context" | grep -Eq '^\| Reference \|'; then
+    echo "ICM WORKSPACE VIOLATION: executable stage has no declared Layer 3 Reference input: $stage" >&2
+    fail=1
+  fi
+
   if [[ -d "$references" ]]; then
-    reference_count=$(find "$references" -type f -name '*.md' -not -name '.gitkeep' | wc -l)
-    if (( reference_count == 0 )); then
-      echo "ICM WORKSPACE VIOLATION: executable stage has no Layer 3 reference material: $stage" >&2
-      fail=1
-    fi
     while IFS= read -r ref; do
       if (( $(wc -l < "$ref") > 200 )); then
         echo "ICM WORKSPACE VIOLATION: reference exceeds 200 lines: $ref" >&2
