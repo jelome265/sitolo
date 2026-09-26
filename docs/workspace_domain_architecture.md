@@ -78,6 +78,24 @@ Payments cross Commercial, Trust & Compliance and Engineering: monetization, reg
 4. A workspace router is navigation, not source truth.
 5. Adding a new first-class workspace requires evidence of a distinct owner, decision set, artifacts and lifecycle.
 
+## ICM workspace conformance contract
+
+The organizational workspaces use two deliberate modes:
+
+- **Routing-only:** Product, Commercial, Customer Operations, and Trust & Compliance. These are organizational dispatch boundaries. They do not invent stage pipelines or Layer 4 shelves where no executable workflow is evidenced.
+- **Executable:** Engineering. This workspace owns the existing nine-stage ICM pipeline and therefore carries the executable stage-contract obligations.
+
+Every registered workspace must expose, through its routing/context surfaces:
+
+1. an explicit entry condition and primary owner;
+2. scoped inputs identifying the canonical sources required for the domain decision;
+3. explicit cross-domain exits;
+4. a defined primary workflow destination.
+
+Every executable stage must additionally expose the ICM execution contract: scoped Inputs, one job in Process, Outputs, Layer 3 reference material, Layer 4 output/handoff structure, a human verification/checkpoint surface, and one-way stage dependencies. The controlled human re-entry from remediation to audit is a governance instruction, not an executable dependency edge.
+
+Mechanical validation is performed by `scripts/ci/check-icm-workspace-contracts` and the main `scripts/ci/check-icm-workspace` verifier. The validators check reachability from the organizational router, valid cross-domain targets, workspace mode consistency, Layer 3 presence, Layer 4 handoffs, and forward-only executable-stage references.
+
 ## Relationship to the product domain model
 
 These workspaces are an **organizational work routing model**, not a DDD bounded-context map and not a replacement for the product/domain model. Product bounded contexts remain governed by the technical/domain corpus.
