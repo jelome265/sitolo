@@ -15,8 +15,8 @@ pub enum Subsystem {
 /// Upper bound for graceful drain before the process exits.
 pub const SHUTDOWN_DRAIN_DEADLINE_SECS: u64 = 10;
 
-/// Maximum concurrently tracked connections during drain.
-pub const MAX_IN_FLIGHT_CONNECTIONS: usize = 128;
+/// Maximum concurrently processed requests at the API service boundary.
+pub const MAX_IN_FLIGHT_REQUESTS: usize = 128;
 
 pub struct ShutdownCoordinator {
     completed: Vec<Subsystem>,
