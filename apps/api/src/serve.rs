@@ -39,11 +39,6 @@ use crate::shutdown::{
 use crate::state::AppState;
 use sitolo_config::AppConfig;
 
-const REQUEST_BODY_IDLE_TIMEOUT_SECS: u64 = 5;
-const REQUEST_TIMEOUT_SECS: u64 = 30;
-const HTTP1_IDLE_TIMEOUT_SECS: u64 = 60;
-const HTTP2_PING_INTERVAL_SECS: u64 = 30;
-const RESPONSE_BODY_TIMEOUT_SECS: u64 = 60;
 const COMPAT_RESPONSE_BODY_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +50,7 @@ pub struct HttpTransportConfig {
     pub request_body_idle_timeout: Duration,
     pub http1_idle_timeout: Duration,
     pub http2_ping_interval: Duration,
+    pub http2_keep_alive_timeout: Duration,
     pub response_body_timeout: Duration,
 }
 
@@ -68,13 +64,8 @@ impl HttpTransportConfig {
             request_body_idle_timeout: Duration::from_millis(config.request_body_idle_timeout_ms),
             http1_idle_timeout: Duration::from_millis(config.http1_idle_timeout_ms),
             http2_ping_interval: Duration::from_millis(config.http2_ping_interval_ms),
+            http2_keep_alive_timeout: Duration::from_millis(config.http2_keep_alive_timeout_ms),
             response_body_timeout: Duration::from_millis(config.response_body_timeout_ms),
-
-            request_timeout: Duration::from_secs(REQUEST_TIMEOUT_SECS),
-            request_body_idle_timeout: Duration::from_secs(REQUEST_BODY_IDLE_TIMEOUT_SECS),
-            http1_idle_timeout: Duration::from_secs(HTTP1_IDLE_TIMEOUT_SECS),
-            http2_ping_interval: Duration::from_secs(HTTP2_PING_INTERVAL_SECS),
-            response_body_timeout: Duration::from_secs(RESPONSE_BODY_TIMEOUT_SECS),
         }
     }
 }
