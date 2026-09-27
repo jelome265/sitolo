@@ -5,8 +5,11 @@
 
 use sitolo_api::{BranchResponse, OrganizationResponse, ProvisionedOrganizationResponse};
 use sitolo_api_bin::bootstrap::StartupContext;
-use sitolo_api_bin::serve::dispatch_request;
+use sitolo_api_bin::serve::{HttpTransportConfig, router};
+use sitolo_api_bin::state::AppState;
 use std::sync::Arc;
+use std::time::Duration;
+use tower::ServiceExt;
 
 struct StubProvider;
 
@@ -22,7 +25,7 @@ impl sitolo_security::SecretProvider for StubProvider {
     }
 }
 
-async fn test_app_state() -> Arc<sitolo_api_bin::state::AppState> {
+async fn test_app_state() -> Arc<AppState> {
     let ctx = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),
         Some(Arc::new(StubProvider)),
@@ -30,6 +33,70 @@ async fn test_app_state() -> Arc<sitolo_api_bin::state::AppState> {
     .await
     .expect("bootstrap succeeds");
     Arc::clone(ctx.state())
+}
+
+/// Test-only transport config: generous timeouts (these tests never
+/// exercise timeout behavior — `transport_tests.rs` owns that), body limit
+/// large enough that the effective cap is driven by
+/// `sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES` via `router()`'s
+/// own `.min(...)` (see `apps/api/src/serve.rs`), not by this value.
+fn test_transport() -> HttpTransportConfig {
+    HttpTransportConfig {
+        max_request_body_bytes: 1024 * 1024,
+        request_header_timeout: Duration::from_secs(30),
+        keepalive_timeout: Duration::from_secs(60),
+        request_timeout: Duration::from_secs(30),
+        request_body_idle_timeout: Duration::from_secs(30),
+        http1_idle_timeout: Duration::from_secs(60),
+        http2_ping_interval: Duration::from_secs(30),
+        http2_keep_alive_timeout: Duration::from_secs(30),
+        response_body_timeout: Duration::from_secs(30),
+    }
+}
+
+/// Drives one HTTP request through the real, production `router()` — the
+/// exact `Router` `serve()` mounts on a live TCP listener — via Tower's
+/// `oneshot`, rather than a hand-rolled request dispatcher. This is real
+/// application-layer test coverage (handlers, extractors, JSON (de)
+/// serialization, tower-http layers, error mapping) end to end; it is not a
+/// transport-layer test — connection lifecycle, socket timeouts, and HTTP/1
+/// vs HTTP/2 wire behavior are covered separately and for real in
+/// `transport_tests.rs`, which binds an actual `TcpListener` and runs the
+/// real `serve()` loop.
+async fn dispatch_request(
+    method: &str,
+    path: &str,
+    body: &str,
+    state: &Arc<AppState>,
+) -> (String, String) {
+    let transport = test_transport();
+    let app = router(Arc::clone(state), transport.max_request_body_bytes, transport);
+
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .expect("well-formed test request");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("router is infallible per tower::Service");
+
+    let status = response.status();
+    let status_line = format!(
+        "{} {}",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
+    );
+
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("reading response body");
+    let body_text = String::from_utf8_lossy(&body_bytes).into_owned();
+
+    (status_line, body_text)
 }
 
 #[tokio::test]
