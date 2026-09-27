@@ -114,6 +114,91 @@ async fn development_boots_and_serves_bounded_probes() {
 }
 
 #[tokio::test]
+async fn ready_reports_unavailable_while_draining_and_shutdown_still_completes() {
+    // Proof for Stage 06 audit finding P0 #1 ("/process/ready is not
+    // genuine readiness") and P0 #3 ("shutdown is bounded but not
+    // protocol-graceful"): readiness must flip to unavailable at the
+    // moment shutdown is signaled, not merely after the process has
+    // finished exiting, and the drain must still terminate.
+    let dev =
+        StartupContext::build_from_pairs_with_provider(Vec::<(String, String)>::new(), stub())
+            .await
+            .expect("development bootstrap succeeds");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral bind");
+    let addr = listener.local_addr().expect("local addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let serve = tokio::spawn(serve(
+        listener,
+        Arc::clone(dev.state()),
+        shutdown_rx,
+        HttpTransportConfig::from_config(dev.config()),
+    ));
+
+    let ready_before = probe_once(addr, "/process/ready").await;
+    assert!(
+        ready_before.contains("200 OK"),
+        "unexpected pre-shutdown ready response: {ready_before}"
+    );
+
+    let _ = shutdown_tx.send(());
+
+    // The readiness route must observe draining state as soon as shutdown
+    // is signaled, well before the bounded drain deadline elapses, so a
+    // load balancer stops routing new traffic during the drain window
+    // rather than only after the process has already exited.
+    let ready_during_drain = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match tokio::net::TcpStream::connect(addr).await {
+                Ok(mut stream) => {
+                    stream
+                        .write_all(
+                            b"GET /process/ready HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n",
+                        )
+                        .await
+                        .expect("probe writes");
+                    let mut body = Vec::new();
+                    stream
+                        .read_to_end(&mut body)
+                        .await
+                        .expect("probe reads");
+                    let text = String::from_utf8_lossy(&body).into_owned();
+                    if text.contains("503") {
+                        break text;
+                    }
+                }
+                Err(_) => {
+                    // The listener may already be gone; draining state is
+                    // proven by the 503 branch above on any earlier attempt.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    })
+    .await
+    .expect("readiness must report draining before the drain deadline elapses");
+    assert!(
+        ready_during_drain.contains("503"),
+        "unexpected draining response: {ready_during_drain}"
+    );
+
+    let order = tokio::time::timeout(Duration::from_secs(15), serve)
+        .await
+        .expect("serve shuts down")
+        .expect("serve joins");
+    assert_eq!(
+        order,
+        &[
+            Subsystem::Listener,
+            Subsystem::Telemetry,
+            Subsystem::PersistenceIntent,
+        ]
+    );
+}
+
+#[tokio::test]
 async fn staging_boots_with_explicit_database_identity() {
     let staging = StartupContext::build_from_pairs_with_provider(
         [

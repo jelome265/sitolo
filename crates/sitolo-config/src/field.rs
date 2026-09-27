@@ -109,17 +109,11 @@ const CATALOGUE: &[ConfigField] = &[
     ),
 
     field!(
-        "HTTP__REQUEST_TIMEOUT_MS",
-    "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS",
-    "HTTP__HTTP1_IDLE_TIMEOUT_MS",
-    "HTTP__HTTP2_PING_INTERVAL_MS",
-    "HTTP__RESPONSE_BODY_TIMEOUT_MS",
-    "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS",
-    "HTTP__KEEPALIVE_TIMEOUT_MS",
+        "HTTP__KEEPALIVE_TIMEOUT_MS",
         Tunable,
         true,
         "platform",
-        "positive milliseconds <= hard ceiling"
+        "positive milliseconds <= hard ceiling; OS-level TCP keepalive only"
     ),
     field!("DATABASE__HOST", Static, true, "platform", "bounded host"),
     field!("DATABASE__PORT", Static, true, "platform", "non-zero u16"),
