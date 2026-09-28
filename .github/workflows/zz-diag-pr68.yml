@@ -1,0 +1,79 @@
+# TEMPORARY diagnostic workflow for PR-68 remediation. Runs the canonical
+# verify gates individually and surfaces each gate's output as annotations
+# (the raw job logs are not retrievable from the authoring sandbox).
+# Delete once the remediation branch is green.
+name: zz-diag-pr68
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          components: rustfmt, clippy
+      - name: install emitter
+        run: |
+          cat > /tmp/emit.py << 'PY'
+          import sys
+          name, path, rc = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(path, errors="replace").read()
+          def esc(s):
+              return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          if rc == "0":
+              print(f"::notice title={name}::PASS (exit 0)")
+              sys.exit(0)
+          idxs = [i for i in (text.find("error"), text.find("panicked"), text.find("FAILED"), text.find("Diff in"), text.find("FAIL")) if i >= 0]
+          start = min(idxs) if idxs else max(0, len(text) - 9000)
+          body = text[start:start + 18000]
+          chunks = [body[k:k + 3000] for k in range(0, len(body), 3000)][:6]
+          for n, c in enumerate(chunks, 1):
+              print(f"::error title={name} exit {rc} part {n}::{esc(c)}")
+          tail = text[-2500:]
+          print(f"::error title={name} tail::{esc(tail)}")
+          PY
+      - name: lockfile
+        run: |
+          set +e
+          cargo metadata --format-version 1 --locked > /dev/null 2> lock.log
+          rc=$?
+          python3 /tmp/emit.py lockfile lock.log $rc
+          exit 0
+      - name: fmt
+        run: |
+          set +e
+          cargo fmt --all -- --check > fmt.log 2>&1
+          rc=$?
+          python3 /tmp/emit.py fmt fmt.log $rc
+          exit 0
+      - name: clippy
+        run: |
+          set +e
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings > clippy.log 2>&1
+          rc=$?
+          python3 /tmp/emit.py clippy clippy.log $rc
+          exit 0
+      - name: test
+        run: |
+          set +e
+          cargo test --workspace --all-targets --all-features --locked --exclude sitolo-persistence > test.log 2>&1
+          rc=$?
+          python3 /tmp/emit.py test test.log $rc
+          exit 0
+      - name: policy scripts
+        run: |
+          set +e
+          ( bash scripts/ci/check-api-architecture && ./scripts/ci/check-architecture && ./scripts/ci/check-phase2-policy ) > policy.log 2>&1
+          rc=$?
+          python3 /tmp/emit.py policy policy.log $rc
+          exit 0
