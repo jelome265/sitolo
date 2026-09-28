@@ -89,25 +89,48 @@ const CATALOGUE: &[ConfigField] = &[
         "platform",
         "positive milliseconds <= hard ceiling"
     ),
-        field!(
-        "HTTP__REQUEST_TIMEOUT_MS", Tunable, true, "platform", "positive milliseconds"
+    field!(
+        "HTTP__REQUEST_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; total request wall-clock deadline"
     ),
     field!(
-        "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS", Tunable, true, "platform", "positive milliseconds"
+        "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; idle gap between request-body chunks; must not exceed HTTP__REQUEST_TIMEOUT_MS"
     ),
     field!(
-        "HTTP__HTTP1_IDLE_TIMEOUT_MS", Tunable, true, "platform", "positive milliseconds"
+        "HTTP__HTTP1_IDLE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/1 idle connection eviction, reset by traffic"
     ),
     field!(
-        "HTTP__HTTP2_PING_INTERVAL_MS", Tunable, true, "platform", "positive milliseconds"
+        "HTTP__HTTP2_PING_INTERVAL_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/2 PING interval"
     ),
     field!(
-        "HTTP__RESPONSE_BODY_TIMEOUT_MS", Tunable, true, "platform", "positive milliseconds"
+        "HTTP__RESPONSE_BODY_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; idle gap between response-body chunks"
     ),
     field!(
-        "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS", Tunable, true, "platform", "positive milliseconds"
+        "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/2 PING acknowledgement deadline"
     ),
-
     field!(
         "HTTP__KEEPALIVE_TIMEOUT_MS",
         Tunable,

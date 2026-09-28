@@ -234,7 +234,11 @@ pub async fn serve(
     mut shutdown: oneshot::Receiver<()>,
     transport: HttpTransportConfig,
 ) -> Vec<Subsystem> {
-    let app = router_with_transport(Arc::clone(&state), transport.max_request_body_bytes, transport);
+    let app = router_with_transport(
+        Arc::clone(&state),
+        transport.max_request_body_bytes,
+        transport,
+    );
     let mut connections = JoinSet::new();
     let connection_permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
     // Fires exactly once, when this loop stops accepting connections, so

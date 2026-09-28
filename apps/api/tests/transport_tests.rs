@@ -309,7 +309,8 @@ async fn real_socket_active_connection_shutdown_test() {
     // (imported, not duplicated) so this can't race the server's own
     // deadline if that constant ever changes.
     let assertion_margin = Duration::from_secs(5);
-    let drain_deadline = Duration::from_secs(sitolo_api_bin::shutdown::SHUTDOWN_DRAIN_DEADLINE_SECS);
+    let drain_deadline =
+        Duration::from_secs(sitolo_api_bin::shutdown::SHUTDOWN_DRAIN_DEADLINE_SECS);
 
     let mut buf = vec![0; 64];
     let read = tokio::time::timeout(drain_deadline + assertion_margin, stream.read(&mut buf)).await;
