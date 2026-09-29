@@ -46,7 +46,7 @@ Sitolo is currently **NOT production-ready**, but possesses an unusually strong,
 | 15 | **Configuration Management & Secrets Handling** | **Acceptable** | Pinned toolchain (Rust 1.98.1), strongly-typed configuration structs (`sitolo-config`), and zero-leakage `SecretValue` wrapper in `sitolo-security`. Production provider (Vault/AWS KMS) needs implementation. |
 | 16 | **Deployment Safety, Rollback & Release Discipline** | **Partial** | Pinned dependencies and reproducible builds. Missing container release manifests, helm/k8s deployment specs, DB migration rollbacks, and zero-downtime deployment scripts. |
 | 17 | **Code Quality, Naming & Technical Debt** | **Acceptable** | Clean Rust code conforming to strict clippy rules (`#![forbid(unsafe_code)]`). Minimal dead code outside stub crates. |
-| 18 | **Maintainability Under Team Growth & Ownership** | **Acceptable** | Excellent workspace boundaries and governance context (`AGENTS.md`, System Map, CI enforcement) allowing modular ownership. |
+| 18 | **Maintainability Under Team Growth & Ownership** | **Acceptable** | Excellent workspace boundaries and governance context (`../AGENTS.md`, System Map, CI enforcement) allowing modular ownership. |
 | 19 | **Compliance & Enterprise Operational Expectations** | **Unacceptable** | Missing MRA EIS tax integration, fiscal digital signature engine, audit log outbox exporter, and PCI-DSS payment isolation boundaries. |
 
 ---
