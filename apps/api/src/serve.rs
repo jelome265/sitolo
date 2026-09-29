@@ -42,8 +42,8 @@ use tower_http::timeout::{RequestBodyTimeoutLayer, ResponseBodyTimeoutLayer, Tim
 use tower_http::trace::TraceLayer;
 
 use crate::shutdown::{
-    MAX_IN_FLIGHT_CONNECTIONS, MAX_IN_FLIGHT_REQUESTS, ReadinessState, SHUTDOWN_DRAIN_DEADLINE_SECS,
-    Subsystem,
+    MAX_IN_FLIGHT_CONNECTIONS, MAX_IN_FLIGHT_REQUESTS, ReadinessState,
+    SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem,
 };
 use crate::state::AppState;
 use sitolo_config::AppConfig;
@@ -192,16 +192,23 @@ fn router_with_transport(
                 ),
         )
         .layer(
+            // Order matters (first added = outermost). `TimeoutLayer` builds
+            // its 408 with `ResBody::default()`, and tower-http's
+            // `TimeoutBody` (produced by `ResponseBodyTimeoutLayer`) has no
+            // `Default` impl, so the response-body timeout must wrap the
+            // request deadline, never sit inside it. Keeping `TimeoutLayer`
+            // outside the body limit and concurrency gate also means the
+            // wall-clock deadline covers time spent queued for a permit.
             ServiceBuilder::new()
+                .layer(ResponseBodyTimeoutLayer::new(
+                    transport.response_body_timeout,
+                ))
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
                     transport.request_timeout,
                 ))
                 .layer(RequestBodyTimeoutLayer::new(
                     transport.request_body_idle_timeout,
-                ))
-                .layer(ResponseBodyTimeoutLayer::new(
-                    transport.response_body_timeout,
                 ))
                 .layer(RequestBodyLimitLayer::new(
                     max_request_body_bytes.min(sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES),

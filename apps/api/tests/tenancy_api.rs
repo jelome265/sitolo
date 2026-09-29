@@ -5,10 +5,9 @@
 
 use sitolo_api::{BranchResponse, OrganizationResponse, ProvisionedOrganizationResponse};
 use sitolo_api_bin::bootstrap::StartupContext;
-use sitolo_api_bin::serve::{HttpTransportConfig, router};
+use sitolo_api_bin::serve::router;
 use sitolo_api_bin::state::AppState;
 use std::sync::Arc;
-use std::time::Duration;
 use tower::ServiceExt;
 
 struct StubProvider;
@@ -35,25 +34,6 @@ async fn test_app_state() -> Arc<AppState> {
     Arc::clone(ctx.state())
 }
 
-/// Test-only transport config: generous timeouts (these tests never
-/// exercise timeout behavior — `transport_tests.rs` owns that), body limit
-/// large enough that the effective cap is driven by
-/// `sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES` via `router()`'s
-/// own `.min(...)` (see `apps/api/src/serve.rs`), not by this value.
-fn test_transport() -> HttpTransportConfig {
-    HttpTransportConfig {
-        max_request_body_bytes: 1024 * 1024,
-        request_header_timeout: Duration::from_secs(30),
-        keepalive_timeout: Duration::from_secs(60),
-        request_timeout: Duration::from_secs(30),
-        request_body_idle_timeout: Duration::from_secs(30),
-        http1_idle_timeout: Duration::from_secs(60),
-        http2_ping_interval: Duration::from_secs(30),
-        http2_keep_alive_timeout: Duration::from_secs(30),
-        response_body_timeout: Duration::from_secs(30),
-    }
-}
-
 /// Drives one HTTP request through the real, production `router()` — the
 /// exact `Router` `serve()` mounts on a live TCP listener — via Tower's
 /// `oneshot`, rather than a hand-rolled request dispatcher. This is real
@@ -69,8 +49,8 @@ async fn dispatch_request(
     body: &str,
     state: &Arc<AppState>,
 ) -> (String, String) {
-    let transport = test_transport();
-    let app = router(Arc::clone(state), transport.max_request_body_bytes, transport);
+    // Effective body cap is min(this, MAX_TENANCY_BODY_BYTES) inside `router()`.
+    let app = router(Arc::clone(state), 1024 * 1024);
 
     let request = axum::http::Request::builder()
         .method(method)

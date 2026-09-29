@@ -76,7 +76,11 @@ fn short_transport() -> HttpTransportConfig {
 /// `real_socket_active_connection_shutdown_test`).
 async fn spawn_server(
     transport: HttpTransportConfig,
-) -> (SocketAddr, oneshot::Sender<()>, JoinHandle<Vec<sitolo_api_bin::shutdown::Subsystem>>) {
+) -> (
+    SocketAddr,
+    oneshot::Sender<()>,
+    JoinHandle<Vec<sitolo_api_bin::shutdown::Subsystem>>,
+) {
     let state = test_app_state().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -298,10 +302,15 @@ async fn real_socket_active_connection_shutdown_test() {
     // server has actually accepted and served on it before we shut down.
     let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
     let res = send_and_read(&mut stream, req).await;
-    assert!(res.starts_with("HTTP/1.1 200"), "warm-up request failed: {res}");
+    assert!(
+        res.starts_with("HTTP/1.1 200"),
+        "warm-up request failed: {res}"
+    );
 
     // Trigger real graceful shutdown.
-    shutdown_tx.send(()).expect("serve() task still listening for shutdown signal");
+    shutdown_tx
+        .send(())
+        .expect("serve() task still listening for shutdown signal");
 
     // The connection must be closed by the server within the real drain
     // deadline, not left open indefinitely: a further read should observe
