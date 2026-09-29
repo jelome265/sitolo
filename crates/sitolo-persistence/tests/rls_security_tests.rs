@@ -230,6 +230,12 @@ where
     F: FnOnce(Arc<TestContext>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
+    if env::var("ADMIN_DATABASE_URL").is_err() && env::var("DATABASE_URL").is_err() {
+        eprintln!(
+            "Skipping PostgreSQL integration test: ADMIN_DATABASE_URL or DATABASE_URL not set"
+        );
+        return;
+    }
     let ctx = match setup_test_context(None).await {
         Ok(c) => Arc::new(c),
         Err(err) => panic!("Test context setup failed: {err:?}"),
@@ -1285,6 +1291,12 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() {
 
 #[tokio::test]
 async fn test_setup_failure_injection_cleans_up_schema() {
+    if env::var("ADMIN_DATABASE_URL").is_err() && env::var("DATABASE_URL").is_err() {
+        eprintln!(
+            "Skipping PostgreSQL integration test: ADMIN_DATABASE_URL or DATABASE_URL not set"
+        );
+        return;
+    }
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
 
