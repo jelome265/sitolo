@@ -127,6 +127,68 @@ async fn real_socket_http1_persistent_connection() {
     );
 }
 
+/// Opens a connection, completes one request/response, then sends nothing
+/// further. Proves `http1_idle_timeout` actually evicts a connection that
+/// has gone application-idle, independent of TCP keepalive (which never
+/// fires here — the peer socket stays healthy the whole time; only the
+/// application-level idle policy closes it).
+#[tokio::test]
+async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
+    let (addr, _shutdown, _handle) = spawn_server(short_transport()).await;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+
+    let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let res = send_and_read(&mut stream, req).await;
+    assert!(
+        res.starts_with("HTTP/1.1 200"),
+        "warm-up request failed: {res}"
+    );
+
+    // Now go idle: send nothing further. `short_transport()` configures a
+    // 500ms `http1_idle_timeout`; the server must close this connection on
+    // its own well before our own 2s read bound.
+    let mut buf = vec![0; 64];
+    let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await;
+    match read {
+        Ok(Ok(0)) => {} // connection closed: idle eviction enforced
+        Ok(Err(_)) => {} // reset/closed: also acceptable enforcement
+        Ok(Ok(n)) => panic!(
+            "expected the idle connection to be closed by the server, got {n} unexpected bytes"
+        ),
+        Err(_) => panic!(
+            "server did not evict a connection idle for well over the configured \
+             500ms http1_idle_timeout — idle eviction is not enforced"
+        ),
+    }
+}
+
+/// Counterpart to the idle-eviction test above, and the direct regression
+/// proof for the specific bug this remediation fixed: an earlier version
+/// of the idle-eviction mechanism started a bare timer once at connection
+/// open and never reset it, so it would eventually kill *any* long-lived
+/// connection — including one continuously serving requests — the moment
+/// the fixed duration elapsed, regardless of activity. `IdleTimeoutIo`
+/// resets its deadline on every successful read instead. Three requests,
+/// each well inside the 500ms idle window but spanning more than twice
+/// that window in total, prove the deadline tracks *inactivity* rather
+/// than *connection age*: a non-resetting timer would have killed this
+/// connection before the third request.
+#[tokio::test]
+async fn real_socket_active_connection_survives_past_idle_timeout() {
+    let (addr, _shutdown, _handle) = spawn_server(short_transport()).await;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+
+    for i in 0..3 {
+        let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let res = send_and_read(&mut stream, req).await;
+        assert!(
+            res.starts_with("HTTP/1.1 200"),
+            "request {i} on an actively-used connection failed: {res}"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
 /// Sends the request line and nothing else, then waits past
 /// `request_header_timeout` without completing the headers. A server that
 /// enforces the header-read timeout closes the connection; a server that

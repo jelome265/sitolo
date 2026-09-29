@@ -335,6 +335,17 @@ pub async fn serve(
         }
     }
 
+    // Close the listening socket immediately, rather than merely stopping
+    // our own accept() calls: the OS keeps completing TCP handshakes into
+    // the backlog for as long as the listening fd stays open, even once
+    // nothing in this process ever calls accept() on it again. Left open,
+    // a client connecting during the drain window would succeed at the TCP
+    // layer and then hang forever waiting for bytes that will never come.
+    // Dropping the listener here makes that fail fast (connection refused)
+    // instead, which is the correct, bounded failure mode for new traffic
+    // arriving after this process has started draining.
+    drop(listener);
+
     let _ = graceful_tx.send(true);
 
     let drain = async { while connections.join_next().await.is_some() {} };
