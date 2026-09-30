@@ -5,7 +5,7 @@
 **Target Environment:** Multi-Tenant Enterprise Microservices / Modular Monolith
 **Source Baseline:** `main` (commit `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`)
 **Status:** Canonical Enterprise Audit & Review
-**Authority:** Root repository source tree plus governing specification hierarchy (`AGENTS.md`, `CLAUDE.md`, `agent.md`)
+**Authority:** Root repository source tree plus governing specification hierarchy (`../AGENTS.md`, `../CLAUDE.md`, `../agent.md`)
 
 ---
 
@@ -26,7 +26,7 @@ Sitolo is currently **NOT READY FOR PRODUCTION**. While the codebase demonstrate
 ```
 
 ### Key Strengths (Acceptable Enterprise-Grade Elements)
-1. **Security & Identity Primitives (`sitolo-auth`, `sitolo-security`, `sitolo-authz`):** Outstanding implementation of security-versioned tokens, session sliding, MFA challenges, CSPRNG token generation, Argon2/Bcrypt password verification with cost-version upgrading, and least-privilege role/permission matrices.
+1. **Security & Identity Primitives (`sitolo-auth`, `sitolo-security`, `sitolo-authz`):** Outstanding implementation of security-versioned tokens, session sliding, MFA challenges, CSPRNG token generation, password verification (using Argon2 and Bcrypt) with cost-version upgrading, and least-privilege role/permission matrices.
 2. **Tenant Isolation & Authority Model (`sitolo-tenancy`, `sitolo-persistence`):** Multi-tenant scope resolution (`AuthorizedScope`) strictly isolates requested vs. trusted scopes. PostgreSQL Row-Level Security (RLS) enforcement on `organizations`, `branches`, and `tenant_resources` uses separate administrative (`admin_pool`) and runtime (`app_runtime`) database roles.
 3. **Configuration & Governance (`sitolo-config`, `deny.toml`, toolchain pinning):** Enforces strict `#![forbid(unsafe_code)]` across all crates, pinned toolchains (Rust 1.98.1), deterministic configuration hashing/fingerprinting, and strict environment separation without hardcoded production defaults.
 4. **Structured Telemetry Substrate (`sitolo-observability`):** Priority-aware, thread-safe ring buffering with priority eviction (security logs displace debug noise) and bounded trace/request ID contexts.
