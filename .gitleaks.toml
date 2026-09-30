@@ -1,0 +1,11 @@
+# Gitleaks configuration file
+title = "Gitleaks config for Sitolo"
+
+[allowlist]
+description = "Allow false positive generic-api-key finding in docs/enterprise_audit_and_review.md historical commit"
+commits = [
+    "1e2d57c00f128b9512e3569570f99f99e412f97e"
+]
+fingerprints = [
+    "1e2d57c00f128b9512e3569570f99f99e412f97e:docs/enterprise_audit_and_review.md:generic-api-key:29"
+]
