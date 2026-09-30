@@ -205,3 +205,61 @@ async fn server_minted_request_id_is_shared_by_the_log_and_the_error_body() {
         capture.text()
     );
 }
+
+const VALID_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+fn live_request_with_traceparents(values: &[&str]) -> Request<Body> {
+    let mut builder = Request::builder().uri("/process/live");
+    for value in values {
+        builder = builder.header("traceparent", *value);
+    }
+    builder.body(Body::empty()).expect("request builds")
+}
+
+#[tokio::test]
+async fn valid_traceparent_is_recorded_on_the_request_span() {
+    let (capture, _guard) = capture_tracing();
+
+    let response = call(live_request_with_traceparents(&[VALID_TRACEPARENT])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let log = capture.text();
+    assert!(log.contains(VALID_TRACEPARENT), "{log}");
+    assert!(log.contains("http.request.completed"), "{log}");
+}
+
+#[tokio::test]
+async fn invalid_traceparent_values_are_ignored_not_echoed_into_telemetry() {
+    // Each is rejected by `TraceParent::parse` (finding F-006): all-zero
+    // trace id, reserved version, non-hex digits, wrong field length.
+    let rejected = [
+        "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+        "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e47zz-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b-01",
+    ];
+    for value in rejected {
+        let (capture, _guard) = capture_tracing();
+        let response = call(live_request_with_traceparents(&[value])).await;
+        // A bad diagnostic header must never affect the request itself.
+        assert_eq!(response.status(), StatusCode::OK, "{value}");
+
+        let log = capture.text();
+        assert!(log.contains("http.request.completed"), "{value}: {log}");
+        assert!(!log.contains(value), "{value} leaked into telemetry: {log}");
+    }
+}
+
+#[tokio::test]
+async fn multiple_traceparent_headers_are_discarded() {
+    let (capture, _guard) = capture_tracing();
+
+    // Two individually valid headers: the spec forbids choosing one.
+    let other = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    let response = call(live_request_with_traceparents(&[VALID_TRACEPARENT, other])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let log = capture.text();
+    assert!(!log.contains(VALID_TRACEPARENT), "{log}");
+    assert!(!log.contains(other), "{log}");
+}

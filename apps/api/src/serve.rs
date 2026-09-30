@@ -29,7 +29,7 @@ use sitolo_api::tenancy::{
     handle_suspend_branch, handle_suspend_organization,
 };
 use sitolo_api::{AppError, ProblemDetails};
-use sitolo_observability::RequestId;
+use sitolo_observability::{RequestId, TraceParent};
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Semaphore, oneshot, watch};
@@ -199,6 +199,25 @@ fn router_with_transport(
                         .and_then(RequestId::parse_client)
                         .unwrap_or_else(RequestId::new_server);
                     request.extensions_mut().insert(request_id);
+                    // W3C trace context: accept only a single, semantically
+                    // valid `traceparent`. More than one header is discarded
+                    // outright (the spec forbids guessing which to trust) and
+                    // anything `TraceParent::parse` rejects is ignored rather
+                    // than echoed into telemetry. Diagnostic correlation only;
+                    // never authorization evidence.
+                    let trace_parent = {
+                        let mut values = request.headers().get_all("traceparent").iter();
+                        match (values.next(), values.next()) {
+                            (Some(value), None) => value
+                                .to_str()
+                                .ok()
+                                .and_then(TraceParent::parse),
+                            _ => None,
+                        }
+                    };
+                    if let Some(trace_parent) = trace_parent {
+                        request.extensions_mut().insert(trace_parent);
+                    }
                     request
                 })
                 .layer(
@@ -215,11 +234,17 @@ fn router_with_transport(
                             // embeds user-controlled identifiers (organization
                             // and branch ids) that the redaction rules forbid
                             // as metric labels.
+                            let trace_parent = request
+                                .extensions()
+                                .get::<TraceParent>()
+                                .map(|value| value.as_str().to_string());
                             tracing::info_span!(
                                 "http_request",
                                 method = %request.method(),
                                 route_template = %route_template(request),
                                 request_id = %request_id,
+                                // Omitted entirely when absent or invalid.
+                                traceparent = trace_parent.as_deref(),
                             )
                         })
                         .on_response(
