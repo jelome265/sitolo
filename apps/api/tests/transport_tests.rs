@@ -67,6 +67,23 @@ fn short_transport() -> HttpTransportConfig {
     }
 }
 
+/// Like [`short_transport`], but with the header-read timeout pushed well
+/// out of the way so that `http1_idle_timeout` is the *only* policy that can
+/// close an idle keep-alive connection.
+///
+/// This matters: hyper's header-read timer also runs while a keep-alive
+/// connection waits for its *next* request's headers, so with a header
+/// timeout shorter than the idle timeout, the header timer closes the
+/// connection first and an idle-eviction test would pass (or fail) for the
+/// wrong reason without ever exercising `IdleTimeoutIo`.
+fn idle_isolated_transport() -> HttpTransportConfig {
+    HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(5),
+        http1_idle_timeout: Duration::from_millis(500),
+        ..short_transport()
+    }
+}
+
 /// Binds a real listener, spawns the real `serve()` loop on it, and
 /// returns the address to connect to plus a shutdown handle. Dropping the
 /// returned `oneshot::Sender` without calling it leaves the server running
@@ -134,7 +151,7 @@ async fn real_socket_http1_persistent_connection() {
 /// application-level idle policy closes it).
 #[tokio::test]
 async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
-    let (addr, _shutdown, _handle) = spawn_server(short_transport()).await;
+    let (addr, _shutdown, _handle) = spawn_server(idle_isolated_transport()).await;
     let mut stream = TcpStream::connect(addr).await.unwrap();
 
     let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
@@ -144,8 +161,9 @@ async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
         "warm-up request failed: {res}"
     );
 
-    // Now go idle: send nothing further. `short_transport()` configures a
-    // 500ms `http1_idle_timeout`; the server must close this connection on
+    // Now go idle: send nothing further. `idle_isolated_transport()`
+    // configures a 500ms `http1_idle_timeout` (header timeout is 5s, so it cannot
+    // be the policy that closes this connection); the server must close this connection on
     // its own well before our own 2s read bound.
     let mut buf = vec![0; 64];
     let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await;
@@ -175,7 +193,7 @@ async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
 /// connection before the third request.
 #[tokio::test]
 async fn real_socket_active_connection_survives_past_idle_timeout() {
-    let (addr, _shutdown, _handle) = spawn_server(short_transport()).await;
+    let (addr, _shutdown, _handle) = spawn_server(idle_isolated_transport()).await;
     let mut stream = TcpStream::connect(addr).await.unwrap();
 
     for i in 0..3 {

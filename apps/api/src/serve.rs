@@ -71,6 +71,12 @@ fn compiled_default_transport() -> HttpTransportConfig {
 ///   an HTTP/2 session is allowed to sit unused.
 /// - `http1_idle_timeout` is the application-level policy that closes an
 ///   HTTP/1 persistent connection that has gone quiet, independent of TCP.
+///   Operational note: hyper's header-read timer (`request_header_timeout`)
+///   also runs while a keep-alive connection waits for its *next* request's
+///   headers, so the effective idle bound for HTTP/1 is the smaller of the
+///   two. `http1_idle_timeout` is the binding limit only when it is shorter
+///   than `request_header_timeout`, and is what bounds a connection that
+///   trickles bytes without ever completing a request.
 /// - `http2_ping_interval`/`http2_keep_alive_timeout` are the HTTP/2
 ///   protocol PING liveness policy, independent of both of the above.
 /// - `request_timeout` is the total wall-clock deadline for a request.
