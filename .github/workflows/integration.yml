@@ -51,8 +51,16 @@ jobs:
           if rc == "0":
               print(f"::notice title={name}::PASS (exit 0)")
               sys.exit(0)
-          idxs = [i for i in (text.find("error"), text.find("panicked"), text.find("FAILED"), text.find("Diff in"), text.find("FAIL")) if i >= 0]
-          start = min(idxs) if idxs else max(0, len(text) - 9000)
+          # Prefer cargo's own failure report; fall back to keyword heuristics.
+          fi = text.find("\nfailures:\n")
+          if fi >= 0:
+              # Also surface the per-test result lines that precede it.
+              summary = "\n".join(l for l in text.splitlines() if l.startswith("test ") and not l.endswith("... ok"))
+              text = "SUMMARY OF NON-OK TEST LINES:\n" + summary + "\n\n" + text[fi:]
+              start = 0
+          else:
+              idxs = [i for i in (text.find("error["), text.find("error:"), text.find("panicked"), text.find("FAILED"), text.find("Diff in")) if i >= 0]
+              start = min(idxs) if idxs else max(0, len(text) - 9000)
           body = text[start:start + 18000]
           chunks = [body[k:k + 3000] for k in range(0, len(body), 3000)][:6]
           for n, c in enumerate(chunks, 1):

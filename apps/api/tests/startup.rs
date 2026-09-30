@@ -171,12 +171,10 @@ async fn ready_reports_unavailable_while_draining_and_shutdown_still_completes()
     // that is the real bug this test originally caught (see remediation
     // notes) — new connections succeeding at the TCP layer and then
     // waiting forever for a response that would never come.
-    let refused = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::TcpStream::connect(addr),
-    )
-    .await
-    .expect("a connection attempt during drain must resolve quickly, not hang");
+    let refused =
+        tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr))
+            .await
+            .expect("a connection attempt during drain must resolve quickly, not hang");
     assert!(
         refused.is_err(),
         "expected the drained listener to refuse new connections, got a live socket"

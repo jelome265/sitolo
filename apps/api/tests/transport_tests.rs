@@ -150,7 +150,7 @@ async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
     let mut buf = vec![0; 64];
     let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await;
     match read {
-        Ok(Ok(0)) => {} // connection closed: idle eviction enforced
+        Ok(Ok(0)) => {}  // connection closed: idle eviction enforced
         Ok(Err(_)) => {} // reset/closed: also acceptable enforcement
         Ok(Ok(n)) => panic!(
             "expected the idle connection to be closed by the server, got {n} unexpected bytes"
