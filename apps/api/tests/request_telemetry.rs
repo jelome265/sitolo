@@ -168,7 +168,9 @@ async fn client_request_id_is_shared_by_the_log_and_the_error_body() {
     let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem+json body");
     assert_eq!(problem["request_id"], "client-correlation-0001");
     assert!(
-        capture.text().contains("request_id=client-correlation-0001"),
+        capture
+            .text()
+            .contains("request_id=client-correlation-0001"),
         "{}",
         capture.text()
     );
