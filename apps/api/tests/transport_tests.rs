@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::{Request, StatusCode};
 use sitolo_api_bin::bootstrap::StartupContext;
 use sitolo_api_bin::serve::{HttpTransportConfig, serve};
 use sitolo_api_bin::state::AppState;
@@ -499,4 +500,109 @@ async fn real_socket_connection_ceiling_rejects_then_recovers() {
         "server never admitted a new connection after a permit was released"
     );
     drop(held);
+}
+
+/// Reads one complete HTTP/2 response: the headers, then every DATA frame,
+/// releasing flow-control capacity as it goes so large bodies cannot stall.
+async fn read_h2_response(response: h2::client::ResponseFuture) -> (StatusCode, String) {
+    let (head, mut body) = response.await.expect("h2 response headers").into_parts();
+    let mut flow = body.flow_control().clone();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.data().await {
+        let chunk = chunk.expect("h2 data frame");
+        let _ = flow.release_capacity(chunk.len());
+        bytes.extend_from_slice(&chunk);
+    }
+    (head.status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Transport config for tests that hold a connection open across several
+/// round trips: nothing here may close it for being briefly quiet.
+fn generous_transport() -> HttpTransportConfig {
+    HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(5),
+        http1_idle_timeout: Duration::from_secs(30),
+        ..short_transport()
+    }
+}
+
+/// Full HTTP/2 proof with a real h2 client (prior-knowledge cleartext),
+/// replacing reliance on the preface/SETTINGS exchange alone: two requests
+/// are in flight on ONE connection at the same time, each on its own
+/// stream, and both are answered correctly by the real Axum router.
+#[tokio::test]
+async fn real_socket_http2_multiplexes_requests_on_one_connection() {
+    let (addr, _shutdown, _handle) = spawn_server(generous_transport()).await;
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let (send, connection) = h2::client::handshake(tcp).await.expect("h2 handshake");
+    let _driver = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let live = Request::builder()
+        .method("GET")
+        .uri("http://localhost/process/live")
+        .body(())
+        .unwrap();
+    let ready = Request::builder()
+        .method("GET")
+        .uri("http://localhost/process/ready")
+        .body(())
+        .unwrap();
+
+    // Both streams are opened before either response is read.
+    let mut send = send.ready().await.expect("h2 ready");
+    let (live_response, _) = send.send_request(live, true).expect("send live");
+    let mut send = send.ready().await.expect("h2 ready");
+    let (ready_response, _) = send.send_request(ready, true).expect("send ready");
+
+    let ((live_status, live_body), (ready_status, ready_body)) =
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                read_h2_response(live_response),
+                read_h2_response(ready_response)
+            )
+        })
+        .await
+        .expect("both multiplexed responses arrive without hanging");
+
+    assert_eq!(live_status, StatusCode::OK);
+    assert!(live_body.contains("\"status\":\"live\""), "{live_body}");
+    assert_eq!(ready_status, StatusCode::OK);
+    assert!(ready_body.contains("\"status\":\"ready\""), "{ready_body}");
+}
+
+/// A request BODY over HTTP/2 must reach the real handler, and the error it
+/// produces must carry the request id the client supplied. This exercises
+/// the full stack end to end over h2: framing, request-id assignment,
+/// Axum's JSON extractor, and the problem+json error path.
+#[tokio::test]
+async fn real_socket_http2_request_body_reaches_the_handler_with_request_id() {
+    let (addr, _shutdown, _handle) = spawn_server(generous_transport()).await;
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let (send, connection) = h2::client::handshake(tcp).await.expect("h2 handshake");
+    let _driver = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("http://localhost/v1/organizations")
+        .header("content-type", "application/json")
+        .header("x-request-id", "h2-correlation-0001")
+        .body(())
+        .unwrap();
+
+    let mut send = send.ready().await.expect("h2 ready");
+    let (response, mut body) = send.send_request(request, false).expect("send headers");
+    body.send_data("this is not json".into(), true)
+        .expect("send body");
+
+    let (status, text) = tokio::time::timeout(Duration::from_secs(5), read_h2_response(response))
+        .await
+        .expect("response arrives without hanging");
+
+    assert!(status.is_client_error(), "{status}: {text}");
+    let problem: serde_json::Value = serde_json::from_str(&text).expect("problem+json body");
+    assert_eq!(problem["request_id"], "h2-correlation-0001");
 }

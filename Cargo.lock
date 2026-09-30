@@ -1054,6 +1054,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "h2",
  "hyper-util",
  "serde",
  "serde_json",
