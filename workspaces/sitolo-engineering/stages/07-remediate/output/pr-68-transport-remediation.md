@@ -233,7 +233,7 @@ be dispatched from a feature branch; a per-gate mirror of it was used instead
 `check-api-architecture` / `check-architecture` / `check-phase2-policy`
 scripts).
 
-Final state: run `36670737345` on `c55ba96` — policy, test, clippy, fmt and
+Earlier state: run `36670737345` on `c55ba96` — policy, test, clippy, fmt and
 lockfile all pass, and the official `non-database contract tests` job passed
 on the preceding run `36670423550`.
 
@@ -280,26 +280,56 @@ Documented on `HttpTransportConfig`.
 - **Connection-ceiling resource-pressure test** added (admits exactly
   `MAX_IN_FLIGHT_CONNECTIONS`, refuses the next, recovers on release).
 
+## Also closed after the re-audit (verified by CI)
+
+- **Full HTTP/2 proof** with a real `h2` client: two concurrent streams on one
+  connection both answered by the production router, and an HTTP/2 request
+  body reaching the real Axum JSON extractor with the client's `x-request-id`
+  echoed in the `problem+json` body. `h2` is a dev-dependency only; it was
+  already resolved via hyper (0.4.19, MIT, passes `deny.toml`), so it added one
+  `Cargo.lock` edge and no new crate. The byte-level preface test remains as a
+  lower-level check.
+- **Request telemetry conforms to the registry** (`docs/telemetry/`): the
+  registered `http.request.completed` event with `status`, `status_class` and
+  `latency_ms`; the span carries `method` and `route_template` taken from
+  Axum's `MatchedPath` (requires axum's dependency-free `matched-path`
+  feature). The raw URI is no longer logged, since it embeds organization and
+  branch ids that `redaction.yaml` forbids as labels.
+- **Requests rejected by the body-limit/timeout layers are now observed.** The
+  request-id + tracing layer is outermost, so a 413 produced by
+  `RequestBodyLimitLayer` (handler never runs) still yields a completion event.
+- **One request identity per request**, asserted against real captured
+  `tracing-subscriber` output and the `problem+json` body, for both
+  client-supplied and server-minted ids, and over both HTTP/1 and HTTP/2.
+
+### Decision: request telemetry is NOT written into `TelemetryBuffer`
+
+The re-audit asked for HTTP telemetry to reach the bounded buffer. I did not do
+this, deliberately. `TelemetryBuffer` is documented as an admission/shedding
+*model*, "not a record store", and nothing in the repository ever calls
+`export_one()`; there is no exporter (no OpenTelemetry crate is resolved).
+Pushing a record per request would fill it after `capacity` requests and pin
+`state()` at `Blackout` permanently with no consumer, producing a
+meaningless signal that looks like integration. That wiring belongs with the
+exporter (Stage 04 planning), where draining and payload ownership exist.
+
 ## Still open (deliberately not claimed)
 
-- **HTTP/2 full request/response proof.** Current coverage is the RFC 9113
-  preface/SETTINGS exchange only. `h2` is already resolved in `Cargo.lock` as
-  a transitive dependency, so a dev-dependency needs no new crate download.
-- **Request telemetry into `TelemetryBuffer`** (re-audit #7). Request spans
-  and completion events go to `tracing` with a single propagated
-  `RequestId`; nothing is written to the bounded buffer. Whether HTTP
-  telemetry belongs there is a design decision for Stage 04, not something to
-  guess at here. W3C `traceparent` extraction is likewise not implemented.
-- **Slow response consumer** transport test (re-audit #8).
-- **Requests rejected by `TimeoutLayer`/`RequestBodyLimitLayer`** do not pass
-  through the tracing layer, so they produce no span.
+- **Slow response consumer** transport test (re-audit #8). Behavior is bounded
+  by `ResponseBodyTimeoutLayer`, but no test drives a stalled reader.
+- **W3C `traceparent` extraction.** `TraceParent` exists in
+  `sitolo-observability` but is not read at the HTTP boundary.
+- **Exporter and `TelemetryBuffer` wiring** (see decision above).
 - **Docs integrity (D-3).** `docs/threat_model.integrity.json` pins a git blob
   hash; recomputing it needs the final committed blob.
-- **Housekeeping before merge.** Duplicate stage directories `07-remediation`
-  and `08-verification` (siblings of the contract-defined `07-remediate` and
-  `08-verify`) contain retracted claims and should be reconciled by the
-  workspace owner. A temporary diagnostic job was added to `integration.yml`
-  during this work and has been removed.
+- **`rust.yml` (full `scripts/ci/verify`) is scoped to `main`** and cannot be
+  dispatched from a feature branch, so `cargo deny` / `cargo audit` were not
+  run here. Per-gate fmt, clippy, tests, lockfile and the architecture/policy
+  scripts were.
+- **Housekeeping before merge.** Duplicate stage directories
+  `07-remediation` and `08-verification` (siblings of the contract-defined
+  `07-remediate` and `08-verify`) contain retracted claims and should be
+  reconciled by the workspace owner.
 
 ## Re-audit requirement
 
