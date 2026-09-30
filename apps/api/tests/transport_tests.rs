@@ -417,3 +417,86 @@ async fn real_socket_active_connection_shutdown_test() {
         "serve() should report at least one subsystem shutdown result"
     );
 }
+
+const LIVE_REQUEST: &[u8] = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+/// Opens a fresh connection and reports whether it was actually served a
+/// 200, treating every failure mode (reset, EOF, timeout) as "not served".
+async fn live_request_is_served(addr: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect(addr).await else {
+        return false;
+    };
+    if stream.write_all(LIVE_REQUEST).await.is_err() {
+        return false;
+    }
+    let mut buf = vec![0u8; 1024];
+    match tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
+        _ => false,
+    }
+}
+
+/// Resource-pressure proof for the connection-concurrency ceiling
+/// (`MAX_IN_FLIGHT_CONNECTIONS`), which had no coverage: the ceiling must
+/// admit exactly its limit, refuse the next connection promptly instead of
+/// serving it or leaving it hanging, and release the permit when a held
+/// connection closes so the server recovers rather than staying wedged.
+#[tokio::test]
+async fn real_socket_connection_ceiling_rejects_then_recovers() {
+    use sitolo_api_bin::shutdown::MAX_IN_FLIGHT_CONNECTIONS;
+
+    // Nothing may close a held connection on its own during this test, so
+    // both the header-read timer and the idle policy are pushed far out.
+    let transport = HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(30),
+        http1_idle_timeout: Duration::from_secs(60),
+        ..short_transport()
+    };
+    let (addr, _shutdown, _handle) = spawn_server(transport).await;
+
+    // Fill every permit. Each connection completes a real request first,
+    // which also proves the server has accepted it and taken its permit
+    // before the next one is opened (no reliance on accept-loop timing).
+    let mut held = Vec::with_capacity(MAX_IN_FLIGHT_CONNECTIONS);
+    for i in 0..MAX_IN_FLIGHT_CONNECTIONS {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let res = send_and_read(&mut stream, LIVE_REQUEST).await;
+        assert!(
+            res.starts_with("HTTP/1.1 200"),
+            "connection {i} of {MAX_IN_FLIGHT_CONNECTIONS} should be admitted: {res}"
+        );
+        held.push(stream);
+    }
+
+    // One past the ceiling. The kernel completes the TCP handshake via the
+    // listen backlog, but the server must drop it at the permit check: the
+    // client sees EOF or a reset, never a served response.
+    let mut extra = TcpStream::connect(addr).await.unwrap();
+    let _ = extra.write_all(LIVE_REQUEST).await;
+    let mut buf = vec![0u8; 1024];
+    let outcome = tokio::time::timeout(Duration::from_secs(2), extra.read(&mut buf))
+        .await
+        .expect("an over-ceiling connection must be closed promptly, not left hanging");
+    match outcome {
+        Ok(0) | Err(_) => {}
+        Ok(n) => panic!(
+            "connection past the ceiling was served: {}",
+            String::from_utf8_lossy(&buf[..n])
+        ),
+    }
+
+    // Release one permit and prove the server recovers. Retries absorb the
+    // small window before the server observes the close and frees the slot.
+    drop(held.pop());
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        while !live_request_is_served(addr).await {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        recovered.is_ok(),
+        "server never admitted a new connection after a permit was released"
+    );
+    drop(held);
+}
