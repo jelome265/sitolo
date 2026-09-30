@@ -218,36 +218,91 @@ Not pursued; nothing in this category was flagged FAIL by Stage 06.
   `workspaces/sitolo-engineering/stages/08-verification/output/pr-68-verification-report.md`
   — corrected from fabricated `COMPLETED`/`VERIFIED` claims.
 
-## Compilation/test-run status
+## CI verification (actual results)
 
-**Not executed in this sandbox — no `cargo` toolchain is installed here at
-all** (confirmed: `cargo --version` → command not found), independent of
-any instruction about what to run. Every fix above was verified by hand
-against the crate's existing types, and the following were specifically
-checked against upstream source (not assumed) because they were
-load-bearing for this remediation's correctness:
+The authoring sandbox has no usable Rust toolchain (apt ships 1.75; this
+workspace is edition 2024 pinned to 1.98.1; rustup hosts are blocked), so
+every claim below was verified by running the repository's own gates on
+GitHub Actions against the pinned toolchain, via the `integration.yml`
+`workflow_dispatch` trigger on branch `remediation/pr-68-transport-hardening`.
+`rust.yml` (the full `scripts/ci/verify`) is scoped to `main` only and cannot
+be dispatched from a feature branch; a per-gate mirror of it was used instead
+(`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features
+--locked -D warnings`, `cargo test --workspace --all-targets --all-features
+--locked --exclude sitolo-persistence`, lockfile resolution, and the
+`check-api-architecture` / `check-architecture` / `check-phase2-policy`
+scripts).
 
-- `hyper_util::server::conn::auto::Connection::graceful_shutdown` — real,
-  `pub fn graceful_shutdown(self: Pin<&mut Self>)`, confirmed against
-  `hyperium/hyper-util` master `src/server/conn/auto/mod.rs`.
-- `Http1Builder::{header_read_timeout, keep_alive, timer}` and
-  `Http2Builder::{keep_alive_interval, keep_alive_timeout,
-  max_concurrent_streams, timer}` — all real, confirmed against the same
-  source tree.
-- `tower_http::timeout::ResponseBodyTimeoutLayer::new(Duration) -> Self` —
-  real, confirmed against `tower-rs/tower-http` tag `tower-http-0.7.1`
-  (the exact version pinned in this repo's `Cargo.lock`), not assumed from
-  memory.
+Final state: run `36670737345` on `c55ba96` — policy, test, clippy, fmt and
+lockfile all pass, and the official `non-database contract tests` job passed
+on the preceding run `36670423550`.
 
-This is still not a substitute for actually compiling. **Required before
-merge:** `cargo check -p sitolo-config -p sitolo-api-bin && cargo test -p
-sitolo-config -p sitolo-api-bin && cargo clippy --all-targets` (MSRV
-1.98.1 per `clippy.toml`) `&& cargo fmt --check`.
+### Defects that only real compilation/execution could expose
+
+None of these were visible to hand review, and several were in code I had
+already declared correct. Recorded so the remediation history is honest:
+
+1. **Compile error, layer ordering.** `tower_http::timeout::Timeout<S>`
+   requires the inner response body to be `Default`; `TimeoutBody` (from
+   `ResponseBodyTimeoutLayer`) is not, only `limit::ResponseBody<B: Default>`
+   is. `ResponseBodyTimeoutLayer` must wrap `TimeoutLayer`, not sit inside it.
+2. **`--locked` failure.** Enabling tower-http's `trace` feature adds a
+   `tower-http -> tracing` edge that `Cargo.lock` did not record.
+3. **Merge drift.** A parallel fix attempt left `tenancy_api.rs` calling a
+   3-argument `router()`; the signature is pinned to 2 arguments by
+   `scripts/ci/check-api-architecture`. Reconciled.
+4. **Production defect, silent hang on shutdown.** After the shutdown signal
+   the accept loop stopped calling `accept()` but the `TcpListener` stayed
+   open, so the kernel kept completing handshakes and clients connecting
+   during drain hung forever. `serve()` now drops the listener immediately.
+5. **Test-validity defects.** The idle-eviction tests ran with a 200ms
+   header-read timeout under a 500ms idle policy; hyper's header timer also
+   covers the wait for the next keep-alive request, so it closed connections
+   first. One test failed, and its sibling could have passed without ever
+   exercising `IdleTimeoutIo`. Both now use `idle_isolated_transport()`.
+6. **rustfmt.** Several diffs in new code; `cargo fmt --check` is a gate.
+
+Operational note surfaced by (5): for HTTP/1 the effective idle bound is the
+smaller of `request_header_timeout` and `http1_idle_timeout`. With the
+defaults (5s header, 60s idle) the header timer is the binding limit for a
+keep-alive connection that goes quiet; `http1_idle_timeout` binds when it is
+shorter, and bounds a peer that trickles bytes without completing a request.
+Documented on `HttpTransportConfig`.
+
+## Additional findings closed from the independent re-audit
+
+- **Config fingerprint omitted the six new timeout fields** (re-audit #5), so
+  a timeout-policy change left the fingerprint unchanged. Added to
+  `canonical_non_secret_config` with per-field regression coverage.
+  `FINGERPRINT_FORMAT_VERSION` stays 1: these fields exist only on this
+  unmerged branch, so no deployed fingerprint changes, and the fingerprint
+  contract (s41) says an incomplete fingerprint is corrected, not preserved.
+- **Connection-ceiling resource-pressure test** added (admits exactly
+  `MAX_IN_FLIGHT_CONNECTIONS`, refuses the next, recovers on release).
+
+## Still open (deliberately not claimed)
+
+- **HTTP/2 full request/response proof.** Current coverage is the RFC 9113
+  preface/SETTINGS exchange only. `h2` is already resolved in `Cargo.lock` as
+  a transitive dependency, so a dev-dependency needs no new crate download.
+- **Request telemetry into `TelemetryBuffer`** (re-audit #7). Request spans
+  and completion events go to `tracing` with a single propagated
+  `RequestId`; nothing is written to the bounded buffer. Whether HTTP
+  telemetry belongs there is a design decision for Stage 04, not something to
+  guess at here. W3C `traceparent` extraction is likewise not implemented.
+- **Slow response consumer** transport test (re-audit #8).
+- **Requests rejected by `TimeoutLayer`/`RequestBodyLimitLayer`** do not pass
+  through the tracing layer, so they produce no span.
+- **Docs integrity (D-3).** `docs/threat_model.integrity.json` pins a git blob
+  hash; recomputing it needs the final committed blob.
+- **Housekeeping before merge.** Duplicate stage directories `07-remediation`
+  and `08-verification` (siblings of the contract-defined `07-remediate` and
+  `08-verify`) contain retracted claims and should be reconciled by the
+  workspace owner. A temporary diagnostic job was added to `integration.yml`
+  during this work and has been removed.
 
 ## Re-audit requirement
 
-Per the Stage 07 contract: implementation changed, so **re-audit is
-required** before Stage 08 verification. Given the `daabd24` history, the
-re-audit should specifically re-verify by reading the actual diff and, if
-at all possible, actually compiling it — not by trusting a status line in
-a report file.
+Implementation changed after the Stage 06 re-audit, so Stage 06 must run again
+before Stage 08. Because a prior "verified" claim on this branch proved false,
+the re-audit should read the diff and the CI runs above, not a status line.
