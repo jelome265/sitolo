@@ -14,7 +14,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Json, Path, State};
+use axum::extract::{Extension, Json, MatchedPath, Path, State};
 use axum::http::{Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -150,6 +150,36 @@ fn router_with_transport(
             post(branch_action),
         )
         .layer(
+            // Order matters (first added = outermost). `TimeoutLayer` builds
+            // its 408 with `ResBody::default()`, and tower-http's
+            // `TimeoutBody` (produced by `ResponseBodyTimeoutLayer`) has no
+            // `Default` impl, so the response-body timeout must wrap the
+            // request deadline, never sit inside it. Keeping `TimeoutLayer`
+            // outside the body limit and concurrency gate also means the
+            // wall-clock deadline covers time spent queued for a permit.
+            ServiceBuilder::new()
+                .layer(ResponseBodyTimeoutLayer::new(
+                    transport.response_body_timeout,
+                ))
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    transport.request_timeout,
+                ))
+                .layer(RequestBodyTimeoutLayer::new(
+                    transport.request_body_idle_timeout,
+                ))
+                .layer(RequestBodyLimitLayer::new(
+                    max_request_body_bytes.min(sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES),
+                ))
+                .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
+        )
+        // Outermost (added last): request identity and the completion event.
+        // Every request that reaches a route passes through here *around* the
+        // timeout, body-limit and concurrency layers above, so requests those
+        // layers reject (413, 408, ...) are observed too rather than silently
+        // producing no span. Each `Router::layer` call erases the body type,
+        // so this ordering is independent of the inner layers' body types.
+        .layer(
             ServiceBuilder::new()
                 // Assigns the request-scoped identity exactly once, before
                 // anything downstream runs: reuse a well-formed client
@@ -179,47 +209,33 @@ fn router_with_transport(
                                 .get::<RequestId>()
                                 .map(|id| id.as_str().to_string())
                                 .unwrap_or_else(|| "unassigned".to_string());
+                            // Fields follow docs/telemetry/metrics.yaml
+                            // (`method`, `route_template`): the matched route
+                            // template is low-cardinality, whereas the raw URI
+                            // embeds user-controlled identifiers (organization
+                            // and branch ids) that the redaction rules forbid
+                            // as metric labels.
                             tracing::info_span!(
                                 "http_request",
                                 method = %request.method(),
-                                uri = %request.uri(),
+                                route_template = %route_template(request),
                                 request_id = %request_id,
                             )
                         })
                         .on_response(
                             |response: &Response, latency: Duration, _span: &tracing::Span| {
+                                // Registered event `http.request.completed`
+                                // (docs/telemetry/events.yaml).
                                 tracing::info!(
-                                    status = %response.status().as_u16(),
+                                    event = "http.request.completed",
+                                    status = response.status().as_u16(),
+                                    status_class = %status_class(response.status()),
                                     latency_ms = latency.as_millis(),
                                     "request completed"
                                 );
                             },
                         ),
                 ),
-        )
-        .layer(
-            // Order matters (first added = outermost). `TimeoutLayer` builds
-            // its 408 with `ResBody::default()`, and tower-http's
-            // `TimeoutBody` (produced by `ResponseBodyTimeoutLayer`) has no
-            // `Default` impl, so the response-body timeout must wrap the
-            // request deadline, never sit inside it. Keeping `TimeoutLayer`
-            // outside the body limit and concurrency gate also means the
-            // wall-clock deadline covers time spent queued for a permit.
-            ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(
-                    transport.response_body_timeout,
-                ))
-                .layer(TimeoutLayer::with_status_code(
-                    StatusCode::REQUEST_TIMEOUT,
-                    transport.request_timeout,
-                ))
-                .layer(RequestBodyTimeoutLayer::new(
-                    transport.request_body_idle_timeout,
-                ))
-                .layer(RequestBodyLimitLayer::new(
-                    max_request_body_bytes.min(sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES),
-                ))
-                .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
         )
         .with_state(state)
 }
@@ -459,6 +475,28 @@ async fn live(State(state): State<Arc<AppState>>) -> Response {
         json_escape(state.service_version())
     );
     json_body(StatusCode::OK, body)
+}
+
+/// Matched route template for telemetry (`/v1/organizations/{organization_id}/...`),
+/// never the raw path. Requests that match no route report `unmatched`.
+fn route_template(request: &Request<Body>) -> &str {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or("unmatched")
+}
+
+/// Low-cardinality HTTP status class label (`2xx`, `4xx`, ...).
+fn status_class(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        100..=199 => "1xx",
+        200..=299 => "2xx",
+        300..=399 => "3xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        _ => "other",
+    }
 }
 
 /// A genuine readiness probe, consulting [`AppState::readiness`], the
@@ -704,6 +742,27 @@ mod tests {
         assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
         assert_eq!(json_escape("plain"), "plain");
         assert!(json_escape("\u{0001}").contains("\\u0001"));
+    }
+
+    #[test]
+    fn status_class_buckets_every_range() {
+        assert_eq!(status_class(StatusCode::CONTINUE), "1xx");
+        assert_eq!(status_class(StatusCode::OK), "2xx");
+        assert_eq!(status_class(StatusCode::NO_CONTENT), "2xx");
+        assert_eq!(status_class(StatusCode::FOUND), "3xx");
+        assert_eq!(status_class(StatusCode::NOT_FOUND), "4xx");
+        assert_eq!(status_class(StatusCode::PAYLOAD_TOO_LARGE), "4xx");
+        assert_eq!(status_class(StatusCode::SERVICE_UNAVAILABLE), "5xx");
+    }
+
+    #[test]
+    fn route_template_defaults_to_unmatched_outside_a_route() {
+        let request = Request::builder()
+            .uri("/v1/organizations/org-123/branches")
+            .body(Body::empty())
+            .expect("request builds");
+        // Never falls back to the raw path: it embeds user-controlled ids.
+        assert_eq!(route_template(&request), "unmatched");
     }
 
     #[test]
