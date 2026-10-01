@@ -302,6 +302,15 @@ Documented on `HttpTransportConfig`.
   `tracing-subscriber` output and the `problem+json` body, for both
   client-supplied and server-minted ids, and over both HTTP/1 and HTTP/2.
 
+- **W3C `traceparent` extraction at the HTTP boundary.** A single,
+  semantically valid header (`TraceParent::parse`: version `00`, non-zero ids,
+  exact hex lengths) is recorded on the request span. Multiple `traceparent`
+  headers are discarded, per the W3C rule against guessing which to trust;
+  invalid values are ignored and never echoed into telemetry; a bad diagnostic
+  header never changes the response. Correlation only, never authorization
+  evidence. Covered by tests for valid, four invalid shapes, and duplicates,
+  asserted against real captured output.
+
 ### Decision: request telemetry is NOT written into `TelemetryBuffer`
 
 The re-audit asked for HTTP telemetry to reach the bounded buffer. I did not do
@@ -315,10 +324,13 @@ exporter (Stage 04 planning), where draining and payload ownership exist.
 
 ## Still open (deliberately not claimed)
 
-- **Slow response consumer** transport test (re-audit #8). Behavior is bounded
-  by `ResponseBodyTimeoutLayer`, but no test drives a stalled reader.
-- **W3C `traceparent` extraction.** `TraceParent` exists in
-  `sitolo-observability` but is not read at the HTTP boundary.
+- **Slow response consumer test: not written, on purpose.** Every route's
+  response is a small, fully buffered `Body::from(String)` / `Json`. A few
+  hundred bytes fit in kernel socket buffers, so a stalled reader can never
+  create backpressure and a test could only pass vacuously. The behavior is
+  bounded by `ResponseBodyTimeoutLayer` (verified in the layer composition),
+  which exists as defense for future streaming routes. When one exists, the
+  test should be written against that route.
 - **Exporter and `TelemetryBuffer` wiring** (see decision above).
 - **Docs integrity (D-3).** `docs/threat_model.integrity.json` pins a git blob
   hash; recomputing it needs the final committed blob.
