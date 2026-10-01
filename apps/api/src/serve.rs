@@ -208,10 +208,7 @@ fn router_with_transport(
                     let trace_parent = {
                         let mut values = request.headers().get_all("traceparent").iter();
                         match (values.next(), values.next()) {
-                            (Some(value), None) => value
-                                .to_str()
-                                .ok()
-                                .and_then(TraceParent::parse),
+                            (Some(value), None) => value.to_str().ok().and_then(TraceParent::parse),
                             _ => None,
                         }
                     };
