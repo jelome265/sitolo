@@ -1,306 +1,284 @@
-# Sitolo Codebase Enterprise Audit & Architecture Review
+# Sitolo Codebase Comprehensive Enterprise Audit & Architecture Review
 
-**Target system:** Sitolo — Business Operating System for African SMEs
-**Audit date:** 2026-09-25
-**Source baseline:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`
-**Documentation-remediation context:** `feat/agentic-workflow`
-**Status:** Current-state enterprise audit
-**Authority:** Current source tree plus the governing documentation hierarchy in `agent.md`
-
-> This document is a current-state assessment. It replaces the older audit's pre-Phase-4 implementation snapshot. Historical findings from earlier audits remain useful evidence but must not be read as the current repository state.
+**Target System:** Sitolo — Business Operating System for African SMEs
+**Audit Date:** 2026-09-26
+**Source Baseline:** `main`
+**Status:** Current-State Comprehensive Enterprise Audit
+**Authority:** Governing Documentation Hierarchy & Current Source Code (`apps/`, `crates/`, `docs/`)
 
 ---
 
-## Executive Summary
+## 1. Executive Summary & Codebase Health
 
-Sitolo is **not production-ready**, but the repository is materially beyond the condition described by the previous enterprise audit.
+Sitolo is **not production-ready**. While the codebase features well-designed domain entities for identity and tenancy, modular workspace crates, and strict Rust toolchain/dependency controls, critical enterprise runtime boundaries are either incomplete, un-wired, or implemented via brittle custom scaffolds that will fail under real production traffic and security threats.
 
-The current source contains real identity/authentication primitives, organization/branch/membership domain state, tenancy and effective-scope resolution, role/permission/assignment logic, invitation state, API transport validation and tenancy handlers, PostgreSQL authority/runtime primitives, security controls, and substantial telemetry/test infrastructure.
-
-The remaining production gap is not the absence of an architectural model. It is the incomplete connection of those foundations into a durable production transaction system.
-
-The largest current blockers are:
-
-1. **The documented HTTP architecture and the implemented HTTP transport diverge.** Governing documents specify Rust + Axum + Tokio, while the current `apps/api` binary implements a direct TCP request loop and has no Axum dependency. This is an implementation decision gap, not a reason to rewrite the architecture document silently.
-2. **General business-domain execution is incomplete.** The domain crate currently exposes tenancy; product catalogue, inventory, sales, payments, reconciliation and other core business engines remain contract/future work.
-3. **Phase 5 PostgreSQL schema/migration/RLS delivery is not the full current runtime business authority yet.** PostgreSQL connection/authority primitives exist, but the complete business schema and repository implementation remain phase-gated.
-4. **Authentication helpers exist but are not yet the complete production HTTP authentication boundary.**
-5. **General Phase 6 policy enforcement is not yet the final production authorization layer.** Current role/scope primitives are real, but high-risk authorization policy remains separately owned.
-6. **Workers, event publication, integrations and synchronization remain substantially unimplemented.**
-7. **The commercial and technical documentation corpus still contains temporal/history ambiguities that can cause agents to confuse targets, current state and historical evidence.**
-8. **GitHub repository administration controls are an external deployment concern and are not proven by workflow files alone.**
-
-Therefore the appropriate posture is:
-
+The overall health of the system can be summarized as:
 ```text
-ARCHITECTURAL FOUNDATION
-        ↓
-REFERENCE IMPLEMENTATIONS
-        ↓
-PARTIAL PRODUCTION BOUNDARIES
-        ↓
-NOT YET A COMPLETE BUSINESS SYSTEM
+STRONG SECURITY & DOMAIN SPECIFICATIONS
+                  ↓
+PARTIAL SECURITY & TENANCY PRIMITIVES (sitolo-auth, sitolo-tenancy)
+                  ↓
+INCOMPLETE / CUSTOM BRITTLE HTTP TRANSPORT & UN-WIRED AUTH (apps/api)
+                  ↓
+SCAFFOLDED WORKER, EVENT & INTEGRATION SUBSYSTEMS (apps/worker, sitolo-events)
+                  ↓
+NOT READY FOR PRODUCTION DEPLOYMENT
 ```
 
----
+### Overall Health Rating: **UNFIT FOR PRODUCTION**
 
-# 1. Authority and Evidence Model
-
-The repository's source hierarchy remains:
-
-```text
-1. Applicable law / regulator requirement
-2. Current external provider contract
-3. Approved product/business decision
-4. Security architecture + security implementation contract
-5. Domain model
-6. Database / API / integration specifications
-7. Testing / observability / deployment specifications
-8. ADRs
-9. Implementation convenience
-```
-
-The current source tree is used to determine **implementation state**. A normative contract is used to determine **required state**.
-
-A contradiction is therefore classified as one of:
-
-| Finding type | Meaning |
-|---|---|
-| Documentation stale | The document describes a state that the current authority no longer supports |
-| Implementation gap | The contract is current, but source implementation is incomplete |
-| Historical evidence | The statement is true for an earlier baseline and must not be used as current state |
-| Future-phase requirement | The contract intentionally describes a later phase |
-| External-fact freshness issue | A dated/versioned outside fact needs current verification |
-
----
-
-# 2. Current Source Baseline
-
-The current repository contains non-trivial implementations in:
-
-- `sitolo-auth`: authentication/session/MFA/device/token/security-context primitives
-- `sitolo-domain`: tenancy entities and lifecycle semantics
-- `sitolo-tenancy`: requested-vs-trusted scope typing and effective scope resolution
-- `sitolo-authz`: permissions, roles, assignments, scope grants and invitation models
-- `sitolo-application`: organization/branch/membership/IAM service orchestration
-- `sitolo-api`: bounded DTOs, authentication helpers, errors and tenancy HTTP transport
-- `sitolo-persistence`: reference repositories plus PostgreSQL authority/runtime controls
-- `sitolo-security`: cross-cutting security primitives
-- `sitolo-observability`: bounded operational telemetry
-- repository-level CI/policy/security verification
-
-At the same time:
-
-- `apps/worker/src/main.rs` remains a scaffold with no worker loop;
-- `sitolo-events` has no substantive event runtime;
-- `sitolo-integrations` has no substantive provider runtime;
-- `sitolo-sync` has no substantive synchronization runtime;
-- `sitolo-domain` does not yet contain the broader operational business engines;
-- mobile/desktop clients are not present;
-- the full Phase 5 application schema/migration layer is not yet the completed business persistence system.
-
----
-
-# 3. Enterprise Assessment Matrix
-
-| Dimension | Current state | Evidence / implication |
+| Dimension | Rating | Key Summary |
 |---|---|---|
-| 1. Architecture & boundaries | **Strong foundation / gap at HTTP implementation** | Modular-monolith boundaries and dependency direction exist; documented Axum boundary is not what the current API binary implements. |
-| 2. Application architecture | **Partial** | Application services now orchestrate tenancy/IAM, but the complete command/query/business engine chain is unfinished. |
-| 3. API design & trust boundaries | **Partial** | Bounded DTOs, validation and tenancy handlers exist. General business API surface is not implemented, and production auth wiring is incomplete. |
-| 4. Authentication & authorization | **Partial foundation** | Authentication/security primitives and role/scope models exist. General policy enforcement and complete HTTP integration are still phase-gated. |
-| 5. Input validation & integrity | **Partial** | Tenancy transport uses bounded bodies and `deny_unknown_fields`; domain-wide request validation still depends on future business endpoints. |
-| 6. IDOR / injection / SSRF / boundary security | **Partial** | Security contracts and primitives are substantial; broad production attack-surface coverage cannot be proven until all business/integration endpoints exist. |
-| 7. Errors / retries / timeouts / failure isolation | **Partial substrate** | Error families and bounded probe behavior exist; provider retry/reconciliation infrastructure remains future work. |
-| 8. CPU vs I/O behavior | **Contract defined / implementation incomplete** | Async/runtime rules and password-hashing boundaries are specified; full production load evidence does not yet exist. |
-| 9. Concurrency & race safety | **Partial** | Reference services use in-process locking; PostgreSQL authority primitives exist, but the full business mutation workload is not yet running through durable transactions. |
-| 10. Database / transactions / migrations / RLS | **Partial / Phase 5 gate** | PostgreSQL authority/runtime code and database-specific test assets exist, while complete schema/migration/RLS application delivery remains phase-gated. |
-| 11. Caching & consistency | **Not implemented as a production capability** | Redis/cache is an optional architectural acceleration, not a current source-of-truth mechanism. |
-| 12. Workers / outbox / events / idempotency | **Not production-complete** | Worker binary and event crate remain scaffolds; durable asynchronous execution is still required. |
-| 13. Observability | **Substrate implemented; operational coverage incomplete** | Structured telemetry, bounded names and registry/schema controls exist; end-to-end business metrics/exporters/alerts are not fully integrated. |
-| 14. Testing | **Strong foundation / incomplete coverage** | Auth/config/API/PostgreSQL security tests exist; full business, offline-device, integration and recovery coverage does not yet exist. |
-| 15. Configuration & secrets | **Implemented foundation** | Pinned configuration/toolchain and sensitive-value handling are implemented; production secret infrastructure remains deployment-specific. |
-| 16. Deployment & release safety | **Contract-heavy / deployment controls incomplete** | Release governance and workflow contracts exist; external GitHub repository administration and production environment controls must be verified separately. |
-| 17. Code quality / dependency governance | **Strong foundation** | Rust workspace policy, dependency direction, unsafe-code prohibition and lockfile/toolchain discipline are present. |
-| 18. Domain/business completeness | **Early platform foundation** | Tenancy/IAM is real; catalogue/inventory/sales/payment/reconciliation/reporting/vertical engines remain largely contractual. |
-| 19. Production readiness | **Not ready** | Durable business state, complete API/security enforcement, asynchronous processing, integrations, clients and end-to-end evidence are incomplete. |
+| 1. Repository & Dependency Boundaries | **Passable** | Clear cargo workspace boundaries, `forbid(unsafe_code)` enforced, clean crate split. |
+| 2. Application Architecture | **Incomplete** | Domain orchestration exists for tenancy/IAM, but lacks all business core aggregates. |
+| 3. API Design & Request Flow | **Critical Risk** | Custom TCP socket server in `apps/api/src/serve.rs`; no HTTP framing, no content-length streaming. |
+| 4. Auth & Session Management | **High Risk** | Solid `sitolo-auth` logic, but zero auth/session middleware wired to API routes. Endpoints are unauthenticated. |
+| 5. Input Validation & Integrity | **Passable Substrate** | Bounded JSON DTOs for tenancy; lacks domain-wide input validation across business modules. |
+| 6. Injection, IDOR & Security Controls | **High Risk** | RLS & parameterization designed in `sitolo-persistence`, but un-wired in production API. IDOR risk on public endpoints. |
+| 7. Errors, Retries & Failure Isolation | **Incomplete** | Detailed error types exist, but background retry/DLQ and circuit breakers are unimplemented. |
+| 8. CPU vs I/O Bottlenecks | **Medium Risk** | In-memory synchronous `Mutex` locks across state; password hashing properly isolated in Argon2. |
+| 9. Concurrency & Race Conditions | **High Risk** | Single-node in-memory state lock (`Mutex<IdentityState>`) serializes all requests and prevents horizontal scaling. |
+| 10. Database, Transactions & RLS | **Partial / Gate** | PostgreSQL RLS and role checks written in `sitolo-persistence`, but flagged as dead code and un-wired in API state. |
+| 11. Caching & Consistency | **Unimplemented** | No caching layer (Redis) implemented; state relies entirely on volatile process memory. |
+| 12. Queues, Background Jobs & Events | **Critical Risk** | `apps/worker` is `fn main() {}`. Outbox, events, sync, and payment integrations are empty scaffolds. |
+| 13. Observability & Telemetry | **Passable Substrate** | Structured logging and context propagation built, but metrics exporting and alert thresholds are missing. |
+| 14. Testing & Test Coverage | **Incomplete** | Unit tests exist for auth/tenancy/config; DB integration tests fail without live PG instance. Zero E2E tests. |
+| 15. Configuration & Secrets | **Strong Substrate** | Pinned config schema, strict validation, secret references, and fingerprinting implemented in `sitolo-config`. |
+| 16. Deployment Safety & Rollbacks | **Incomplete** | Release governance documented, but zero containerization, health check integration, or deployment scripts exist. |
+| 17. Code Quality & Debt | **Passable** | Low technical debt in core crates, but dead code warnings in persistence and empty scaffolds in worker/events. |
+| 18. Maintainability & Ownership | **Strong** | Domain/crate isolation makes code maintainable and team ownership straightforward once implementations land. |
+| 19. Compliance & Fiscalization | **Unimplemented** | MRA EIS tax compliance and payment adapter interfaces are empty stubs in `sitolo-integrations`. |
 
 ---
 
-# 4. Critical Documentation/Implementation Divergences
+## 2. Comprehensive Severity-Ranked Findings
 
-## 4.1 Axum is documented but not implemented in the current API binary
+### CRITICAL SEVERITY FINDINGS
 
-The architecture, API contract, implementation plan and multiple phase/security documents specify Rust + Axum + Tokio.
+---
 
-The current `apps/api/Cargo.toml` does not depend on Axum. The current `apps/api/src/serve.rs` directly accepts TCP connections and parses HTTP-like requests itself.
+#### Finding CRIT-01: Custom TCP Listener with Defective HTTP Parsing & Packet Framing in API Server
+* **What is wrong:** `apps/api/src/serve.rs` implements a direct TCP socket loop (`TcpListener::accept`) and parses incoming requests using naive string splitting on a single buffer read (`stream.read(&mut buf)`). It does not use Axum or hyper, despite standard architecture requirements.
+* **Why it is wrong:** Single `stream.read` invocations assume the entire HTTP request fits within one TCP packet. If TCP segmenting occurs or headers/body are sent across multiple TCP frames, request bodies or trailing headers will be truncated or ignored. Additionally, naive string splitting (`split_whitespace`) does not handle chunked transfer encoding, pipeline requests, or HTTP header standards.
+* **Where it appears:** `apps/api/src/serve.rs` (`handle_connection` and `dispatch_request`).
+* **How it fails in production:** Any client with slow network interfaces, large request payloads, or standard HTTP proxies (Nginx, AWS ALB) that split headers and body into separate TCP packets will experience broken requests, silent data loss, or HTTP parse errors. Under high concurrency, raw socket handling will panic or drop connections.
+* **What a proper fix looks like:** Replace the custom raw TCP parsing loop in `apps/api/src/serve.rs` with standard Axum framework routes (`axum::Router`), backed by `hyper` and `tokio`.
+* **Priority:** P0
+* **Blast Radius:** Total API failure / service-wide unreliability.
 
-Disposition:
+---
 
-> **Implementation gap. Do not downgrade the contract merely to match an intermediate implementation.**
+#### Finding CRIT-02: Tenancy & Organization Lifecycle Endpoints are Unauthenticated
+* **What is wrong:** The HTTP request handler in `apps/api/src/serve.rs` exposes tenant lifecycle actions (`POST /v1/organizations`, `activate`, `suspend`, `close`, `branches`) without executing any authentication or authorization middleware.
+* **Why it is wrong:** `sitolo-auth` and `sitolo-authz` provide session verification and role permissions, but they are never invoked inside `apps/api/src/serve.rs`.
+* **Where it appears:** `apps/api/src/serve.rs` (`dispatch_request`).
+* **How it fails in production:** Any unauthenticated remote attacker on the network can send HTTP POST requests to suspend or close existing organizations, provision rogue tenants, or modify branch states without presenting bearer tokens or session credentials.
+* **What a proper fix looks like:** Implement an Axum middleware layer that extracts Bearer tokens, validates sessions via `sitolo-auth`, resolves `AuthorizedScope` via `sitolo-tenancy`, and checks permissions via `sitolo-authz` before dispatching to handlers.
+* **Priority:** P0
+* **Blast Radius:** Complete tenant isolation breach and unauthorized administrative control.
 
-The resolution must be an explicit engineering decision:
+---
+
+#### Finding CRIT-03: Worker Binary and Background Job Engine are Empty Scaffolds
+* **What is wrong:** `apps/worker/src/main.rs` consists of `fn main() {}`.
+* **Why it is wrong:** The system design mandates asynchronous outbox processing, event publication, tax fiscalization (MRA EIS), and background job retries via a dedicated worker process.
+* **Where it appears:** `apps/worker/src/main.rs`, `crates/sitolo-events/src/lib.rs`.
+* **How it fails in production:** Asynchronous operations, transactional outbox items, domain event broadcasts, background billing tasks, and tax receipt submissions will never execute, leading to inconsistent database states and regulatory compliance failures.
+* **What a proper fix looks like:** Implement a polling/listener worker loop in `apps/worker/src/main.rs` that consumes outbox records from PostgreSQL using row locks (`FOR UPDATE SKIP LOCKED`), executes jobs idempotently, and manages retries and dead-letter queues.
+* **Priority:** P0
+* **Blast Radius:** Total background processing and asynchronous operation failure.
+
+---
+
+### HIGH SEVERITY FINDINGS
+
+---
+
+#### Finding HIGH-01: In-Memory State Mutex Lock Prevents Horizontal Scaling & Causes Process Memory Volatility
+* **What is wrong:** API state relies on `IdentityDatabase` and `TenancyDatabase` in `sitolo-persistence`, which wrap in-memory `BTreeMap` data structures inside `std::sync::Mutex`.
+* **Why it is wrong:** In-memory storage means state is not persisted to disk or PostgreSQL. Furthermore, wrapping the entire state in a single synchronous `Mutex` causes thread contention.
+* **Where it appears:** `crates/sitolo-persistence/src/memory.rs` (`IdentityDatabase`), `crates/sitolo-persistence/src/tenancy.rs` (`TenancyDatabase`).
+* **How it fails in production:**
+  1. Restarting or redeploying the API process wipes all active sessions, users, organizations, and branches.
+  2. Deploying multiple instances behind a load balancer results in state fragmentation where User A on Instance 1 is unknown to Instance 2.
+  3. Under high request load, async Tokio worker threads will block waiting on `std::sync::Mutex`, causing request latency spikes.
+* **What a proper fix looks like:** Wire `apps/api` to use PostgreSQL-backed repository implementations (`sitolo-persistence::postgres`) utilizing `sqlx::PgPool` instead of `IdentityDatabase::new()`.
+* **Priority:** P1
+* **Blast Radius:** Total persistence loss upon restart and inability to run >1 server instance.
+
+---
+
+#### Finding HIGH-02: PostgreSQL Runtime Authority and RLS Policies Un-Wired in Production API
+* **What is wrong:** `crates/sitolo-persistence/src/postgres.rs` defines `PgAuthorityPools` and RLS catalog verification functions (`verify_runtime_role`, `verify_rls_catalog_metadata`), but these functions are marked with unused warnings (`dead_code`) because they are never called in production app initialization (`apps/api/src/bootstrap.rs`).
+* **Why it is wrong:** Security controls that exist in codebase tests but are not invoked during application boot provide zero security enforcement in live environments.
+* **Where it appears:** `crates/sitolo-persistence/src/postgres.rs`, `apps/api/src/bootstrap.rs`.
+* **How it fails in production:** If the API connects to PostgreSQL without initializing least-privileged roles (`app_runtime`) and without validating RLS policy metadata, database operations may execute under admin credentials or bypass row-level tenant context (`app.organization_id`).
+* **What a proper fix looks like:** Call `PgAuthorityPools::connect_options` and `verify_runtime_role` / `verify_rls_catalog_metadata` inside `apps/api/src/bootstrap.rs` during startup.
+* **Priority:** P1
+* **Blast Radius:** Silent bypass of database-level multi-tenancy enforcement.
+
+---
+
+#### Finding HIGH-03: Complete Absence of Business Core Domain Aggregates
+* **What is wrong:** `crates/sitolo-domain` contains only `tenancy.rs`. Domain logic for product catalogue, inventory ledger, POS sales transactions, payments, returns/refunds, and procurement is entirely missing.
+* **Why it is wrong:** Sitolo is advertised as a Business Operating System for African SMEs, but the domain layer contains no commercial domain models or business state machines.
+* **Where it appears:** `crates/sitolo-domain/src/lib.rs`.
+* **How it fails in production:** Core SME operations (scanning items, completing POS checkout, updating inventory, managing payments) cannot occur because the underlying aggregates do not exist.
+* **What a proper fix looks like:** Implement domain aggregates for Catalogue, Inventory Ledger, POS Sales, and Payments in `crates/sitolo-domain` following strict DDD rules.
+* **Priority:** P1
+* **Blast Radius:** Business functional absence.
+
+---
+
+#### Finding HIGH-04: Integration Adapters for MRA EIS Tax Fiscalization & Payments are Empty Shells
+* **What is wrong:** `crates/sitolo-integrations/src/lib.rs` and `crates/sitolo-sync/src/lib.rs` are empty crate declarations with no concrete adapters.
+* **Why it is wrong:** MRA EIS (Mauritius Revenue Authority Electronic Invoicing System) integration is mandatory for regulatory compliance in target operating markets.
+* **Where it appears:** `crates/sitolo-integrations/src/lib.rs`, `crates/sitolo-sync/src/lib.rs`.
+* **How it fails in production:** Sales transactions cannot generate fiscal tax signatures or communicate with tax authority APIs, exposing merchant businesses to regulatory fines and shutdown.
+* **What a proper fix looks like:** Implement concrete provider adapters in `sitolo-integrations` with HTTP retry loops, cryptographic payload signing, and offline queueing.
+* **Priority:** P1
+* **Blast Radius:** Operational non-compliance and regulatory risk.
+
+---
+
+### MEDIUM SEVERITY FINDINGS
+
+---
+
+#### Finding MED-01: Inadequate Concurrency Protection for Out-of-Order Requests
+* **What is wrong:** Tenancy state updates rely on state versions, but optimistic concurrency control checks (version matching) are checked in memory without database row-level locking (`SELECT FOR UPDATE`).
+* **Why it is wrong:** Concurrent HTTP requests to update branch or organization state can interleave, leading to race conditions where older state overwrites newer state.
+* **Where it appears:** `crates/sitolo-domain/src/tenancy.rs`, `crates/sitolo-application/src/tenancy.rs`.
+* **How it fails in production:** Under concurrent API requests from multiple staff members, organization status changes (e.g. suspend vs resume) can apply out of order, corrupting the lifecycle state.
+* **What a proper fix looks like:** Enforce version-based optimistic locking (`UPDATE ... WHERE version = expected_version`) or explicit PostgreSQL row locks (`SELECT FOR UPDATE`) in persistence transaction handlers.
+* **Priority:** P2
+* **Blast Radius:** Tenant lifecycle state corruption under high concurrency.
+
+---
+
+#### Finding MED-02: Missing Prometheus / OTLP Metrics Export Pipeline
+* **What is wrong:** `sitolo-observability` maintains structured trace context buffers and security log registries, but does not configure a live OpenTelemetry metrics exporter or Prometheus scrape endpoint.
+* **Why it is wrong:** Real-time metrics (HTTP request rates, latency histograms, database connection pool exhaustion, queue depths) are invisible to operations teams.
+* **Where it appears:** `crates/sitolo-observability/src/lib.rs`.
+* **How it fails in production:** Operators cannot detect memory leaks, connection pool starvation, or HTTP error rate spikes until customers report service outages.
+* **What a proper fix looks like:** Add an OTLP metrics pipeline and export `/metrics` Prometheus scrape endpoint in `apps/api`.
+* **Priority:** P2
+* **Blast Radius:** Blind operational maintenance and delayed incident response.
+
+---
+
+#### Finding MED-03: CI Test Suite Hard-Fails on Database Integration Tests when PostgreSQL is Absent
+* **What is wrong:** Running `./scripts/ci/verify` or `cargo test --workspace` panics in `crates/sitolo-persistence/tests/rls_security_tests.rs` if `ADMIN_DATABASE_URL` or `DATABASE_URL` environment variables are not present.
+* **Why it is wrong:** Automated test suites should either run against ephemeral test containers (e.g. `testcontainers`) or skip database integration tests gracefully when DB environment variables are missing, allowing offline unit testing.
+* **Where it appears:** `crates/sitolo-persistence/tests/rls_security_tests.rs`.
+* **How it fails in production:** CI pipelines in standard developer environments or lightweight runners fail immediately without helpful diagnostic context.
+* **What a proper fix looks like:** Update test harness logic to check for DB environment variables and output an explicit skip warning instead of a hard panic during unit test runs.
+* **Priority:** P2
+* **Blast Radius:** Developer friction and broken offline CI verification.
+
+---
+
+### LOW SEVERITY FINDINGS
+
+---
+
+#### Finding LOW-01: Unused Code and Unused Imports in Core Persistence Modules
+* **What is wrong:** `cargo check --workspace` produces warnings regarding unused enums, structs, and methods in `sitolo-persistence` (`PgAuthorityError`, `PgAuthorityPools`, `set_transaction_tenant_context`).
+* **Why it is wrong:** Dead code increases cognitive load and causes compiler warning noise, obscuring actual potential issues.
+* **Where it appears:** `crates/sitolo-persistence/src/postgres.rs`.
+* **How it fails in production:** Does not fail at runtime, but increases maintenance overhead.
+* **What a proper fix looks like:** Wire the postgres authority structures into `apps/api` startup or add appropriate `#[allow(dead_code)]` annotations with clear TODO references.
+* **Priority:** P3
+* **Blast Radius:** Low (Code cleanliness and developer ergonomics).
+
+---
+
+#### Finding LOW-02: Historical Documentation Drift in Audit Files
+* **What is wrong:** Several remediation documents in `docs/` describe previous audit snapshots or historical PR states that do not reflect current source files.
+* **Why it is wrong:** Stale documentation causes confusion for new developers and AI agents attempting to navigate system architecture.
+* **Where it appears:** `docs/phase4_part5_to_phase0_enterprise_audit_remediation_plan.md`.
+* **How it fails in production:** Documentation ambiguity leading to incorrect developer assumptions.
+* **What a proper fix looks like:** Annotate historical markdown files with a `HISTORICAL - READ ONLY` banner at the top.
+* **Priority:** P3
+* **Blast Radius:** Low (Documentation hygiene).
+
+---
+
+## 3. Top 10 Highest-Risk Issues
+
+| Rank | Issue ID | Description | Severity | Impact Area |
+|---|---|---|---|---|
+| **1** | **CRIT-01** | Raw TCP listener with broken HTTP parsing & single-buffer read truncation in `apps/api/src/serve.rs`. | **Critical** | Availability & Reliability |
+| **2** | **CRIT-02** | Unauthenticated HTTP endpoints allowing arbitrary tenant creation, suspension, and closure. | **Critical** | Security & Multi-Tenancy |
+| **3** | **CRIT-03** | Empty worker process (`apps/worker/src/main.rs`) preventing outbox, events, and background jobs. | **Critical** | Asynchronous Processing |
+| **4** | **HIGH-01** | Single-node in-memory state lock causing data volatility and blocking horizontal scale. | **High** | Scalability & Persistence |
+| **5** | **HIGH-02** | Un-wired PostgreSQL authority pools and RLS catalog verification during app boot. | **High** | Database Isolation |
+| **6** | **HIGH-03** | Total absence of business domain aggregates (POS, Catalogue, Inventory, Payments). | **High** | Core Business Functionality |
+| **7** | **HIGH-04** | Empty integration adapters for MRA EIS regulatory tax fiscalization and payment gateways. | **High** | Compliance & Revenue |
+| **8** | **MED-01** | Out-of-order state transition race conditions on tenancy resources under high concurrency. | **Medium** | Data Integrity |
+| **9** | **MED-02** | Missing OpenTelemetry / Prometheus metrics exporter for live operational monitoring. | **Medium** | Observability & Incident Safety |
+| **10** | **MED-03** | CI verification hard-panics when PostgreSQL env variables are absent during test runs. | **Medium** | Test Pipeline Stability |
+
+---
+
+## 4. Top 10 Highest-Leverage Fixes
+
+1. **Replace custom raw TCP loop with Axum framework:** Restores standard HTTP request parsing, body streaming, connection keep-alive, and header handling (`apps/api`).
+2. **Wire Authentication & Scope Middleware to Axum routes:** Enforces session verification (`sitolo-auth`), tenant scope resolution (`sitolo-tenancy`), and role permissions (`sitolo-authz`) across all endpoints.
+3. **Connect API State to PostgreSQL persistence via SQLx:** Replaces in-memory `BTreeMap` locks with durable PostgreSQL tables and RLS context (`app.organization_id`).
+4. **Implement Worker Process Outbox Poller:** Enables background event processing, transactional outbox draining, and resilient retries (`apps/worker`).
+5. **Implement Core Domain Aggregates:** Build domain entities for Catalogue, Inventory Ledger, POS Sales, and Payments in `sitolo-domain`.
+6. **Implement MRA EIS Tax Adapter:** Construct regulatory tax signing and fiscal invoice submission adapters in `sitolo-integrations`.
+7. **Enforce Startup RLS Catalog Verification:** Invoke `verify_runtime_role` and `verify_rls_catalog_metadata` during `apps/api` initialization to guarantee database isolation.
+8. **Add OpenTelemetry Metrics Exporter:** Export standard metrics (HTTP throughput, latency, DB pool utilization, errors) to Prometheus/OTLP collectors.
+9. **Graceful DB Test Harness Fallback:** Update integration test fixtures to skip gracefully or use ephemeral containers when live PostgreSQL is unavailable.
+10. **Implement Distributed Lock / Outbox Queueing:** Ensure background jobs execute idempotently across multiple worker instances using `SKIP LOCKED` or Redis locks.
+
+---
+
+## 5. Phased Remediation Plan
 
 ```text
-Current custom transport
-        ↓
-decide whether transitional or intentional
-        ↓
-ADR / implementation
-        ↓
-contract and source converge
+PHASE 1: Immediate (Weeks 1–2)  ---> Axum Transport, Authentication Middleware, Startup DB Authority
+PHASE 2: Short Term (Weeks 3–6) ---> PostgreSQL Persistence, Worker Outbox Loop, Core Domain Aggregates
+PHASE 3: Medium Term (Weeks 7–12) -> MRA EIS Integration, Payment Adapters, Metrics Pipeline
+PHASE 4: Long Term (Months 3–6)  --> Multi-Region DR, Offline Sync Protocol, Production Certification
 ```
 
-This is a P0 architectural reconciliation item.
+### Phase 1: Immediate Remediation (Weeks 1–2) — *Core Transport & Security Isolation*
+- **Task 1.1:** Refactor `apps/api/src/serve.rs` to use Axum (`axum::Router`).
+- **Task 1.2:** Implement authentication middleware extracting Bearer tokens and validating sessions via `sitolo-auth`.
+- **Task 1.3:** Wire startup database verification (`PgAuthorityPools`) in `apps/api/src/bootstrap.rs`.
+- **Task 1.4:** Fix test harness in `sitolo-persistence` to avoid panicking when PostgreSQL environment variables are omitted.
+
+### Phase 2: Short-Term Remediation (Weeks 3–6) — *Durable Persistence & Domain Processing*
+- **Task 2.1:** Implement PostgreSQL repositories for Tenancy, Identity, and Scope management using `sqlx`.
+- **Task 2.2:** Build worker loop in `apps/worker/src/main.rs` consuming outbox tasks with `FOR UPDATE SKIP LOCKED`.
+- **Task 2.3:** Implement POS Sales, Product Catalogue, and Inventory Ledger domain aggregates in `sitolo-domain`.
+- **Task 2.4:** Wire transactional outbox emission during domain mutations.
+
+### Phase 3: Medium-Term Remediation (Weeks 7–12) — *Compliance, Integrations & Observability*
+- **Task 3.1:** Implement MRA EIS regulatory tax signing and HTTP communication in `sitolo-integrations`.
+- **Task 3.2:** Implement Mobile Money and Card Payment provider adapters in `sitolo-integrations`.
+- **Task 3.3:** Add OpenTelemetry metrics exporter and expose `/metrics` endpoint in `apps/api`.
+- **Task 3.4:** Add automated E2E integration test suite simulating real merchant checkout flows.
+
+### Phase 4: Long-Term Remediation (Months 3–6) — *Scale, Resilience & Production Certification*
+- **Task 4.1:** Implement offline synchronization protocol in `sitolo-sync` for POS edge devices.
+- **Task 4.2:** Establish multi-node Redis caching layer for read-heavy catalogue queries.
+- **Task 4.3:** Perform automated load, chaos, and penetration testing across all API endpoints.
+- **Task 4.4:** Complete production certification checklist and operational runbooks.
 
 ---
 
-## 4.2 Tenancy and authorization are no longer empty
+## 6. Acceptable vs. Not Enterprise-Grade Criteria
 
-The older audit described `sitolo-tenancy` and `sitolo-authz` as empty stubs. That is no longer true.
-
-Current source includes:
-
-- tenant/organization/branch scope resolution;
-- trusted-vs-requested identifier separation;
-- permission and role catalogs;
-- assignment lifecycle;
-- scope grants;
-- invitation state;
-- application-level tenancy services.
-
-Disposition:
-
-> **Old audit finding is historical and must not be used as a current implementation description.**
-
----
-
-## 4.3 PostgreSQL work is more advanced than the old audit stated, but not complete
-
-Current persistence contains PostgreSQL authority/runtime code including separate administrative/runtime pools and runtime-role checks.
-
-This is not equivalent to full Phase 5 completion.
-
-Disposition:
-
-> **Partial. Preserve the distinction between PostgreSQL runtime authority infrastructure and the complete application schema/migrations/RLS business persistence contract.**
-
----
-
-## 4.4 Workers, events, integrations and synchronization remain genuine gaps
-
-The current worker binary explicitly identifies itself as a Phase 1 scaffold and contains no worker loop. The events, integrations and sync crates remain contract boundaries without substantive runtime implementations.
-
-Disposition:
-
-> **Future-phase implementation gaps, not stale documentation.**
-
----
-
-# 5. Production Readiness Gates
-
-Before Sitolo can be called production-ready, the following chain must be executable and tested:
-
-```text
-Authenticated principal
-    ↓
-Session/device state
-    ↓
-Tenant / organization / branch scope
-    ↓
-Authorization policy
-    ↓
-Domain command
-    ↓
-PostgreSQL transaction
-    ↓
-Durable audit
-    ↓
-Transactional outbox
-    ↓
-Worker / integration side effect
-    ↓
-Reconciliation
-    ↓
-Observable / recoverable result
-```
-
-Every boundary needs negative tests, failure semantics and recovery evidence.
-
----
-
-# 6. Documentation Corpus Findings
-
-## 6.1 Historical audit drift
-
-`docs/phase4_part5_to_phase0_enterprise_audit_remediation_plan.md` identifies Phase 4 Part 5 / PR-005 as the current repository position. It is now historical because later Phase 4 work exists.
-
-Disposition: retain as historical evidence and remove it from current-state routing.
-
-## 6.2 Phase contracts must not masquerade as implementation evidence
-
-Phase 8, 9 and 10 documents define future/current implementation requirements. Imperative language inside a contract does not prove the feature exists.
-
-Examples:
-
-- “API exposes...” should be read as a requirement when the corresponding feature is not implemented.
-- `[X]` acceptance markers are evidence only when backed by executable evidence.
-- A detailed SQL design does not prove that migration/application code exists.
-
-Disposition: annotate contracts with clear `Target`, `Implemented`, `Verified`, and `Historical` semantics where ambiguity exists.
-
-## 6.3 External facts require dated verification
-
-Current repository sources correctly pin Rust to 1.98.1 and PostgreSQL to the 18.x family. Rust 1.98.1 was released on 2026-09-03, and PostgreSQL 18.6 is the current PostgreSQL 18 release listed by the PostgreSQL project as of the audit date. citeturn544987search0turn544987search2turn544987search6
-
-SLSA references should remain on v1.2 unless the official project changes the active specification.
-
-MRA/EIS regulatory facts require the latest MRA primary-source verification before external compliance claims are published. The live MRA developer documentation currently exposes the EIS API/comparison material. citeturn689436search4
-
----
-
-# 7. Documentation Remediation Priorities
-
-| Priority | Target | Required action |
+| Architectural Component | What is Acceptable (Production Standard) | What is NOT Enterprise-Grade (Current Codebase Condition) |
 |---|---|---|
-| P0 | `enterprise_audit_and_review.md` | Keep this current-state audit aligned with source evidence |
-| P0 | Axum/API divergence | Explicitly resolve implementation-vs-contract status |
-| P1 | `phase8_product_catalogue_implementation.md` | Separate normative future requirement from current implementation |
-| P1 | `phase4_part5_to_phase0_enterprise_audit_remediation_plan.md` | Mark historical and exclude from current-state routing |
-| P1 | `icm_reference_integrity.md` | Convert from missing-file record into standing semantic-integrity policy |
-| P1 | `agentic_workflow.md` | Update integrity/status language after missing-reference repair |
-| P1 | Commercial EIS language | Remove current-sounding transition language; retain dated history only |
-| P1 | External-version references | Add dated verification metadata and official-source authority |
-| P2 | Phase 5–10 contracts | Audit requirement/implementation/verification state systematically |
-| P2 | System Map processes | Promote only when source evidence is sufficient |
-| P2 | Final reference inventory | Require zero missing/ambiguous internal references |
-
----
-
-# 8. Final Assessment
-
-Sitolo has crossed the line from an empty architectural scaffold into a **substantial security-oriented platform foundation**, especially around identity, tenancy, IAM, authorization vocabulary, scope resolution, persistence authority primitives, transport validation and observability.
-
-It has **not** crossed the line into a complete enterprise business operating system.
-
-The principal work remaining is execution of the already-defined authority chain:
-
-```text
-CONTRACTS
-   ↓
-REAL DOMAIN ENGINES
-   ↓
-REAL POSTGRESQL BUSINESS PERSISTENCE
-   ↓
-REAL AUTHORIZATION ENFORCEMENT
-   ↓
-REAL ASYNC / OUTBOX
-   ↓
-REAL EXTERNAL INTEGRATIONS
-   ↓
-REAL OFFLINE CLIENTS + SYNC
-   ↓
-END-TO-END SECURITY / RECOVERY / LOAD EVIDENCE
-```
-
-The documentation system must reflect that distinction exactly. No document should claim a capability is implemented simply because a contract for it exists.
+| **HTTP Transport** | Industry-standard Axum/hyper server with HTTP/1.1 & HTTP/2 framing, TLS termination, and streaming body limits. | Raw custom TCP socket reader doing naive string splitting on a single buffer read (`serve.rs`). |
+| **Authentication & IAM** | Server-authoritative token validation, session sliding, MFA enforcement, and per-route scope authorization. | Unauthenticated API endpoints accepting POST requests without credential checks. |
+| **Data Persistence** | PostgreSQL transactional persistence with RLS tenant isolation (`app.organization_id`) and connection pooling. | Single-node in-memory `Mutex<BTreeMap>` data store that loses data on process restart. |
+| **Background Processing** | Multi-worker background job consumer polling a transactional outbox with idempotency and DLQ retries. | Empty `fn main() {}` worker scaffold with no event consumption or outbox polling. |
+| **Domain Logic** | Isolated domain aggregates enforcing business rules (sales totals, inventory balance, tax signatures). | Domain crate containing only tenancy structures while missing all operational business modules. |
+| **Regulatory Compliance** | Cryptographic payload signing and audited submission to tax authority endpoints (MRA EIS). | Empty stub crate declarations for external integrations. |
+| **Observability** | Structured JSON logs, trace ID propagation, and live metrics (latency, error rates, DB pool depth). | Trace context formatting in memory without live metrics scraping endpoints. |
