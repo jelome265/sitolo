@@ -38,4 +38,5 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+h2.workspace = true
 tokio.workspace = true

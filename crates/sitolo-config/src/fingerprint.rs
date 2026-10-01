@@ -45,6 +45,36 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
         "keepalive_timeout_ms",
         &config.keepalive_timeout_ms.to_string(),
     );
+    line(
+        &mut output,
+        "request_timeout_ms",
+        &config.request_timeout_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "request_body_idle_timeout_ms",
+        &config.request_body_idle_timeout_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "http1_idle_timeout_ms",
+        &config.http1_idle_timeout_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "http2_ping_interval_ms",
+        &config.http2_ping_interval_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "http2_keep_alive_timeout_ms",
+        &config.http2_keep_alive_timeout_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "response_body_timeout_ms",
+        &config.response_body_timeout_ms.to_string(),
+    );
     line(&mut output, "db_host", &config.db_host);
     line(&mut output, "db_port", &config.db_port.to_string());
     line(&mut output, "db_name", &config.db_name);
@@ -163,6 +193,12 @@ mod tests {
         changed!(max_request_body_bytes, 3_000_000);
         changed!(request_header_timeout_ms, 6_000);
         changed!(keepalive_timeout_ms, 31_000);
+        changed!(request_timeout_ms, 31_000);
+        changed!(request_body_idle_timeout_ms, 6_000);
+        changed!(http1_idle_timeout_ms, 61_000);
+        changed!(http2_ping_interval_ms, 31_000);
+        changed!(http2_keep_alive_timeout_ms, 31_000);
+        changed!(response_body_timeout_ms, 61_000);
         changed!(db_host, "db.example".into());
         changed!(db_port, 5433);
         changed!(db_name, "other".into());

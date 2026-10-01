@@ -134,22 +134,34 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             ceilings::REQUEST_HEADER_TIMEOUT_CEILING_MS,
         ),
         (
-            "request_timeout_ms", b.request_timeout_ms, ceilings::REQUEST_TIMEOUT_CEILING_MS,
+            "request_timeout_ms",
+            b.request_timeout_ms,
+            ceilings::REQUEST_TIMEOUT_CEILING_MS,
         ),
         (
-            "request_body_idle_timeout_ms", b.request_body_idle_timeout_ms, ceilings::REQUEST_BODY_IDLE_TIMEOUT_CEILING_MS,
+            "request_body_idle_timeout_ms",
+            b.request_body_idle_timeout_ms,
+            ceilings::REQUEST_BODY_IDLE_TIMEOUT_CEILING_MS,
         ),
         (
-            "http1_idle_timeout_ms", b.http1_idle_timeout_ms, ceilings::HTTP1_IDLE_TIMEOUT_CEILING_MS,
+            "http1_idle_timeout_ms",
+            b.http1_idle_timeout_ms,
+            ceilings::HTTP1_IDLE_TIMEOUT_CEILING_MS,
         ),
         (
-            "http2_ping_interval_ms", b.http2_ping_interval_ms, ceilings::HTTP2_PING_INTERVAL_CEILING_MS,
+            "http2_ping_interval_ms",
+            b.http2_ping_interval_ms,
+            ceilings::HTTP2_PING_INTERVAL_CEILING_MS,
         ),
         (
-            "response_body_timeout_ms", b.response_body_timeout_ms, ceilings::RESPONSE_BODY_TIMEOUT_CEILING_MS,
+            "response_body_timeout_ms",
+            b.response_body_timeout_ms,
+            ceilings::RESPONSE_BODY_TIMEOUT_CEILING_MS,
         ),
         (
-            "http2_keep_alive_timeout_ms", b.http2_keep_alive_timeout_ms, ceilings::HTTP2_KEEP_ALIVE_TIMEOUT_CEILING_MS,
+            "http2_keep_alive_timeout_ms",
+            b.http2_keep_alive_timeout_ms,
+            ceilings::HTTP2_KEEP_ALIVE_TIMEOUT_CEILING_MS,
         ),
         (
             "keepalive_timeout_ms",
@@ -252,6 +264,17 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "unknown schema version",
         );
     }
+    // The body-idle deadline is a sub-bound of the total request deadline;
+    // an idle timeout longer than the overall request timeout would never
+    // fire before the outer deadline does, which is a configuration defect
+    // rather than valid tuning.
+    if b.request_body_idle_timeout_ms > b.request_timeout_ms {
+        add(
+            ValidationLayer::CrossField,
+            "request_body_idle_timeout_ms",
+            "must not exceed request_timeout_ms",
+        );
+    }
     if !p.is_empty() {
         return Err(ConfigValidationError { problems: p });
     }
@@ -262,6 +285,12 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         bind_address: b.bind_address,
         max_request_body_bytes: b.max_request_body_bytes,
         request_header_timeout_ms: b.request_header_timeout_ms,
+        request_timeout_ms: b.request_timeout_ms,
+        request_body_idle_timeout_ms: b.request_body_idle_timeout_ms,
+        http1_idle_timeout_ms: b.http1_idle_timeout_ms,
+        http2_ping_interval_ms: b.http2_ping_interval_ms,
+        response_body_timeout_ms: b.response_body_timeout_ms,
+        http2_keep_alive_timeout_ms: b.http2_keep_alive_timeout_ms,
         keepalive_timeout_ms: b.keepalive_timeout_ms,
         db_host: b.db_host,
         db_port: b.db_port,

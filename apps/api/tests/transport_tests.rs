@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::{Request, StatusCode};
 use sitolo_api_bin::bootstrap::StartupContext;
 use sitolo_api_bin::serve::{HttpTransportConfig, serve};
 use sitolo_api_bin::state::AppState;
@@ -67,6 +68,23 @@ fn short_transport() -> HttpTransportConfig {
     }
 }
 
+/// Like [`short_transport`], but with the header-read timeout pushed well
+/// out of the way so that `http1_idle_timeout` is the *only* policy that can
+/// close an idle keep-alive connection.
+///
+/// This matters: hyper's header-read timer also runs while a keep-alive
+/// connection waits for its *next* request's headers, so with a header
+/// timeout shorter than the idle timeout, the header timer closes the
+/// connection first and an idle-eviction test would pass (or fail) for the
+/// wrong reason without ever exercising `IdleTimeoutIo`.
+fn idle_isolated_transport() -> HttpTransportConfig {
+    HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(5),
+        http1_idle_timeout: Duration::from_millis(500),
+        ..short_transport()
+    }
+}
+
 /// Binds a real listener, spawns the real `serve()` loop on it, and
 /// returns the address to connect to plus a shutdown handle. Dropping the
 /// returned `oneshot::Sender` without calling it leaves the server running
@@ -76,7 +94,11 @@ fn short_transport() -> HttpTransportConfig {
 /// `real_socket_active_connection_shutdown_test`).
 async fn spawn_server(
     transport: HttpTransportConfig,
-) -> (SocketAddr, oneshot::Sender<()>, JoinHandle<Vec<sitolo_api_bin::shutdown::Subsystem>>) {
+) -> (
+    SocketAddr,
+    oneshot::Sender<()>,
+    JoinHandle<Vec<sitolo_api_bin::shutdown::Subsystem>>,
+) {
     let state = test_app_state().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -97,6 +119,10 @@ async fn send_and_read(stream: &mut TcpStream, req: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..n]).to_string()
 }
 
+/// Stage 06 audit P0 #4: the only prior real-socket test always sent
+/// `Connection: close`. This reuses one socket for two full request/
+/// response cycles, which is the behavior actually relied upon in
+/// production.
 #[tokio::test]
 async fn real_socket_http1_persistent_connection() {
     let (addr, _shutdown, _handle) = spawn_server(short_transport()).await;
@@ -117,6 +143,69 @@ async fn real_socket_http1_persistent_connection() {
         res2.starts_with("HTTP/1.1 200"),
         "expected second response on the same persistent connection, got: {res2}"
     );
+}
+
+/// Opens a connection, completes one request/response, then sends nothing
+/// further. Proves `http1_idle_timeout` actually evicts a connection that
+/// has gone application-idle, independent of TCP keepalive (which never
+/// fires here — the peer socket stays healthy the whole time; only the
+/// application-level idle policy closes it).
+#[tokio::test]
+async fn real_socket_idle_connection_is_evicted_after_configured_timeout() {
+    let (addr, _shutdown, _handle) = spawn_server(idle_isolated_transport()).await;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+
+    let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let res = send_and_read(&mut stream, req).await;
+    assert!(
+        res.starts_with("HTTP/1.1 200"),
+        "warm-up request failed: {res}"
+    );
+
+    // Now go idle: send nothing further. `idle_isolated_transport()`
+    // configures a 500ms `http1_idle_timeout` (header timeout is 5s, so it cannot
+    // be the policy that closes this connection); the server must close this connection on
+    // its own well before our own 2s read bound.
+    let mut buf = vec![0; 64];
+    let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await;
+    match read {
+        Ok(Ok(0)) => {}  // connection closed: idle eviction enforced
+        Ok(Err(_)) => {} // reset/closed: also acceptable enforcement
+        Ok(Ok(n)) => panic!(
+            "expected the idle connection to be closed by the server, got {n} unexpected bytes"
+        ),
+        Err(_) => panic!(
+            "server did not evict a connection idle for well over the configured \
+             500ms http1_idle_timeout — idle eviction is not enforced"
+        ),
+    }
+}
+
+/// Counterpart to the idle-eviction test above, and the direct regression
+/// proof for the specific bug this remediation fixed: an earlier version
+/// of the idle-eviction mechanism started a bare timer once at connection
+/// open and never reset it, so it would eventually kill *any* long-lived
+/// connection — including one continuously serving requests — the moment
+/// the fixed duration elapsed, regardless of activity. `IdleTimeoutIo`
+/// resets its deadline on every successful read instead. Three requests,
+/// each well inside the 500ms idle window but spanning more than twice
+/// that window in total, prove the deadline tracks *inactivity* rather
+/// than *connection age*: a non-resetting timer would have killed this
+/// connection before the third request.
+#[tokio::test]
+async fn real_socket_active_connection_survives_past_idle_timeout() {
+    let (addr, _shutdown, _handle) = spawn_server(idle_isolated_transport()).await;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+
+    for i in 0..3 {
+        let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let res = send_and_read(&mut stream, req).await;
+        assert!(
+            res.starts_with("HTTP/1.1 200"),
+            "request {i} on an actively-used connection failed: {res}"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 }
 
 /// Sends the request line and nothing else, then waits past
@@ -294,10 +383,15 @@ async fn real_socket_active_connection_shutdown_test() {
     // server has actually accepted and served on it before we shut down.
     let req = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
     let res = send_and_read(&mut stream, req).await;
-    assert!(res.starts_with("HTTP/1.1 200"), "warm-up request failed: {res}");
+    assert!(
+        res.starts_with("HTTP/1.1 200"),
+        "warm-up request failed: {res}"
+    );
 
     // Trigger real graceful shutdown.
-    shutdown_tx.send(()).expect("serve() task still listening for shutdown signal");
+    shutdown_tx
+        .send(())
+        .expect("serve() task still listening for shutdown signal");
 
     // The connection must be closed by the server within the real drain
     // deadline, not left open indefinitely: a further read should observe
@@ -305,7 +399,8 @@ async fn real_socket_active_connection_shutdown_test() {
     // (imported, not duplicated) so this can't race the server's own
     // deadline if that constant ever changes.
     let assertion_margin = Duration::from_secs(5);
-    let drain_deadline = Duration::from_secs(sitolo_api_bin::shutdown::SHUTDOWN_DRAIN_DEADLINE_SECS);
+    let drain_deadline =
+        Duration::from_secs(sitolo_api_bin::shutdown::SHUTDOWN_DRAIN_DEADLINE_SECS);
 
     let mut buf = vec![0; 64];
     let read = tokio::time::timeout(drain_deadline + assertion_margin, stream.read(&mut buf)).await;
@@ -322,4 +417,192 @@ async fn real_socket_active_connection_shutdown_test() {
         !subsystems.is_empty(),
         "serve() should report at least one subsystem shutdown result"
     );
+}
+
+const LIVE_REQUEST: &[u8] = b"GET /process/live HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+/// Opens a fresh connection and reports whether it was actually served a
+/// 200, treating every failure mode (reset, EOF, timeout) as "not served".
+async fn live_request_is_served(addr: SocketAddr) -> bool {
+    let Ok(mut stream) = TcpStream::connect(addr).await else {
+        return false;
+    };
+    if stream.write_all(LIVE_REQUEST).await.is_err() {
+        return false;
+    }
+    let mut buf = vec![0u8; 1024];
+    match tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
+        _ => false,
+    }
+}
+
+/// Resource-pressure proof for the connection-concurrency ceiling
+/// (`MAX_IN_FLIGHT_CONNECTIONS`), which had no coverage: the ceiling must
+/// admit exactly its limit, refuse the next connection promptly instead of
+/// serving it or leaving it hanging, and release the permit when a held
+/// connection closes so the server recovers rather than staying wedged.
+#[tokio::test]
+async fn real_socket_connection_ceiling_rejects_then_recovers() {
+    use sitolo_api_bin::shutdown::MAX_IN_FLIGHT_CONNECTIONS;
+
+    // Nothing may close a held connection on its own during this test, so
+    // both the header-read timer and the idle policy are pushed far out.
+    let transport = HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(30),
+        http1_idle_timeout: Duration::from_secs(60),
+        ..short_transport()
+    };
+    let (addr, _shutdown, _handle) = spawn_server(transport).await;
+
+    // Fill every permit. Each connection completes a real request first,
+    // which also proves the server has accepted it and taken its permit
+    // before the next one is opened (no reliance on accept-loop timing).
+    let mut held = Vec::with_capacity(MAX_IN_FLIGHT_CONNECTIONS);
+    for i in 0..MAX_IN_FLIGHT_CONNECTIONS {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let res = send_and_read(&mut stream, LIVE_REQUEST).await;
+        assert!(
+            res.starts_with("HTTP/1.1 200"),
+            "connection {i} of {MAX_IN_FLIGHT_CONNECTIONS} should be admitted: {res}"
+        );
+        held.push(stream);
+    }
+
+    // One past the ceiling. The kernel completes the TCP handshake via the
+    // listen backlog, but the server must drop it at the permit check: the
+    // client sees EOF or a reset, never a served response.
+    let mut extra = TcpStream::connect(addr).await.unwrap();
+    let _ = extra.write_all(LIVE_REQUEST).await;
+    let mut buf = vec![0u8; 1024];
+    let outcome = tokio::time::timeout(Duration::from_secs(2), extra.read(&mut buf))
+        .await
+        .expect("an over-ceiling connection must be closed promptly, not left hanging");
+    match outcome {
+        Ok(0) | Err(_) => {}
+        Ok(n) => panic!(
+            "connection past the ceiling was served: {}",
+            String::from_utf8_lossy(&buf[..n])
+        ),
+    }
+
+    // Release one permit and prove the server recovers. Retries absorb the
+    // small window before the server observes the close and frees the slot.
+    drop(held.pop());
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        while !live_request_is_served(addr).await {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        recovered.is_ok(),
+        "server never admitted a new connection after a permit was released"
+    );
+    drop(held);
+}
+
+/// Reads one complete HTTP/2 response: the headers, then every DATA frame,
+/// releasing flow-control capacity as it goes so large bodies cannot stall.
+async fn read_h2_response(response: h2::client::ResponseFuture) -> (StatusCode, String) {
+    let (head, mut body) = response.await.expect("h2 response headers").into_parts();
+    let mut flow = body.flow_control().clone();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.data().await {
+        let chunk = chunk.expect("h2 data frame");
+        let _ = flow.release_capacity(chunk.len());
+        bytes.extend_from_slice(&chunk);
+    }
+    (head.status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Transport config for tests that hold a connection open across several
+/// round trips: nothing here may close it for being briefly quiet.
+fn generous_transport() -> HttpTransportConfig {
+    HttpTransportConfig {
+        request_header_timeout: Duration::from_secs(5),
+        http1_idle_timeout: Duration::from_secs(30),
+        ..short_transport()
+    }
+}
+
+/// Full HTTP/2 proof with a real h2 client (prior-knowledge cleartext),
+/// replacing reliance on the preface/SETTINGS exchange alone: two requests
+/// are in flight on ONE connection at the same time, each on its own
+/// stream, and both are answered correctly by the real Axum router.
+#[tokio::test]
+async fn real_socket_http2_multiplexes_requests_on_one_connection() {
+    let (addr, _shutdown, _handle) = spawn_server(generous_transport()).await;
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let (send, connection) = h2::client::handshake(tcp).await.expect("h2 handshake");
+    let _driver = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let live = Request::builder()
+        .method("GET")
+        .uri("http://localhost/process/live")
+        .body(())
+        .unwrap();
+    let ready = Request::builder()
+        .method("GET")
+        .uri("http://localhost/process/ready")
+        .body(())
+        .unwrap();
+
+    // Both streams are opened before either response is read.
+    let mut send = send.ready().await.expect("h2 ready");
+    let (live_response, _) = send.send_request(live, true).expect("send live");
+    let mut send = send.ready().await.expect("h2 ready");
+    let (ready_response, _) = send.send_request(ready, true).expect("send ready");
+
+    let ((live_status, live_body), (ready_status, ready_body)) =
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                read_h2_response(live_response),
+                read_h2_response(ready_response)
+            )
+        })
+        .await
+        .expect("both multiplexed responses arrive without hanging");
+
+    assert_eq!(live_status, StatusCode::OK);
+    assert!(live_body.contains("\"status\":\"live\""), "{live_body}");
+    assert_eq!(ready_status, StatusCode::OK);
+    assert!(ready_body.contains("\"status\":\"ready\""), "{ready_body}");
+}
+
+/// A request BODY over HTTP/2 must reach the real handler, and the error it
+/// produces must carry the request id the client supplied. This exercises
+/// the full stack end to end over h2: framing, request-id assignment,
+/// Axum's JSON extractor, and the problem+json error path.
+#[tokio::test]
+async fn real_socket_http2_request_body_reaches_the_handler_with_request_id() {
+    let (addr, _shutdown, _handle) = spawn_server(generous_transport()).await;
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let (send, connection) = h2::client::handshake(tcp).await.expect("h2 handshake");
+    let _driver = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("http://localhost/v1/organizations")
+        .header("content-type", "application/json")
+        .header("x-request-id", "h2-correlation-0001")
+        .body(())
+        .unwrap();
+
+    let mut send = send.ready().await.expect("h2 ready");
+    let (response, mut body) = send.send_request(request, false).expect("send headers");
+    body.send_data("this is not json".into(), true)
+        .expect("send body");
+
+    let (status, text) = tokio::time::timeout(Duration::from_secs(5), read_h2_response(response))
+        .await
+        .expect("response arrives without hanging");
+
+    assert!(status.is_client_error(), "{status}: {text}");
+    let problem: serde_json::Value = serde_json::from_str(&text).expect("problem+json body");
+    assert_eq!(problem["request_id"], "h2-correlation-0001");
 }

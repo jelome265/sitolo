@@ -114,6 +114,87 @@ async fn development_boots_and_serves_bounded_probes() {
 }
 
 #[tokio::test]
+async fn ready_reports_unavailable_while_draining_and_shutdown_still_completes() {
+    // Proof for Stage 06 audit finding P0 #1 ("/process/ready is not
+    // genuine readiness") and P0 #3 ("shutdown is bounded but not
+    // protocol-graceful"): readiness must flip to unavailable at the
+    // moment shutdown is signaled, not merely after the process has
+    // finished exiting, and the drain must still terminate.
+    let dev =
+        StartupContext::build_from_pairs_with_provider(Vec::<(String, String)>::new(), stub())
+            .await
+            .expect("development bootstrap succeeds");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral bind");
+    let addr = listener.local_addr().expect("local addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let state = Arc::clone(dev.state());
+    let serve = tokio::spawn(serve(
+        listener,
+        Arc::clone(&state),
+        shutdown_rx,
+        HttpTransportConfig::from_config(dev.config()),
+    ));
+
+    let ready_before = probe_once(addr, "/process/ready").await;
+    assert!(
+        ready_before.contains("200 OK"),
+        "unexpected pre-shutdown ready response: {ready_before}"
+    );
+    assert!(!state.readiness().is_draining());
+
+    let _ = shutdown_tx.send(());
+
+    // Readiness must flip the instant shutdown is signaled, not merely
+    // once the process has finished exiting. Checked directly against the
+    // shared state handle rather than by racing a fresh HTTP connection
+    // against it: the production listener is intentionally dropped as
+    // soon as this process stops accepting (see `serve()`), so a new
+    // connection attempt during the drain window is expected to fail fast
+    // rather than be served — proven separately below — and is not a
+    // reliable way to observe this specific state transition's timing.
+    let became_draining = tokio::time::timeout(Duration::from_secs(1), async {
+        while !state.readiness().is_draining() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        became_draining.is_ok(),
+        "readiness did not flip to draining promptly after the shutdown signal"
+    );
+
+    // A connection attempt during the drain window must fail fast
+    // (the listener is dropped, not merely un-accepted) rather than hang:
+    // that is the real bug this test originally caught (see remediation
+    // notes) — new connections succeeding at the TCP layer and then
+    // waiting forever for a response that would never come.
+    let refused =
+        tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr))
+            .await
+            .expect("a connection attempt during drain must resolve quickly, not hang");
+    assert!(
+        refused.is_err(),
+        "expected the drained listener to refuse new connections, got a live socket"
+    );
+
+    let order = tokio::time::timeout(Duration::from_secs(15), serve)
+        .await
+        .expect("serve shuts down")
+        .expect("serve joins");
+    assert_eq!(
+        order,
+        &[
+            Subsystem::Listener,
+            Subsystem::Telemetry,
+            Subsystem::PersistenceIntent,
+        ]
+    );
+}
+
+#[tokio::test]
 async fn staging_boots_with_explicit_database_identity() {
     let staging = StartupContext::build_from_pairs_with_provider(
         [
