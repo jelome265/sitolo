@@ -240,7 +240,10 @@ mod tests {
     fn probes_are_debug_priority_and_everything_else_is_normal() {
         assert_eq!(record("/process/live", 0).priority(), Priority::P3Debug);
         assert_eq!(record("/process/ready", 0).priority(), Priority::P3Debug);
-        assert_eq!(record("/v1/organizations", 0).priority(), Priority::P2Normal);
+        assert_eq!(
+            record("/v1/organizations", 0).priority(),
+            Priority::P2Normal
+        );
         assert_eq!(record("unmatched", 0).priority(), Priority::P2Normal);
     }
 

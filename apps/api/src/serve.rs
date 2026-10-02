@@ -229,32 +229,31 @@ fn router_with_transport(
                     request
                 })
                 .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(|request: &Request<Body>| {
-                            let request_id = request
-                                .extensions()
-                                .get::<RequestId>()
-                                .map(|id| id.as_str().to_string())
-                                .unwrap_or_else(|| "unassigned".to_string());
-                            // Fields follow docs/telemetry/metrics.yaml
-                            // (`method`, `route_template`): the matched route
-                            // template is low-cardinality, whereas the raw URI
-                            // embeds user-controlled identifiers (organization
-                            // and branch ids) that the redaction rules forbid
-                            // as metric labels.
-                            let trace_parent = request
-                                .extensions()
-                                .get::<TraceParent>()
-                                .map(|value| value.as_str().to_string());
-                            tracing::info_span!(
-                                "http_request",
-                                method = %request.method(),
-                                route_template = %route_template(request),
-                                request_id = %request_id,
-                                // Omitted entirely when absent or invalid.
-                                traceparent = trace_parent.as_deref(),
-                            )
-                        }),
+                    TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
+                        let request_id = request
+                            .extensions()
+                            .get::<RequestId>()
+                            .map(|id| id.as_str().to_string())
+                            .unwrap_or_else(|| "unassigned".to_string());
+                        // Fields follow docs/telemetry/metrics.yaml
+                        // (`method`, `route_template`): the matched route
+                        // template is low-cardinality, whereas the raw URI
+                        // embeds user-controlled identifiers (organization
+                        // and branch ids) that the redaction rules forbid
+                        // as metric labels.
+                        let trace_parent = request
+                            .extensions()
+                            .get::<TraceParent>()
+                            .map(|value| value.as_str().to_string());
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            route_template = %route_template(request),
+                            request_id = %request_id,
+                            // Omitted entirely when absent or invalid.
+                            traceparent = trace_parent.as_deref(),
+                        )
+                    }),
                 ),
         )
         .with_state(state)

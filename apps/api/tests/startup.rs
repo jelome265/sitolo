@@ -126,7 +126,10 @@ async fn development_boots_and_serves_bounded_probes() {
     // End to end through the real serving path: each request was offered to
     // the bounded exporter by the Axum middleware and emitted by the drain
     // loop or the final shutdown flush, and nothing admitted is left queued.
-    assert_eq!(dev.state().telemetry_exporter().snapshot().total_queued(), 0);
+    assert_eq!(
+        dev.state().telemetry_exporter().snapshot().total_queued(),
+        0
+    );
     let log = String::from_utf8_lossy(&sink.lock().expect("sink lock")).into_owned();
     assert_eq!(log.matches("http.request.completed").count(), 3, "{log}");
     assert!(log.contains("route_template=/process/live"), "{log}");
