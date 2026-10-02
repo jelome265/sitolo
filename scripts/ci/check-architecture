@@ -29,12 +29,22 @@ done
 # Configuration fingerprinting lives only in sitolo-config
 # (`reference_fingerprint` in sitolo-security is a secret-reference
 # correlator, not a config fingerprint, and is allowlisted).
-dupes="$(rg -n 'try_init\(\)|set_global_default' crates -g '*.rs' || true)"
+search_pattern() {
+  local pattern="$1"
+  shift
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "$pattern" "$@" -g '*.rs' || true
+  else
+    grep -rnE "$pattern" "$@" --include='*.rs' || true
+  fi
+}
+
+dupes="$(search_pattern 'try_init\(\)|set_global_default' crates)"
 [[ -z "$dupes" ]] || { echo "ARCHITECTURE VIOLATION: logging installation outside apps/:$dupes"; exit 1; }
 # Column-0 match: only free-function constructors trip this. Method
 # accessors such as `AppState::config_fingerprint` are indented and are
 # safe views over the single canonical value.
-dupes="$(rg -n '^(pub )?fn (config_fingerprint|canonical_non_secret_config)\b' crates apps -g '*.rs' | grep -v 'crates/sitolo-config/' || true)"
+dupes="$(search_pattern '^(pub )?fn (config_fingerprint|canonical_non_secret_config)\b' crates apps | grep -v 'crates/sitolo-config/' || true)"
 [[ -z "$dupes" ]] || { echo "ARCHITECTURE VIOLATION: config fingerprint outside sitolo-config:$dupes"; exit 1; }
 
 if [ "$fail" -ne 0 ]; then
