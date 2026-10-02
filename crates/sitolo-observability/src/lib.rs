@@ -7,9 +7,11 @@
 
 mod buffer;
 mod context;
+mod export;
 mod registry;
 pub use buffer::{Priority, TelemetryBuffer, TelemetryState};
 pub use context::{MAX_ID, RequestId, TraceParent};
+pub use export::{DrainReport, ExporterSnapshot, TelemetryExporter};
 pub use registry::{EVENTS, EventDefinition, METRICS, MetricDefinition, MetricKind, event, metric};
 
 /// Maximum operation-name length (F-008: bounded telemetry dimensions).

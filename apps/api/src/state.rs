@@ -8,10 +8,11 @@ use std::sync::{Arc, Mutex};
 
 use sitolo_application::TenancyService;
 use sitolo_config::DatabaseTarget;
-use sitolo_observability::TelemetryBuffer;
+use sitolo_observability::{TelemetryBuffer, TelemetryExporter};
 use sitolo_persistence::TenancyDatabase;
 
 use crate::shutdown::Readiness;
+use crate::telemetry::ApiTelemetry;
 
 /// Immutable shared application state.
 #[derive(Clone)]
@@ -21,6 +22,7 @@ pub struct AppState {
     config_fingerprint: String,
     db_target: DatabaseTarget,
     telemetry: Arc<Mutex<TelemetryBuffer>>,
+    exporter: Arc<ApiTelemetry>,
     tenancy_service: Arc<TenancyService>,
     readiness: Readiness,
 }
@@ -35,12 +37,14 @@ impl AppState {
     ) -> Self {
         let tenancy_db = Arc::new(TenancyDatabase::new());
         let tenancy_service = Arc::new(TenancyService::new(tenancy_db, Vec::new()));
+        let exporter = Arc::new(TelemetryExporter::new(Arc::clone(&telemetry)));
         AppState {
             service_name,
             service_version,
             config_fingerprint,
             db_target,
             telemetry,
+            exporter,
             tenancy_service,
             readiness: Readiness::new(),
         }
@@ -66,6 +70,13 @@ impl AppState {
 
     pub fn telemetry(&self) -> &Arc<Mutex<TelemetryBuffer>> {
         &self.telemetry
+    }
+
+    /// The bounded, priority-aware export queue built on [`Self::telemetry`]
+    /// (the admission model). Producers offer records here; a drain loop emits
+    /// them (see [`crate::telemetry`]).
+    pub fn telemetry_exporter(&self) -> &Arc<ApiTelemetry> {
+        &self.exporter
     }
 
     pub fn tenancy_service(&self) -> &Arc<TenancyService> {

@@ -70,6 +70,17 @@ async fn development_boots_and_serves_bounded_probes() {
     assert_eq!(dev.readiness(), Readiness::Ready);
     assert!(dev.state().config_fingerprint().starts_with("sha256:"));
 
+    // Capture real sink output. The server tasks run on this test's
+    // single-threaded runtime, so this scoped subscriber observes them.
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let writer = std::sync::Arc::clone(&sink);
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || SinkWriter(std::sync::Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish(),
+    );
+
     // Live serving: ephemeral port, real socket, bounded probes.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -111,6 +122,33 @@ async fn development_boots_and_serves_bounded_probes() {
             Subsystem::PersistenceIntent,
         ]
     );
+
+    // End to end through the real serving path: each request was offered to
+    // the bounded exporter by the Axum middleware and emitted by the drain
+    // loop or the final shutdown flush, and nothing admitted is left queued.
+    assert_eq!(dev.state().telemetry_exporter().snapshot().total_queued(), 0);
+    let log = String::from_utf8_lossy(&sink.lock().expect("sink lock")).into_owned();
+    assert_eq!(log.matches("http.request.completed").count(), 3, "{log}");
+    assert!(log.contains("route_template=/process/live"), "{log}");
+    assert!(log.contains("route_template=/process/ready"), "{log}");
+    assert!(log.contains("route_template=unmatched"), "{log}");
+    assert!(log.contains("status_class=4xx"), "{log}");
+    // The unknown path is reported as `unmatched`, never as the raw path.
+    assert!(!log.contains("/no/such/path"), "{log}");
+}
+
+/// Writer handing formatter output to a shared buffer.
+struct SinkWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for SinkWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("sink lock").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

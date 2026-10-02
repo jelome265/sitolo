@@ -16,6 +16,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Json, MatchedPath, Path, State};
 use axum::http::{Request, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -46,6 +47,7 @@ use crate::shutdown::{
     SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem,
 };
 use crate::state::AppState;
+use crate::telemetry::{self, HttpRequestCompleted};
 use sitolo_config::AppConfig;
 
 const COMPAT_RESPONSE_BODY_MAX_BYTES: usize = 64 * 1024;
@@ -173,7 +175,16 @@ fn router_with_transport(
                 ))
                 .layer(GlobalConcurrencyLimitLayer::new(MAX_IN_FLIGHT_REQUESTS)),
         )
-        // Outermost (added last): request identity and the completion event.
+        // Request telemetry. Sits outside the timeout/limit/concurrency layers
+        // (so requests they reject are recorded) and inside the identity layer
+        // below (so the request id and traceparent already exist). It only
+        // *offers* a record to the bounded exporter; emission happens on the
+        // drain loop, so telemetry can never slow or fail a request.
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            record_request_telemetry,
+        ))
+        // Outermost (added last): request identity and the request span.
         // Every request that reaches a route passes through here *around* the
         // timeout, body-limit and concurrency layers above, so requests those
         // layers reject (413, 408, ...) are observed too rather than silently
@@ -243,20 +254,7 @@ fn router_with_transport(
                                 // Omitted entirely when absent or invalid.
                                 traceparent = trace_parent.as_deref(),
                             )
-                        })
-                        .on_response(
-                            |response: &Response, latency: Duration, _span: &tracing::Span| {
-                                // Registered event `http.request.completed`
-                                // (docs/telemetry/events.yaml).
-                                tracing::info!(
-                                    event = "http.request.completed",
-                                    status = response.status().as_u16(),
-                                    status_class = %status_class(response.status()),
-                                    latency_ms = latency.as_millis(),
-                                    "request completed"
-                                );
-                            },
-                        ),
+                        }),
                 ),
         )
         .with_state(state)
@@ -290,6 +288,14 @@ pub async fn serve(
         transport.max_request_body_bytes,
         transport,
     );
+    // Telemetry drain loop for the server's lifetime. It is stopped only after
+    // traffic has drained, then performs one final flush.
+    let (telemetry_stop_tx, telemetry_stop_rx) = watch::channel(false);
+    let telemetry_task = tokio::spawn(telemetry::run_drain_loop(
+        Arc::clone(state.telemetry_exporter()),
+        telemetry::DRAIN_INTERVAL,
+        telemetry_stop_rx,
+    ));
     let mut connections = JoinSet::new();
     let connection_permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
     // Fires exactly once, when this loop stops accepting connections, so
@@ -400,6 +406,12 @@ pub async fn serve(
     // shutdown is still bounded.
     connections.abort_all();
 
+    // Telemetry stops last: every request that completed has already offered
+    // its record, so flush what remains. Bounded, so a stuck sink cannot
+    // hold up process shutdown.
+    let _ = telemetry_stop_tx.send(true);
+    let _ = tokio::time::timeout(telemetry::FINAL_FLUSH_DEADLINE, telemetry_task).await;
+
     let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
     coordinator.shutdown().to_vec()
 }
@@ -497,6 +509,43 @@ async fn live(State(state): State<Arc<AppState>>) -> Response {
         json_escape(state.service_version())
     );
     json_body(StatusCode::OK, body)
+}
+
+/// Offers one `http.request.completed` record to the exporter after the
+/// request has been answered. A shed record is deliberately silent here: the
+/// exporter counts it and the drain loop reports it, once per tick.
+async fn record_request_telemetry(
+    State(state): State<Arc<AppState>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let started = std::time::Instant::now();
+    let method = request.method().to_string();
+    let route_template = route_template(&request).to_string();
+    let request_id = request
+        .extensions()
+        .get::<RequestId>()
+        .map(|id| id.as_str().to_string())
+        .unwrap_or_else(|| "unassigned".to_string());
+    let traceparent = request
+        .extensions()
+        .get::<TraceParent>()
+        .map(|value| value.as_str().to_string());
+
+    let response = next.run(request).await;
+
+    let record = HttpRequestCompleted {
+        method,
+        route_template,
+        status: response.status().as_u16(),
+        status_class: status_class(response.status()),
+        latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        request_id,
+        traceparent,
+    };
+    let priority = record.priority();
+    state.telemetry_exporter().record(priority, record);
+    response
 }
 
 /// Matched route template for telemetry (`/v1/organizations/{organization_id}/...`),

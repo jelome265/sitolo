@@ -16,8 +16,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use sitolo_api_bin::serve::router;
 use sitolo_api_bin::state::AppState;
+use sitolo_api_bin::telemetry::{self, HttpRequestCompleted};
 use sitolo_config::DatabaseTarget;
-use sitolo_observability::TelemetryBuffer;
+use sitolo_observability::{Priority, TelemetryBuffer};
 use tower::ServiceExt;
 
 /// In-memory sink for the formatter, so tests read real emitted output.
@@ -39,6 +40,14 @@ impl Capture {
     fn text(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().expect("capture lock")).into_owned()
     }
+
+    /// Returns what has been captured so far and clears it.
+    fn take(&self) -> String {
+        let mut bytes = self.0.lock().expect("capture lock");
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        bytes.clear();
+        text
+    }
 }
 
 /// Installs a scoped, thread-local subscriber for the current test. The
@@ -54,8 +63,8 @@ fn capture_tracing() -> (Capture, tracing::subscriber::DefaultGuard) {
     (capture, tracing::subscriber::set_default(subscriber))
 }
 
-fn app() -> Router {
-    let state = AppState::new(
+fn state_with_capacity(capacity: usize) -> Arc<AppState> {
+    Arc::new(AppState::new(
         "sitolo".into(),
         "test".into(),
         "fingerprint".into(),
@@ -65,13 +74,32 @@ fn app() -> Router {
             database: "sitolo".into(),
             username: "sitolo".into(),
         },
-        Arc::new(Mutex::new(TelemetryBuffer::new(8))),
-    );
-    router(Arc::new(state), 32 * 1024)
+        Arc::new(Mutex::new(TelemetryBuffer::new(capacity))),
+    ))
 }
 
+fn app(state: &Arc<AppState>) -> Router {
+    router(Arc::clone(state), 32 * 1024)
+}
+
+/// Sends one request through a fresh router and emits whatever telemetry it
+/// produced. In production a background drain loop emits records; tests
+/// flush explicitly so assertions on captured output are deterministic.
 async fn call(request: Request<Body>) -> axum::response::Response {
-    app().oneshot(request).await.expect("router is infallible")
+    let state = state_with_capacity(64);
+    let response = app(&state)
+        .oneshot(request)
+        .await
+        .expect("router is infallible");
+    telemetry::flush(state.telemetry_exporter());
+    response
+}
+
+fn get(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .body(Body::empty())
+        .expect("request builds")
 }
 
 #[tokio::test]
@@ -262,4 +290,107 @@ async fn multiple_traceparent_headers_are_discarded() {
     let log = capture.text();
     assert!(!log.contains(VALID_TRACEPARENT), "{log}");
     assert!(!log.contains(other), "{log}");
+}
+
+fn higher_priority_record(id: &str) -> HttpRequestCompleted {
+    HttpRequestCompleted {
+        method: "POST".into(),
+        route_template: "/v1/organizations".into(),
+        status: 201,
+        status_class: "2xx",
+        latency_ms: 1,
+        request_id: id.into(),
+        traceparent: None,
+    }
+}
+
+#[tokio::test]
+async fn probe_traffic_is_shed_before_normal_traffic_and_responses_are_unaffected() {
+    let (capture, _guard) = capture_tracing();
+
+    // The status a normal request produces with a roomy queue is the
+    // baseline: a saturated queue must not change any response.
+    let baseline = call(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/organizations/org-1/suspend")
+            .body(Body::empty())
+            .expect("request builds"),
+    )
+    .await
+    .status();
+    let _ = capture.take();
+
+    let state = state_with_capacity(4);
+    let app = app(&state);
+
+    // Four probes fill the queue with debug-priority records.
+    for _ in 0..4 {
+        let response = app
+            .clone()
+            .oneshot(get("/process/live"))
+            .await
+            .expect("router is infallible");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let snapshot = state.telemetry_exporter().snapshot();
+    assert_eq!(snapshot.queued, [0, 0, 0, 4]);
+
+    // Four normal requests arrive at a full queue. Each must evict one probe
+    // record rather than be shed itself, and none may be affected.
+    for _ in 0..4 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/organizations/org-1/suspend")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router is infallible");
+        assert_eq!(response.status(), baseline);
+    }
+    let snapshot = state.telemetry_exporter().snapshot();
+    assert_eq!(snapshot.queued, [0, 0, 4, 0]);
+    assert_eq!(snapshot.dropped(Priority::P3Debug), 4);
+    assert_eq!(snapshot.dropped(Priority::P2Normal), 0);
+
+    telemetry::flush(state.telemetry_exporter());
+    let log = capture.text();
+    assert_eq!(log.matches("http.request.completed").count(), 4, "{log}");
+    assert!(
+        log.contains("route_template=/v1/organizations/{organization_id}/{action}"),
+        "{log}"
+    );
+    assert!(!log.contains("route_template=/process/live"), "{log}");
+}
+
+#[tokio::test]
+async fn a_queue_saturated_by_higher_priority_records_sheds_without_blocking_requests() {
+    let state = state_with_capacity(2);
+    // Two higher-priority records already fill the queue (the payload type is
+    // the API's only record type; priority is what matters here).
+    let exporter = state.telemetry_exporter();
+    assert!(exporter.record(Priority::P0Security, higher_priority_record("sec-0")));
+    assert!(exporter.record(Priority::P0Security, higher_priority_record("sec-1")));
+
+    let app = app(&state);
+    for _ in 0..3 {
+        // Telemetry loss must never block business operations: each request
+        // completes promptly even though its record cannot be admitted.
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.clone().oneshot(get("/process/live")),
+        )
+        .await
+        .expect("a saturated telemetry queue must not block the request path")
+        .expect("router is infallible");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let snapshot = exporter.snapshot();
+    assert_eq!(snapshot.queued, [2, 0, 0, 0], "queue stays bounded");
+    assert_eq!(snapshot.dropped(Priority::P3Debug), 3);
 }
