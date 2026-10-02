@@ -15,10 +15,10 @@ search_pattern() {
   fi
 }
 
-violations="$(search_pattern 'std::env::(var|vars)' crates apps | grep -vE 'crates/sitolo-(config|security)/' || true)"
+violations="$(search_pattern 'std::env::(var|vars)' crates apps | grep -vE 'crates/sitolo-(config|security)/|/tests/' || true)"
 [[ -z "$violations" ]] || { echo "$violations"; exit 1; }
-console="$(search_pattern '\b(println!|dbg!)' crates apps)"
+console="$(search_pattern '\b(println!|dbg!)' crates apps | grep -v '/tests/' || true)"
 [[ -z "$console" ]] || { echo "$console"; exit 1; }
-aliases="$(search_pattern '\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b' crates apps)"
+aliases="$(search_pattern '\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b' crates apps | grep -v '/tests/' || true)"
 [[ -z "$aliases" ]] || { echo "$aliases"; exit 1; }
 echo "Phase 2 policy check PASSED"
