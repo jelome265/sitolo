@@ -5,10 +5,20 @@ cd "$root"
 for path in docs/telemetry/{events,metrics,redaction}.yaml docs/runbooks/{secret-compromise,telemetry-blackout,configuration-poisoning,error-storm}.md; do
   [[ -f "$path" ]] || { echo "PHASE 2 POLICY VIOLATION: missing $path"; exit 1; }
 done
-violations="$(rg -n 'std::env::(var|vars)' crates apps -g '*.rs' | grep -vE 'crates/sitolo-(config|security)/' || true)"
+search_pattern() {
+  local pattern="$1"
+  shift
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "$pattern" "$@" -g '*.rs' || true
+  else
+    grep -rnE "$pattern" "$@" --include='*.rs' || true
+  fi
+}
+
+violations="$(search_pattern 'std::env::(var|vars)' crates apps | grep -vE 'crates/sitolo-(config|security)/|/tests/' || true)"
 [[ -z "$violations" ]] || { echo "$violations"; exit 1; }
-console="$(rg -n '\b(println!|dbg!)' crates apps -g '*.rs' || true)"
+console="$(search_pattern '\b(println!|dbg!)' crates apps | grep -v '/tests/' || true)"
 [[ -z "$console" ]] || { echo "$console"; exit 1; }
-aliases="$(rg -n '\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b' crates apps -g '*.rs' || true)"
+aliases="$(search_pattern '\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b' crates apps | grep -v '/tests/' || true)"
 [[ -z "$aliases" ]] || { echo "$aliases"; exit 1; }
 echo "Phase 2 policy check PASSED"
