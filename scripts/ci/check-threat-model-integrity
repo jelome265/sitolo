@@ -23,7 +23,7 @@ for marker in \
   grep -Fq "$marker" docs/threat_model.md || { echo "missing threat-model marker: $marker" >&2; exit 1; }
 done
 
-for n in $(seq 1 30); do
+for n in $(seq 1 31); do
   id=$(printf "T-%03d" "$n")
   grep -Fq "$id" docs/threat_model.md || { echo "missing threat $id" >&2; exit 1; }
 done

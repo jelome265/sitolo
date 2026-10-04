@@ -2,7 +2,7 @@
 
 **Lifecycle:** Active cross-phase security governance baseline  
 **Status:** Maintained and verification-gated  
-**Last reviewed:** 2026-09-26  
+**Last reviewed:** 2026-10-03  
 **Primary system:** Sitolo Business Operating System for African SMEs  
 **Primary deployment market:** Malawi-first, controlled African regionalization  
 **Normative HTTP backend:** Rust / Axum / Hyper/Hyper-util / Tokio / SQLx  
@@ -326,6 +326,32 @@ A client may be:
 - physically stolen.
 
 Anything presented from this boundary must be treated as untrusted until server-side controls establish trust.
+
+### 5.1.1 HTTP transport controls at TB-01 (CURRENT)
+
+Per §8.1, material HTTP transport changes trigger re-review. This subsection is classified **CURRENT**: each row names a mechanism in the source tree, its configured bound, and the executed test that exercises it, or states that none exists. Evidence is `integration.yml` runs 36819614391 and 37048001808 (GitHub Actions, pinned toolchain). Bounds are configuration-validated in `crates/sitolo-config`; the pair shown is `default / hard ceiling`.
+
+| Phase / resource | Mechanism (`apps/api/src/serve.rs`) | Bound | Executed evidence (`apps/api/tests/`) |
+|---|---|---|---|
+| Slow or unfinished request headers | Hyper HTTP/1 `header_read_timeout` | 5 s / 30 s | `transport_tests::real_socket_slow_header_test` |
+| Stalled request body | `RequestBodyTimeoutLayer` (idle gap between chunks) | 5 s / 30 s | `real_socket_slow_body_test` |
+| Oversized body | `RequestBodyLimitLayer`; answered 413 before the handler runs when the declared length exceeds the cap | 2 MiB / 25 MiB, further capped to 32 KiB by `MAX_TENANCY_BODY_BYTES` | `real_socket_chunked_oversized_request_test`; `request_telemetry::requests_rejected_by_the_body_limit_layer_are_still_observed` |
+| Total request duration | `TimeoutLayer` (408) | 30 s / 60 s | **none** (gap) |
+| Idle HTTP/1 keep-alive connection | `IdleTimeoutIo`; deadline resets on every read, so a busy connection is never evicted | 60 s / 300 s | `real_socket_idle_connection_is_evicted_after_configured_timeout`; `real_socket_active_connection_survives_past_idle_timeout` |
+| Concurrent connections | Semaphore permit per connection; connections over the ceiling are dropped at accept, not queued | 128 | `real_socket_connection_ceiling_rejects_then_recovers` (admits 128, refuses the next, recovers on release) |
+| Concurrent in-flight requests | `GlobalConcurrencyLimitLayer` | 128 | **none** (gap) |
+| HTTP/2 | PING interval and acknowledgement deadline; `max_concurrent_streams` | 30 s / 60 s each; 128 streams | `real_socket_h2_prior_knowledge_test`; `real_socket_http2_multiplexes_requests_on_one_connection`; `real_socket_http2_request_body_reaches_the_handler_with_request_id`. PING enforcement and the stream cap: **none** (gap) |
+| Dead peers | TCP keepalive | 30 s / 300 s | **none**; best effort |
+| Shutdown | Readiness flips to 503 at the signal; listener is closed at once so late connections are refused rather than hung; each connection is drained with `graceful_shutdown`; hard abort after the drain deadline | 10 s | `startup::ready_reports_unavailable_while_draining_and_shutdown_still_completes`; `real_socket_active_connection_shutdown_test` |
+| Slow response consumer | `ResponseBodyTimeoutLayer` | 60 s / 300 s | **not exercisable today**: every response is a small, fully buffered body that fits socket buffers, so a stalled reader cannot create backpressure. The test belongs with the first streaming route. |
+
+Request correlation (accountability). One request identity is assigned per request and shared by the span, the completion event and the `problem+json` body (`request_telemetry::client_request_id_is_shared_by_the_log_and_the_error_body`, `server_minted_request_id_is_shared_by_the_log_and_the_error_body`; also over HTTP/2). A `traceparent` is accepted only when single and semantically valid; duplicates and malformed values are discarded and never echoed into telemetry (`valid_traceparent_is_recorded_on_the_request_span`, `invalid_traceparent_values_are_ignored_not_echoed_into_telemetry`, `multiple_traceparent_headers_are_discarded`). Both are diagnostic correlation only and are never authorization evidence.
+
+Known limits of this boundary (open, not claimed as controls):
+
+- Ceilings are **global, not per source**: one client can occupy all connection slots. Per-source abuse limiting exists only inside the identity and tenancy application services (`sitolo-auth` `RateLimiter`, per abuse class); nothing applies it at the transport boundary, so it cannot stop connection or request-pipeline exhaustion before a request is parsed and routed. Per-source limiting at the transport boundary is **TARGET**, to be provided at the edge or in-process; the HTTP boundary does not emit `rate_limit_rejections_total` (§20.1).
+- The process serves cleartext HTTP/1.1 and h2c and does not terminate TLS.
+- HTTP/2 stream-reset abuse resistance relies on the pinned `h2` release in `Cargo.lock`; there is no project-level test for it.
 
 ## 5.2 TB-02: Authentication boundary
 
@@ -1032,6 +1058,20 @@ PostgreSQL's own regression infrastructure includes dedicated concurrency/isolat
 
 ---
 
+## T-031 HTTP Connection and Resource Exhaustion
+
+**Attack:** an unauthenticated client exhausts connections, tasks, memory or the request pipeline without ever sending a valid request: headers that never finish, bodies that stall or trickle, oversized or chunked bodies, idle keep-alive connections held open, HTTP/2 stream or ping abuse, or more connections than the process can serve.
+
+**Mapped controls:** SC-004, SC-010.
+
+**Mitigation:** every phase of a request has a bounded, configuration-validated deadline (header read, body idle, total request, keep-alive idle, HTTP/2 ping, response body idle); body size is capped before the handler runs; connections and in-flight requests are ceiling-bound and over-ceiling connections are refused rather than queued; shutdown drains in bounded time. Implemented in `apps/api/src/serve.rs` and `crates/sitolo-config`. CURRENT evidence and known gaps are in §5.1.1.
+
+**Residual risk:** the ceilings are global, so a single source can occupy every connection slot until per-source limiting at the transport boundary (TARGET) exists; the per-source `RateLimiter` operates only inside application services (§5.1.1).
+
+**Detection:** HTTP completion events by `status_class` and `route_template` (rates of 408, 413 and 5xx), connection-ceiling rejection warnings, and the telemetry shed counters (§20.4).
+
+---
+
 # 12. Domain-Specific Threat Analysis
 
 ## 12.1 Identity and sessions
@@ -1605,6 +1645,7 @@ Every high-risk threat has an explicit mapping to the authoritative security con
 | T-028 | SC-005, SC-011, SC-012 | Privileged-CI isolation tests |
 | T-029 | SC-011 | Dependency/provenance/lockfile tests |
 | T-030 | SC-009, SC-011, SC-012 | Review/provenance/release-gate evidence |
+| T-031 | SC-004, SC-010 | Real-socket transport and resource-limit tests |
 
 The authoritative control register remains `docs/security_control_register.md`. This table is a traceability layer, not a second security-control authority.
 
@@ -1823,6 +1864,16 @@ Telemetry answers:
 
 They must not be conflated.
 
+## 20.4 HTTP request telemetry implementation status (CURRENT)
+
+Implemented and exercised by `apps/api/tests/request_telemetry.rs`, `apps/api/tests/startup.rs` and the unit tests in `crates/sitolo-observability/src/export.rs`:
+
+- One registered `http.request.completed` event per request (`docs/telemetry/events.yaml`) with `method`, `route_template`, `status`, `status_class`, `latency_ms`, `request_id` and an optional validated `traceparent`. `route_template` is the matched route pattern (or `unmatched`); the raw path is never recorded, because it embeds organization and branch identifiers (§20.2).
+- Offered to a bounded, priority-aware export queue sized by `otel_max_queue` (2,048 by default, 1,048,576 ceiling). Under pressure the least important records are shed first; liveness and readiness probes are lowest priority. Telemetry loss never blocks or alters a request (`a_queue_saturated_by_higher_priority_records_sheds_without_blocking_requests`). A failing sink releases capacity rather than wedging the queue, and shutdown flushes in bounded time.
+- Shedding, queue-state transitions and export failures are reported at most once per interval as `telemetry.record.dropped`, `telemetry.export.failed` and a state-change warning, and are never fed back into the queue.
+
+Not implemented (**TARGET**): the only sink is structured `tracing` output. There is no external collector exporter, so `telemetry.export.failed` is exercised only against a test sink, and the `sitolo_telemetry_dropped_records_total` metric defined in `docs/telemetry/metrics.yaml` is not exposed because no metrics endpoint exists; the underlying counters are available from the exporter snapshot.
+
 ---
 
 # 21. Incident Detection and Response Mapping
@@ -1840,6 +1891,7 @@ They must not be conflated.
 | Data export abuse | volume/rate alerts | suspend export capability |
 | DB compromise | DB/auth logs | isolate runtime identity |
 | DoS | rate/queue/DB saturation | shed non-critical work |
+| HTTP resource exhaustion | 408/413 and 5xx rates, connection-ceiling rejections, telemetry shed counters | tighten limits at the edge, shed non-critical work (probe telemetry is shed first) |
 
 ---
 
@@ -2438,6 +2490,7 @@ A review must happen immediately when:
 | T-020 Supply-chain | CI/security pipeline | Block |
 | T-021 Telemetry leakage | Redaction tests | Block |
 | T-022 DB exhaustion | Concurrency/load tests | Gate |
+| T-031 HTTP resource exhaustion | Real-socket transport tests | Gate |
 
 ---
 

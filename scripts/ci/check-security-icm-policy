@@ -108,7 +108,7 @@ grep -Fq "## 8.1 Current-state synchronization rule" docs/threat_model.md || { e
 bash scripts/ci/check-api-architecture || fail=1
 bash scripts/ci/check-threat-model-integrity || fail=1
 
-for n in $(seq 1 30); do
+for n in $(seq 1 31); do
   id=$(printf "T-%03d" "$n")
   grep -Eq "| $id |.*SC-" docs/threat_model.md || {
     echo "SECURITY ICM VIOLATION: threat $id has no explicit SC-ID mapping" >&2
