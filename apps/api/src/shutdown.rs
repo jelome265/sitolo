@@ -3,7 +3,7 @@
 //! Subsystems stop in a fixed order: network ingress first so no new work
 //! arrives, then telemetry flush accounting, then persistence-intent release.
 //! Shutdown is idempotent: repeated calls observe the first completed run.
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Subsystems stopped during shutdown, in stop order.
@@ -62,13 +62,13 @@ impl Readiness {
 
     /// Published exactly once, after every startup check has passed.
     pub fn mark_ready(&self) {
-        *self.state.lock().expect("readiness mutex poisoned") = ReadinessState::Ready;
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = ReadinessState::Ready;
     }
 
     /// Published exactly once, when the shutdown signal is received, before
     /// the listener stops accepting connections. Idempotent.
     pub fn mark_draining(&self) {
-        *self.state.lock().expect("readiness mutex poisoned") = ReadinessState::Draining;
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = ReadinessState::Draining;
         self.draining.store(true, Ordering::SeqCst);
     }
 
@@ -77,7 +77,7 @@ impl Readiness {
     }
 
     pub fn get_state(&self) -> ReadinessState {
-        *self.state.lock().expect("readiness mutex poisoned")
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -185,6 +185,24 @@ mod tests {
         readiness.mark_draining();
         readiness.mark_draining();
         assert_eq!(readiness.get_state(), ReadinessState::Draining);
+        assert!(readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_survives_a_poisoned_lock() {
+        let readiness = Readiness::new();
+        let poisoner = readiness.clone();
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.state.lock().expect("lock");
+            panic!("simulated panic while holding the readiness lock");
+        })
+        .join();
+        assert!(joined.is_err());
+
+        // A panic elsewhere must never take the readiness probe down with it.
+        readiness.mark_ready();
+        assert_eq!(readiness.get_state(), ReadinessState::Ready);
+        readiness.mark_draining();
         assert!(readiness.is_draining());
     }
 
