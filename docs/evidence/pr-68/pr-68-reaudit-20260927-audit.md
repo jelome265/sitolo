@@ -34,8 +34,8 @@ The latest remediation commit correctly records that earlier non-canonical Stage
 
 Those files remain present:
 
-- workspaces/sitolo-engineering/stages/07-remediation/output/pr-68-remediation-report.md
-- workspaces/sitolo-engineering/stages/08-verification/output/pr-68-verification-report.md
+- (removed file)
+- (removed file)
 
 They still contain unconditional COMPLETED / VERIFIED claims. The canonical current remediation artifact is under 07-remediate and says PARTIAL with re-audit required.
 
@@ -364,3 +364,7 @@ Implementation:
 - .github/workflows/integration.yml
 
 **End state:** PR #68 remediation is materially improved, but the current head is not Phase 2 compliant and is not verified by CI.
+
+---
+
+**Post-audit note (2026-10-03).** This audit listed two files under non-canonical stage directories as reviewed. Both files, and the directories, were later removed because their `COMPLETED` and `VERIFIED` claims carried no evidence. The 2 path(s) that pointed at them are shown above as "(removed file)" so this record stays free of dangling references. Nothing else in this document was changed, and the file was moved from the stage output shelf to this directory with its history preserved.
