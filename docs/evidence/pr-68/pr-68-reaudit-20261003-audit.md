@@ -61,6 +61,7 @@ run_slug: "pr-68-reaudit-20261003"
 2. **Connection-ceiling rejections log one warning per rejected connection, including the peer address.** This line predates this work. Under a connection flood it produces unbounded warning volume, an amplification path for the very attack the ceiling defends against, and it records client addresses. Recommended: count rejections in the exporter and report an aggregate per interval. Not fixed here.
 3. **Ceilings are global, not per source.** One client can occupy all connection slots. Per-source abuse limiting exists only inside application services (`sitolo-auth`), not at the transport boundary. Documented in the threat model as T-031 residual risk.
 4. **At the maximum permitted `otel_max_queue` the queue can hold about a million records.** The default is 2,048. The ceiling is documented, but an operator choosing it trades memory for retention.
+5. **`check-phase2-policy` is fail-open on the CI runner.** It runs `rg ... || true`; with no ripgrep installed the searches return nothing and the check passes without checking anything. This was found because the same script fails in an environment that does have ripgrep. It predates this change. Recommended: install ripgrep in `rust.yml` or fail closed when `rg` is absent, then resolve the line it will flag.
 
 ## Concurrency and failure findings
 
@@ -91,9 +92,9 @@ Every `scripts/ci/check-*` script was run against the audited tree and, as a bas
 | check-system-map-processes | pass | pass |
 | check-threat-model-integrity | pass | pass |
 | check-workflow-policy | pass | pass |
-| check-phase2-policy | **fail** | **FAIL** |
+| check-phase2-policy | passes on CI (vacuously); fails with ripgrep installed | same |
 
-`check-icm-workspace` was red on `main` (the audit artifact sat in a stage output shelf) and passes on the audited tree. `check-phase2-policy` fails identically on `main`: it flags `DATABASE_URL` in `crates/sitolo-persistence/tests/rls_security_tests.rs`, which this change does not touch. The PowerShell scripts were not run.
+`check-icm-workspace` was red on `main` (the audit artifact sat in a stage output shelf) and passes on the audited tree. `check-phase2-policy` flags `DATABASE_URL` in `crates/sitolo-persistence/tests/rls_security_tests.rs`, but **only when ripgrep is installed**, as it was in this audit's sandbox. The flagged line pre-dates `main`'s last green `rust.yml` run and `rust.yml` installs no ripgrep, so on the CI runner the check passes vacuously (`rg ... || true`): the gate is fail-open there. This is not caused by this change and was not touched. An earlier version of this report called it a failure "identical on main"; that overstated it, because the failure depends on the environment. The PowerShell scripts were not run.
 
 ## Required remediation
 
@@ -109,5 +110,5 @@ Every `scripts/ci/check-*` script was run against the audited tree and, as a bas
 ## Unresolved questions
 
 - Does hyper send HTTP/2 PING frames while a connection has no open streams? If it does, PING acknowledgements count as read activity and an idle HTTP/2 client would never be evicted by the idle timer; if it does not (the believed default), idle HTTP/2 connections are evicted like HTTP/1. Not tested, so no claim is made either way.
-- `check-phase2-policy` fails identically on `main` (it flags `DATABASE_URL` in persistence tests). Whether that is intended, or whether `main`'s `verify` gate is expected to be red, is a decision for the owner.
+- Should `check-phase2-policy` fail closed? It silently does nothing on a runner without ripgrep, and where ripgrep exists it flags a pre-existing line in the persistence tests. Which behavior is intended is a decision for the owner.
 - PR #72 conflicts with `main` in one file (the audit document, which the branch carries with 18 appended lines). It must be resolved before pull-request workflows will run.

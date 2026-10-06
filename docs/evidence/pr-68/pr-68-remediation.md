@@ -93,9 +93,9 @@ The status of SC-010 in `docs/security_control_register.md` was left at "Contrac
 | check-system-map-processes | pass | pass |
 | check-threat-model-integrity | pass | pass |
 | check-workflow-policy | pass | pass |
-| check-phase2-policy | **fail** (pre-existing) | fail, unchanged |
+| check-phase2-policy | passes on CI (vacuously, no ripgrep); fails where ripgrep is installed | same |
 
-`check-phase2-policy` fails identically on `main`: it flags `DATABASE_URL` in `crates/sitolo-persistence/tests/rls_security_tests.rs`. It is unrelated to this change and was not touched.
+`check-phase2-policy` flags `DATABASE_URL` in `crates/sitolo-persistence/tests/rls_security_tests.rs`, but **only when ripgrep is installed**, as it was in the authoring sandbox. The flagged line pre-dates `main`'s last green `rust.yml` run and `rust.yml` installs no ripgrep, so on the CI runner the check passes vacuously (`rg ... || true`): the gate is fail-open there. This is not caused by this change and was not touched. An earlier version of this report called it a failure "identical on main"; that overstated it, because the failure depends on the environment.
 
 ## 7. Still open
 
