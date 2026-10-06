@@ -115,3 +115,98 @@ jobs:
           path: |
             offensive-security.log
             target/offensive-security/run.json
+
+  zz_diag_pr68:
+    # TEMPORARY (PR-68 remediation): reproduces the failing steps of
+    # security/dependency-policy and rust/verify and prints each step's output
+    # as annotations, because raw job logs are unreachable from the authoring
+    # environment. Remove before merge.
+    name: zz-diag-pr68
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: sitolo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CARGO_TERM_COLOR: never
+      ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
+      RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          components: rustfmt, clippy
+      - name: install emitter and the action's exact cargo-deny
+        run: |
+          cat > /tmp/emit.py << 'PY'
+          import sys
+          name, path, rc = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(path, errors="replace").read()
+          def esc(s):
+              return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          if rc == "0":
+              print(f"::notice title={name}::PASS (exit 0)")
+              sys.exit(0)
+          fi = text.find("\nfailures:\n")
+          if fi >= 0:
+              summary = "\n".join(l for l in text.splitlines() if l.startswith("test ") and not l.endswith("... ok"))
+              text = "NON-OK TEST LINES:\n" + summary + "\n\n" + text[fi:]
+              start = 0
+          else:
+              idxs = [i for i in (text.find("error["), text.find("error:"), text.find("panicked"), text.find("Diff in")) if i >= 0]
+              start = min(idxs) if idxs else max(0, len(text) - 9000)
+          body = text[start:start + 9000]
+          chunks = [body[k:k + 3000] for k in range(0, len(body), 3000)][:3]
+          for n, c in enumerate(chunks, 1):
+              print(f"::error title={name} exit {rc} part {n}::{esc(c)}")
+          print(f"::error title={name} tail::{esc(text[-1500:])}")
+          PY
+          curl -sSL https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /tmp --strip-components=1
+          /tmp/cargo-deny --version
+      - name: deny advisories
+        run: |
+          set +e; /tmp/cargo-deny --color never --all-features --manifest-path ./Cargo.toml check advisories > d-adv.log 2>&1; rc=$?
+          python3 /tmp/emit.py deny-advisories d-adv.log $rc; exit 0
+      - name: deny bans
+        run: |
+          set +e; /tmp/cargo-deny --color never --all-features --manifest-path ./Cargo.toml check bans > d-bans.log 2>&1; rc=$?
+          python3 /tmp/emit.py deny-bans d-bans.log $rc; exit 0
+      - name: deny licenses
+        run: |
+          set +e; /tmp/cargo-deny --color never --all-features --manifest-path ./Cargo.toml check licenses > d-lic.log 2>&1; rc=$?
+          python3 /tmp/emit.py deny-licenses d-lic.log $rc; exit 0
+      - name: deny sources
+        run: |
+          set +e; /tmp/cargo-deny --color never --all-features --manifest-path ./Cargo.toml check sources > d-src.log 2>&1; rc=$?
+          python3 /tmp/emit.py deny-sources d-src.log $rc; exit 0
+      - name: fmt
+        run: |
+          set +e; cargo fmt --all -- --check > fmt.log 2>&1; rc=$?
+          python3 /tmp/emit.py fmt fmt.log $rc; exit 0
+      - name: clippy
+        run: |
+          set +e; cargo clippy --workspace --all-targets --all-features --locked -- -D warnings > clippy.log 2>&1; rc=$?
+          python3 /tmp/emit.py clippy clippy.log $rc; exit 0
+      - name: test workspace (as verify runs it, with the database)
+        run: |
+          set +e; cargo test --workspace --all-targets --all-features --locked > test.log 2>&1; rc=$?
+          python3 /tmp/emit.py test-workspace test.log $rc; exit 0
+      - name: rls suite
+        run: |
+          set +e; cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked > rls.log 2>&1; rc=$?
+          python3 /tmp/emit.py rls rls.log $rc; exit 0
+      - name: release build
+        run: |
+          set +e; cargo build --workspace --release --locked > rel.log 2>&1; rc=$?
+          python3 /tmp/emit.py release-build rel.log $rc; exit 0
