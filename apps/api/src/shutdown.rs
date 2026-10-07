@@ -3,8 +3,8 @@
 //! Subsystems stop in a fixed order: network ingress first so no new work
 //! arrives, then telemetry flush accounting, then persistence-intent release.
 //! Shutdown is idempotent: repeated calls observe the first completed run.
-use std::sync::{Arc, PoisonError};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError};
 
 /// Subsystems stopped during shutdown, in stop order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
