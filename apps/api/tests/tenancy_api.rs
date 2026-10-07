@@ -5,8 +5,10 @@
 
 use sitolo_api::{BranchResponse, OrganizationResponse, ProvisionedOrganizationResponse};
 use sitolo_api_bin::bootstrap::StartupContext;
-use sitolo_api_bin::serve::dispatch_request;
+use sitolo_api_bin::serve::router;
+use sitolo_api_bin::state::AppState;
 use std::sync::Arc;
+use tower::ServiceExt;
 
 struct StubProvider;
 
@@ -22,7 +24,7 @@ impl sitolo_security::SecretProvider for StubProvider {
     }
 }
 
-async fn test_app_state() -> Arc<sitolo_api_bin::state::AppState> {
+async fn test_app_state() -> Arc<AppState> {
     let ctx = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),
         Some(Arc::new(StubProvider)),
@@ -30,6 +32,51 @@ async fn test_app_state() -> Arc<sitolo_api_bin::state::AppState> {
     .await
     .expect("bootstrap succeeds");
     Arc::clone(ctx.state())
+}
+
+/// Drives one HTTP request through the real, production `router()` — the
+/// exact `Router` `serve()` mounts on a live TCP listener — via Tower's
+/// `oneshot`, rather than a hand-rolled request dispatcher. This is real
+/// application-layer test coverage (handlers, extractors, JSON (de)
+/// serialization, tower-http layers, error mapping) end to end; it is not a
+/// transport-layer test — connection lifecycle, socket timeouts, and HTTP/1
+/// vs HTTP/2 wire behavior are covered separately and for real in
+/// `transport_tests.rs`, which binds an actual `TcpListener` and runs the
+/// real `serve()` loop.
+async fn dispatch_request(
+    method: &str,
+    path: &str,
+    body: &str,
+    state: &Arc<AppState>,
+) -> (String, String) {
+    // Effective body cap is min(this, MAX_TENANCY_BODY_BYTES) inside `router()`.
+    let app = router(Arc::clone(state), 1024 * 1024);
+
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .expect("well-formed test request");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("router is infallible per tower::Service");
+
+    let status = response.status();
+    let status_line = format!(
+        "{} {}",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
+    );
+
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("reading response body");
+    let body_text = String::from_utf8_lossy(&body_bytes).into_owned();
+
+    (status_line, body_text)
 }
 
 #[tokio::test]
@@ -309,10 +356,35 @@ async fn rejects_unknown_fields_and_malformed_json() {
 async fn rejects_oversized_payload_and_invalid_identifiers() {
     let state = test_app_state().await;
 
-    // Oversized body (> 32 KiB) -> 422
-    let huge_body = "x".repeat(33 * 1024);
+    // Oversized body (> 32 KiB) -> Axum body-limit rejection (413)
+    let huge_name = "x".repeat(33 * 1024);
+    let huge_body = format!(
+        r#"{{
+            "organization_id": "org-huge",
+            "organization_name": "{huge_name}",
+            "owner_membership_id": "mem-huge",
+            "owner_user_id": "usr-huge",
+            "default_branch_id": "br-huge",
+            "default_branch_name": "Branch"
+        }}"#
+    );
     let (status_huge, _) = dispatch_request("POST", "/v1/organizations", &huge_body, &state).await;
-    assert_eq!(status_huge, "422 Unprocessable Entity");
+    assert_eq!(status_huge, "413 Payload Too Large");
+
+    // A body stream without Content-Length must still surface the
+    // body-limit error as 413 rather than a generic JSON validation error.
+    let chunked_name = "y".repeat(33 * 1024);
+    let chunked_body = format!(
+        r#"{{"organization_id":"org-chunked","organization_name":"{chunked_name}","owner_membership_id":"mem-chunked","owner_user_id":"usr-chunked","default_branch_id":"br-chunked","default_branch_name":"Branch"}}"#
+    );
+    let (status_chunked, _) = sitolo_api_bin::serve::dispatch_request_without_content_length(
+        "POST",
+        "/v1/organizations",
+        &chunked_body,
+        &state,
+    )
+    .await;
+    assert_eq!(status_chunked, "413 Payload Too Large");
 
     // Hostile identifier with CR/LF injection -> 422
     let hostile_id_body = r#"{

@@ -90,11 +90,53 @@ const CATALOGUE: &[ConfigField] = &[
         "positive milliseconds <= hard ceiling"
     ),
     field!(
+        "HTTP__REQUEST_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; total request wall-clock deadline"
+    ),
+    field!(
+        "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; idle gap between request-body chunks; must not exceed HTTP__REQUEST_TIMEOUT_MS"
+    ),
+    field!(
+        "HTTP__HTTP1_IDLE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/1 idle connection eviction, reset by traffic"
+    ),
+    field!(
+        "HTTP__HTTP2_PING_INTERVAL_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/2 PING interval"
+    ),
+    field!(
+        "HTTP__RESPONSE_BODY_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; idle gap between response-body chunks"
+    ),
+    field!(
+        "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= hard ceiling; HTTP/2 PING acknowledgement deadline"
+    ),
+    field!(
         "HTTP__KEEPALIVE_TIMEOUT_MS",
         Tunable,
         true,
         "platform",
-        "positive milliseconds <= hard ceiling"
+        "positive milliseconds <= hard ceiling; OS-level TCP keepalive only"
     ),
     field!("DATABASE__HOST", Static, true, "platform", "bounded host"),
     field!("DATABASE__PORT", Static, true, "platform", "non-zero u16"),
@@ -197,6 +239,12 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "HTTP__BIND_ADDRESS",
     "HTTP__MAX_BODY_BYTES",
     "HTTP__REQUEST_HEADER_TIMEOUT_MS",
+    "HTTP__REQUEST_TIMEOUT_MS",
+    "HTTP__REQUEST_BODY_IDLE_TIMEOUT_MS",
+    "HTTP__HTTP1_IDLE_TIMEOUT_MS",
+    "HTTP__HTTP2_PING_INTERVAL_MS",
+    "HTTP__RESPONSE_BODY_TIMEOUT_MS",
+    "HTTP__HTTP2_KEEP_ALIVE_TIMEOUT_MS",
     "HTTP__KEEPALIVE_TIMEOUT_MS",
     "DATABASE__HOST",
     "DATABASE__PORT",

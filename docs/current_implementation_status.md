@@ -2,7 +2,9 @@
 
 **Status:** Current implementation-state pointer
 **Date:** 2026-09-26
-**Main baseline:** `623f7aed6105664d10d1a2802480fde8316ed5f8`
+**Main baseline at this review:** `54bbb0d160684538d8d5467b8cd6b78c87be133d`  
+**Review branch:** `feat/threat-model-axum-reconciliation-20260926`  
+**Target verification revision:** `58de49757bffe99af69cd79968390df6b7654577`
 
 ## Active product implementation
 

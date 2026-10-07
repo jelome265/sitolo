@@ -150,6 +150,7 @@ impl StartupContext {
             config.database_target(),
             Arc::clone(&telemetry),
         ));
+        state.readiness().mark_ready();
         Ok(StartupContext {
             config,
             state,

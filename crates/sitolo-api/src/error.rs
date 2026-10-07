@@ -10,6 +10,7 @@ pub enum Retryability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorFamily {
     Validation,
+    PayloadTooLarge,
     Authentication,
     Authorization,
     NotFound,
@@ -34,6 +35,7 @@ pub struct PublicError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppError {
     Validation,
+    PayloadTooLarge,
     Authentication,
     Authorization,
     NotFound,
@@ -53,6 +55,12 @@ impl AppError {
                 code: "VALIDATION_ERROR",
                 status: 422,
                 family: ErrorFamily::Validation,
+                retryability: Retryability::NotRetryable,
+            },
+            Self::PayloadTooLarge => PublicError {
+                code: "REQUEST_BODY_TOO_LARGE",
+                status: 413,
+                family: ErrorFamily::PayloadTooLarge,
                 retryability: Retryability::NotRetryable,
             },
             Self::Authentication => PublicError {
@@ -147,10 +155,14 @@ impl ProblemDetails {
         }
     }
     pub fn json(&self) -> String {
-        format!(
-            "{{\\\"type\\\":\\\"{}\\\",\\\"title\\\":\\\"{}\\\",\\\"status\\\":{},\\\"code\\\":\\\"{}\\\",\\\"request_id\\\":\\\"{}\\\"}}",
-            self.problem_type, self.title, self.status, self.code, self.request_id
-        )
+        serde_json::json!({
+            "type": self.problem_type,
+            "title": self.title,
+            "status": self.status,
+            "code": self.code,
+            "request_id": self.request_id,
+        })
+        .to_string()
     }
 }
 #[cfg(test)]

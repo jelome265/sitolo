@@ -32,6 +32,9 @@ cargo test -p sitolo-persistence --test rls_security_tests --all-features --lock
 echo "==> Release build"
 cargo build --workspace --release --locked
 
+echo "==> API architecture check"
+bash scripts/ci/check-api-architecture
+
 echo "==> Architecture check"
 ./scripts/ci/check-architecture
 
@@ -52,3 +55,4 @@ fi
 cargo audit
 
 echo "==> All verification passed"
+

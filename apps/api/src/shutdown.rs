@@ -3,6 +3,8 @@
 //! Subsystems stop in a fixed order: network ingress first so no new work
 //! arrives, then telemetry flush accounting, then persistence-intent release.
 //! Shutdown is idempotent: repeated calls observe the first completed run.
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError};
 
 /// Subsystems stopped during shutdown, in stop order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,8 +17,75 @@ pub enum Subsystem {
 /// Upper bound for graceful drain before the process exits.
 pub const SHUTDOWN_DRAIN_DEADLINE_SECS: u64 = 10;
 
-/// Maximum concurrently tracked connections during drain.
+/// Maximum concurrently accepted TCP connections at the API service boundary.
 pub const MAX_IN_FLIGHT_CONNECTIONS: usize = 128;
+
+/// Maximum concurrently processed requests at the API service boundary.
+pub const MAX_IN_FLIGHT_REQUESTS: usize = 128;
+
+/// Process serving lifecycle, consulted by `/process/ready`.
+///
+/// `Initializing` is the only state in which `AppState` exists but startup
+/// has not yet published readiness (see `bootstrap.rs::assemble`, which
+/// calls [`Readiness::mark_ready`] only after every startup check passes).
+/// `Draining` means the shutdown signal has been received: a readiness
+/// probe must fail so a load balancer stops routing new traffic here.
+/// `ShutDown` is reserved for a fully-stopped process and is not currently
+/// published by any code path, but is part of the type so a future
+/// post-drain state does not require a breaking API change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadinessState {
+    Initializing,
+    Ready,
+    Draining,
+    ShutDown,
+}
+
+/// Shared, thread-safe process readiness signal.
+///
+/// `is_draining` is a separate `AtomicBool` (rather than only comparing
+/// `get_state() == Draining`) so the hot-path check used by `/process/ready`
+/// and by every in-flight connection task is a single lock-free load.
+#[derive(Clone)]
+pub struct Readiness {
+    state: Arc<std::sync::Mutex<ReadinessState>>,
+    draining: Arc<AtomicBool>,
+}
+
+impl Readiness {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(std::sync::Mutex::new(ReadinessState::Initializing)),
+            draining: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Published exactly once, after every startup check has passed.
+    pub fn mark_ready(&self) {
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = ReadinessState::Ready;
+    }
+
+    /// Published exactly once, when the shutdown signal is received, before
+    /// the listener stops accepting connections. Idempotent.
+    pub fn mark_draining(&self) {
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = ReadinessState::Draining;
+        self.draining.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    pub fn get_state(&self) -> ReadinessState {
+        *self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Default for Readiness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub struct ShutdownCoordinator {
     completed: Vec<Subsystem>,
@@ -84,5 +153,64 @@ mod tests {
         let second = coordinator.shutdown().to_vec();
         assert_eq!(first, second);
         assert_eq!(first.len(), 3);
+    }
+
+    #[test]
+    fn readiness_starts_initializing_and_not_draining() {
+        let readiness = Readiness::new();
+        assert_eq!(readiness.get_state(), ReadinessState::Initializing);
+        assert!(!readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_mark_ready_publishes_ready() {
+        let readiness = Readiness::new();
+        readiness.mark_ready();
+        assert_eq!(readiness.get_state(), ReadinessState::Ready);
+        assert!(!readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_mark_draining_is_terminal_over_ready() {
+        let readiness = Readiness::new();
+        readiness.mark_ready();
+        readiness.mark_draining();
+        assert_eq!(readiness.get_state(), ReadinessState::Draining);
+        assert!(readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_mark_draining_is_idempotent() {
+        let readiness = Readiness::new();
+        readiness.mark_draining();
+        readiness.mark_draining();
+        assert_eq!(readiness.get_state(), ReadinessState::Draining);
+        assert!(readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_survives_a_poisoned_lock() {
+        let readiness = Readiness::new();
+        let poisoner = readiness.clone();
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.state.lock().expect("lock");
+            panic!("simulated panic while holding the readiness lock");
+        })
+        .join();
+        assert!(joined.is_err());
+
+        // A panic elsewhere must never take the readiness probe down with it.
+        readiness.mark_ready();
+        assert_eq!(readiness.get_state(), ReadinessState::Ready);
+        readiness.mark_draining();
+        assert!(readiness.is_draining());
+    }
+
+    #[test]
+    fn readiness_clone_shares_underlying_state() {
+        let readiness = Readiness::new();
+        let handle = readiness.clone();
+        handle.mark_ready();
+        assert_eq!(readiness.get_state(), ReadinessState::Ready);
     }
 }

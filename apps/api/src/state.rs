@@ -8,17 +8,23 @@ use std::sync::{Arc, Mutex};
 
 use sitolo_application::TenancyService;
 use sitolo_config::DatabaseTarget;
-use sitolo_observability::TelemetryBuffer;
+use sitolo_observability::{TelemetryBuffer, TelemetryExporter};
 use sitolo_persistence::TenancyDatabase;
 
+use crate::shutdown::Readiness;
+use crate::telemetry::ApiTelemetry;
+
 /// Immutable shared application state.
+#[derive(Clone)]
 pub struct AppState {
     service_name: String,
     service_version: String,
     config_fingerprint: String,
     db_target: DatabaseTarget,
     telemetry: Arc<Mutex<TelemetryBuffer>>,
+    exporter: Arc<ApiTelemetry>,
     tenancy_service: Arc<TenancyService>,
+    readiness: Readiness,
 }
 
 impl AppState {
@@ -31,13 +37,16 @@ impl AppState {
     ) -> Self {
         let tenancy_db = Arc::new(TenancyDatabase::new());
         let tenancy_service = Arc::new(TenancyService::new(tenancy_db, Vec::new()));
+        let exporter = Arc::new(TelemetryExporter::new(Arc::clone(&telemetry)));
         AppState {
             service_name,
             service_version,
             config_fingerprint,
             db_target,
             telemetry,
+            exporter,
             tenancy_service,
+            readiness: Readiness::new(),
         }
     }
 
@@ -63,7 +72,70 @@ impl AppState {
         &self.telemetry
     }
 
+    /// The bounded, priority-aware export queue built on [`Self::telemetry`]
+    /// (the admission model). Producers offer records here; a drain loop emits
+    /// them (see [`crate::telemetry`]).
+    pub fn telemetry_exporter(&self) -> &Arc<ApiTelemetry> {
+        &self.exporter
+    }
+
     pub fn tenancy_service(&self) -> &Arc<TenancyService> {
         &self.tenancy_service
+    }
+
+    /// The single authoritative process lifecycle signal. `/process/ready`
+    /// consults this rather than returning an unconditional success
+    /// response; `bootstrap.rs` publishes `Ready` once startup completes,
+    /// and `serve.rs` publishes `Draining` the instant a shutdown signal
+    /// arrives, before anything else happens.
+    pub fn readiness(&self) -> &Readiness {
+        &self.readiness
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shutdown::ReadinessState;
+
+    fn test_state() -> AppState {
+        AppState::new(
+            "sitolo".into(),
+            "test".into(),
+            "fingerprint".into(),
+            DatabaseTarget {
+                host: "localhost".into(),
+                port: 5432,
+                database: "sitolo".into(),
+                username: "sitolo".into(),
+            },
+            Arc::new(Mutex::new(TelemetryBuffer::new(8))),
+        )
+    }
+
+    #[test]
+    fn new_state_starts_initializing() {
+        let state = test_state();
+        assert_eq!(state.readiness().get_state(), ReadinessState::Initializing);
+        assert!(!state.readiness().is_draining());
+    }
+
+    #[test]
+    fn clone_shares_the_same_readiness_handle() {
+        let state = test_state();
+        let cloned = state.clone();
+        cloned.readiness().mark_ready();
+        // AppState is cloned per-request by Axum's `State` extractor; every
+        // clone must observe the same lifecycle signal, not a private copy.
+        assert_eq!(state.readiness().get_state(), ReadinessState::Ready);
+    }
+
+    #[test]
+    fn accessors_return_constructed_values() {
+        let state = test_state();
+        assert_eq!(state.service_name(), "sitolo");
+        assert_eq!(state.service_version(), "test");
+        assert_eq!(state.config_fingerprint(), "fingerprint");
+        assert_eq!(state.db_target().host, "localhost");
     }
 }

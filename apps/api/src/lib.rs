@@ -9,3 +9,4 @@ pub mod bootstrap;
 pub mod serve;
 pub mod shutdown;
 pub mod state;
+pub mod telemetry;

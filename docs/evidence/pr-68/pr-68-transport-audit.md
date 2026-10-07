@@ -223,3 +223,21 @@ Stage 07 remediation should address, at minimum:
 **REMEDIATION REQUIRED.**
 
 PR #68 has a sound underlying transport architecture, but the current implementation does not satisfy the full transport hardening contract. The missing evidence and runtime semantics are material enough that Stage 07 remediation must be completed before this transport surface can be considered fully verified.
+
+
+---
+
+## Implementation Notes (Remediation Executed on Branch)
+
+The following remediations from the Stage 06 audit have been implemented on this branch:
+
+1. **Real readiness state and draining semantics:** Added `Readiness` struct with `Initializing`, `Ready`, `Draining`, and `ShutDown` states. The `/process/ready` endpoint now consults this state and returns 503 when draining or not ready.
+2. **Separate TCP keepalive, HTTP/1 idle policy, and HTTP/2 PING policy:** `HttpTransportConfig` now explicitly projects `request_timeout`, `request_body_idle_timeout`, `http1_idle_timeout`, `http2_ping_interval`, and `response_body_timeout`.
+3. **Protocol-aware graceful shutdown:** Replaced abrupt `abort_all()` with a `watch::channel` driven shutdown signal. Active connection tasks now use `tokio::select!` to listen for the shutdown signal and drop the `hyper` connection future gracefully (which triggers H2 GOAWAY and closes H1 sockets). A bounded drain period is still enforced before the hard cutoff.
+4. **Typed configuration:** Request and body timeouts are now fully typed in `HttpTransportConfig` rather than source constants.
+5. **Oversized-body API classification (413):** Normalized `JsonRejection::PayloadTooLarge` mapping to explicitly return `AppError::PayloadTooLarge` (413) across all handlers.
+6. **HTTP request observability:** Added `tower_http::trace::TraceLayer` to the Axum router for end-to-end request lifecycle telemetry.
+7. **Real socket test stubs:** Added `apps/api/tests/transport_tests.rs` with stubs for the required real socket tests (HTTP/1 persistence, H2, slow headers/bodies, chunked oversized, active shutdown).
+8. **Documentation/System Map source revisions:** This audit file is preserved as evidence on the branch. Stale document revisions in the broader ICM/System Map process have been flagged for future remediation.
+
+*The T-001..T-030 control evidence claims remain as documented in the matrix above; the runtime boundary has been strengthened, but full end-to-end security regression for the broader API surface remains a phase-gated future effort as the business engines are implemented.*

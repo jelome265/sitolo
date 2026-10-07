@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use sitolo_api_bin::bootstrap::{StartupContext, StartupError};
-use sitolo_api_bin::serve::serve;
+use sitolo_api_bin::serve::{HttpTransportConfig, serve};
 use tokio::sync::oneshot;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -30,7 +30,13 @@ async fn run() -> Result<(), StartupError> {
         .await
         .map_err(|_| StartupError::ConfigRejected { problems: 0 })?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let serve = tokio::spawn(serve(listener, Arc::clone(context.state()), shutdown_rx));
+    let transport = HttpTransportConfig::from_config(context.config());
+    let serve = tokio::spawn(serve(
+        listener,
+        Arc::clone(context.state()),
+        shutdown_rx,
+        transport,
+    ));
     wait_for_shutdown_signal().await;
     let _ = shutdown_tx.send(());
     let _ = serve.await;

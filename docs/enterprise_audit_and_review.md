@@ -1,8 +1,8 @@
 # Sitolo Codebase Enterprise Audit & Architecture Review
 
 **Target system:** Sitolo — Business Operating System for African SMEs
-**Audit date:** 2026-09-25
-**Source baseline:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`
+**Audit date:** 2026-09-26
+**Source baseline at this review:** PR #68 feature branch; runtime transport source @ `b2491549ebe3b72e3c4e62c44788f638f51f60f9`
 **Documentation-remediation context:** `feat/agentic-workflow`
 **Status:** Current-state enterprise audit
 **Authority:** Current source tree plus the governing documentation hierarchy in `agent.md`
@@ -21,7 +21,7 @@ The remaining production gap is not the absence of an architectural model. It is
 
 The largest current blockers are:
 
-1. **The documented HTTP architecture and the implemented HTTP transport diverge.** Governing documents specify Rust + Axum + Tokio, while the current `apps/api` binary implements a direct TCP request loop and has no Axum dependency. This is an implementation decision gap, not a reason to rewrite the architecture document silently.
+1. **The HTTP architecture has been reconciled.** Governing documents specify Rust + Axum + Tokio; the current `apps/api` boundary uses Tokio for runtime/listener lifecycle, Hyper/Hyper-util for HTTP transport, and Axum/Tower for routing and request controls. The former hand-written HTTP parser has been removed.
 2. **General business-domain execution is incomplete.** The domain crate currently exposes tenancy; product catalogue, inventory, sales, payments, reconciliation and other core business engines remain contract/future work.
 3. **Phase 5 PostgreSQL schema/migration/RLS delivery is not the full current runtime business authority yet.** PostgreSQL connection/authority primitives exist, but the complete business schema and repository implementation remain phase-gated.
 4. **Authentication helpers exist but are not yet the complete production HTTP authentication boundary.**
@@ -105,7 +105,7 @@ At the same time:
 
 | Dimension | Current state | Evidence / implication |
 |---|---|---|
-| 1. Architecture & boundaries | **Strong foundation / gap at HTTP implementation** | Modular-monolith boundaries and dependency direction exist; documented Axum boundary is not what the current API binary implements. |
+| 1. Architecture & boundaries | **Strong foundation / transport reconciled** | Modular-monolith boundaries and dependency direction exist; the HTTP boundary now follows Tokio → Hyper/Hyper-util → Axum/Tower with explicit transport/resource controls. |
 | 2. Application architecture | **Partial** | Application services now orchestrate tenancy/IAM, but the complete command/query/business engine chain is unfinished. |
 | 3. API design & trust boundaries | **Partial** | Bounded DTOs, validation and tenancy handlers exist. General business API surface is not implemented, and production auth wiring is incomplete. |
 | 4. Authentication & authorization | **Partial foundation** | Authentication/security primitives and role/scope models exist. General policy enforcement and complete HTTP integration are still phase-gated. |
@@ -129,31 +129,23 @@ At the same time:
 
 # 4. Critical Documentation/Implementation Divergences
 
-## 4.1 Axum is documented but not implemented in the current API binary
+## 4.1 Axum/Hyper/Tokio transport reconciliation
 
-The architecture, API contract, implementation plan and multiple phase/security documents specify Rust + Axum + Tokio.
+The governing architecture is Rust + Axum + Hyper/Hyper-util + Tokio, and the transport implementation follows that boundary:
 
-The current `apps/api/Cargo.toml` does not depend on Axum. The current `apps/api/src/serve.rs` directly accepts TCP connections and parses HTTP-like requests itself.
+- `apps/api/src/main.rs` owns the Tokio runtime and `tokio::net::TcpListener` lifecycle;
+- `apps/api/src/serve.rs` owns the Axum `Router` and request extraction;
+- Hyper-util owns HTTP/1/HTTP/2 connection serving and protocol-level transport configuration;
+- `TowerToHyperService` explicitly adapts Axum/Tower's service trait to Hyper's service trait;
+- validated request-body, header-read and keepalive settings are applied at the transport boundary;
+- a Tokio semaphore separately caps accepted connection tasks at `MAX_IN_FLIGHT_CONNECTIONS`;
+- `GlobalConcurrencyLimitLayer` separately caps in-flight application requests across cloned router services;
+- the previous hand-written `TcpStream` HTTP parser has been removed;
+- tenancy integration tests exercise the production Axum router through an in-process adapter.
 
-Disposition:
+Audit disposition:
 
-> **Implementation gap. Do not downgrade the contract merely to match an intermediate implementation.**
-
-The resolution must be an explicit engineering decision:
-
-```text
-Current custom transport
-        ↓
-decide whether transitional or intentional
-        ↓
-ADR / implementation
-        ↓
-contract and source converge
-```
-
-This is a P0 architectural reconciliation item.
-
----
+> **Transport architecture reconciled. The remaining important distinction is that TCP connection capacity and application-request capacity are separate controls and are now bounded independently.**
 
 ## 4.2 Tenancy and authorization are no longer empty
 

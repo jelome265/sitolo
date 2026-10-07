@@ -12,6 +12,16 @@ permissions:
   contents: read
 
 jobs:
+  governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Security governance and architecture gates
+        run: |
+          bash scripts/ci/check-security-icm-policy
+          bash scripts/ci/check-threat-model-integrity
+          bash scripts/ci/check-api-architecture
   dependency-policy:
     runs-on: ubuntu-latest
     timeout-minutes: 20

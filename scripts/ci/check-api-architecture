@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail=0
+grep -Fq 'axum.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'axum = { version = "0.8.9"' Cargo.toml || fail=1
+grep -Fq 'tokio.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq '#[tokio::main(flavor = "multi_thread")]' apps/api/src/main.rs || fail=1
+grep -Fq 'tokio::net::TcpListener' apps/api/src/main.rs || fail=1
+grep -Fq 'pub fn router(state: Arc<AppState>, max_request_body_bytes: usize) -> Router' apps/api/src/serve.rs || fail=1
+grep -Fq 'Builder::new(TokioExecutor::new())' apps/api/src/serve.rs || fail=1
+grep -Fq 'TowerToHyperService::new(service)' apps/api/src/serve.rs || fail=1
+grep -Fq 'hyper-util.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'socket2.workspace = true' apps/api/Cargo.toml || fail=1
+grep -Fq 'socket2 = { version = "0.6.5"' Cargo.toml || fail=1
+grep -Fq 'TowerToHyperService::new(service)' apps/api/src/serve.rs || fail=1
+grep -Fq 'Router::new()' apps/api/src/serve.rs || fail=1
+grep -Fq 'RequestBodyLimitLayer' apps/api/src/serve.rs || fail=1
+grep -Fq 'GlobalConcurrencyLimitLayer' apps/api/src/serve.rs || fail=1
+grep -Fq 'Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS)' apps/api/src/serve.rs || fail=1
+grep -Fq 'try_acquire_owned()' apps/api/src/serve.rs || fail=1
+grep -Fq 'SockRef::from(stream).set_tcp_keepalive' apps/api/src/serve.rs || fail=1
+grep -Fq 'TimeoutLayer' apps/api/src/serve.rs || fail=1
+for bad in AsyncReadExt AsyncWriteExt split_whitespace 'HTTP/1.1' 'stream.read('; do
+  if grep -Fq "$bad" apps/api/src/serve.rs; then fail=1; fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "API ARCHITECTURE CHECK FAILED" >&2
+  exit 1
+fi
+
+echo "API ARCHITECTURE CHECK PASSED: Axum owns routing; Hyper/Hyper-util owns HTTP transport; Tokio owns runtime/socket lifecycle"
