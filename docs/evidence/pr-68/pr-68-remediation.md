@@ -48,6 +48,8 @@ None of these were visible to hand review, and several were in code already decl
 4. **Production defect, silent hang on shutdown.** After the shutdown signal the accept loop stopped calling `accept()` but the listener stayed open. The kernel kept completing handshakes, so clients connecting during drain succeeded at the TCP layer and then hung forever. Found by a failing test, not by review.
 5. **Invalid tests.** The idle-eviction tests ran under a 200 ms header timeout beneath a 500 ms idle policy. hyper's header timer also covers the wait for the next keep-alive request, so it closed connections first: one test failed and its sibling could have passed without ever exercising `IdleTimeoutIo`.
 6. **Failures invisible to CI.** Running the repository's own `check-*` scripts locally, which the branch's CI never ran, found that this branch broke `check-doc-references` and `check-system-map-processes`, both green on `main`.
+7. **Yanked dependency, not caused by this change.** `yoke-derive 0.8.3` was yanked from crates.io after `main`'s last green `cargo deny` run. `main`'s own `Cargo.lock` pins the same version, so `main` fails the same check today and this is not caused by this branch. It enters through `sqlx` (url, idna, icu, yoke), not the HTTP stack. A scan of all 179 registry packages in the lockfile against the crates.io index found it to be the only yanked one. The branch bumps it to `0.8.4` (identical dependency list, satisfies `yoke`'s `^0.8.2`), a lockfile-only change; `main` was not touched.
+8. **A rustfmt hunk in the poison-recovery fix** written during the re-audit (an import order). `rust / verify` runs fmt before deny, so this hid the deny failure.
 
 ## 4. Request telemetry and the TelemetryBuffer
 
@@ -80,6 +82,8 @@ The status of SC-010 in `docs/security_control_register.md` was left at "Contrac
 
 **CI (GitHub Actions, pinned toolchain 1.98.1, `integration.yml` via `workflow_dispatch`).** Run 36819614391 on `c665c6d`: success. Run 37048001808 on `3a32151`: success, with per-gate output showing tests, clippy, lockfile and policy passing and rustfmt reporting four hunks, which were applied in `3020c5c`. Commits after `3a32151` changed Rust only by those rustfmt hunks. They were **not** re-run, because CI budget was reported exhausted.
 
+Pull-request runs against `main`: at `226f8c3`, `policy` and `integration` passed (so the `shutdown.rs` poison fix and its test compiled and passed under `cargo test --workspace --locked`), while `security` and `rust` failed. A temporary diagnostic job (security run 37430506558, since removed) reproduced the failing steps and showed that clippy, the full workspace tests with the Postgres service, the RLS suite, the release build, and `cargo deny` bans, licenses and sources all pass. Two defects remained, neither in the transport code: (1) one rustfmt hunk in the `shutdown.rs` change made during the re-audit (an import order), which stopped `verify` at its fmt step before it could reach deny; and (2) `cargo deny` advisories failing on the yanked crate `yoke-derive 0.8.3`.
+
 **Repository `check-*` scripts, run locally against this branch and a clean `main`:**
 
 | Script | main | this branch |
@@ -103,7 +107,7 @@ The status of SC-010 in `docs/security_control_register.md` was left at "Contrac
 - **Not covered by a test:** the total request deadline, the request-concurrency ceiling, HTTP/2 PING enforcement and the stream cap, TCP keepalive, and the response-body timeout.
 - **Per-source limiting at the transport boundary** does not exist; a single client can occupy every connection slot. TLS is not terminated in-process.
 - **No external telemetry exporter** and no metrics endpoint.
-- **`rust.yml` has not run on this branch.** It is scoped to `main`, and the PR had a merge conflict that suppressed pull-request workflows. Once the conflict is resolved every push to the PR triggers the full suite. `cargo deny` and `cargo audit` have therefore never run against these changes. Note that `main`'s own `verify` was already red before this PR.
+- **Outcome of the first full pull-request run is unconfirmed for the final head.** `rust.yml` and `security.yml` first ran at `226f8c3` and failed for the two reasons in section 3, both since fixed; whether the next run is fully green is shown by the PR's checks, not claimed here. `rust.yml` installs no ripgrep, so its `check-phase2-policy` step passes vacuously.
 - **Rotate the personal access token** pasted into the working session earlier. A search of the tree and full history found no credential committed.
 
 ## 8. Re-audit requirement

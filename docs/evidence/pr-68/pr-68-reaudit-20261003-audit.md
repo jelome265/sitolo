@@ -16,7 +16,7 @@ run_slug: "pr-68-reaudit-20261003"
 
 1. **Not independent.** It was written by the same agent that made most of the changes. The stage contract calls for an independent review; this one is a structured self-review and an independent pass is still recommended.
 2. **Nothing was compiled by the auditor.** The authoring environment has no usable Rust toolchain. Compilation and test execution evidence comes only from GitHub Actions runs 36819614391 (`c665c6d`) and 37048001808 (`3a32151`). Commits after those changed Rust only by rustfmt hunks reported by the latter run, plus the `shutdown.rs` change made during this audit. **Those have not been compiled or run.**
-3. **`rust.yml` has never run on this branch** (it is scoped to `main`, and the PR had a merge conflict). `cargo deny` and `cargo audit` were therefore never run against these changes.
+3. **`rust.yml` first ran at `226f8c3`**, after the PR conflict was cleared, and failed; see the findings below. Its result for the final head is shown by the PR checks and is not claimed here.
 4. Per the contract, green CI and test names are not treated as proof. Each disposition below cites the code path inspected directly, using a mechanical interrogation of the source (field consistency across the five config files, layer order with comments stripped, handler and identity propagation, hygiene of the diff).
 
 ## Requirement to implementation to evidence matrix
@@ -62,6 +62,8 @@ run_slug: "pr-68-reaudit-20261003"
 3. **Ceilings are global, not per source.** One client can occupy all connection slots. Per-source abuse limiting exists only inside application services (`sitolo-auth`), not at the transport boundary. Documented in the threat model as T-031 residual risk.
 4. **At the maximum permitted `otel_max_queue` the queue can hold about a million records.** The default is 2,048. The ceiling is documented, but an operator choosing it trades memory for retention.
 5. **`check-phase2-policy` is fail-open on the CI runner.** It runs `rg ... || true`; with no ripgrep installed the searches return nothing and the check passes without checking anything. This was found because the same script fails in an environment that does have ripgrep. It predates this change. Recommended: install ripgrep in `rust.yml` or fail closed when `rg` is absent, then resolve the line it will flag.
+6. **A yanked dependency fails `cargo deny` on `main` and on this branch.** `yoke-derive 0.8.3` was yanked from crates.io after `main`'s last green `cargo deny` run. `main`'s own `Cargo.lock` pins the same version, so `main` fails the same check today and this is not caused by this branch. It enters through `sqlx` (url, idna, icu, yoke), not the HTTP stack. A scan of all 179 registry packages in the lockfile against the crates.io index found it to be the only yanked one. The branch bumps it to `0.8.4` (identical dependency list, satisfies `yoke`'s `^0.8.2`), a lockfile-only change; `main` was not touched.
+7. **A rustfmt hunk in the re-audit's own `shutdown.rs` fix** stopped `rust / verify` at its fmt step. It is a defect in a change made during this audit, and it hid finding 6 because `verify` runs fmt before deny.
 
 ## Concurrency and failure findings
 
@@ -98,7 +100,7 @@ Every `scripts/ci/check-*` script was run against the audited tree and, as a bas
 
 ## Required remediation
 
-1. Compile and run the post-`3a32151` changes (`shutdown.rs` poison recovery and the rustfmt hunks) and run the repository's own gates, including `rust.yml`, `cargo deny` and `cargo audit`. **Blocking before merge.**
+1. Confirm the PR's `rust`, `security`, `policy` and `integration` checks pass on the final head. At `226f8c3` `policy` and `integration` passed (compiling and running the `shutdown.rs` change); `rust` and `security` failed for the two reasons in findings 6 and 7, both since fixed. **Blocking before merge.**
 2. Re-verify T-001..T-030 against the runtime boundary and downgrade unsupported claims (handoff item 13).
 3. Add tests for the total request deadline, the request-concurrency ceiling, and HTTP/2 PING enforcement and the stream cap.
 4. Replace the per-rejection warning (finding 2) with an aggregated count.
