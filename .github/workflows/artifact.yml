@@ -89,7 +89,7 @@ jobs:
         with:
           subject-path: releases/sitolo-${{ env.SOURCE_SHA }}.tar.gz
       - name: Retain artifact identity and release evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: sitolo-release-${{ env.SOURCE_SHA }}
           if-no-files-found: error
