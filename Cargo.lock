@@ -820,9 +820,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -915,7 +915,7 @@ name = "sitolo-auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sitolo-observability",
  "sitolo-security",
  "thiserror",
@@ -925,7 +925,7 @@ dependencies = [
 name = "sitolo-authz"
 version = "0.1.0"
 dependencies = [
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sitolo-domain",
  "thiserror",
 ]
@@ -934,7 +934,7 @@ dependencies = [
 name = "sitolo-config"
 version = "0.1.0"
 dependencies = [
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sitolo-security",
  "thiserror",
 ]
@@ -969,7 +969,7 @@ name = "sitolo-persistence"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sitolo-audit",
  "sitolo-auth",
  "sitolo-authz",
@@ -988,7 +988,7 @@ name = "sitolo-security"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror",
 ]
 
