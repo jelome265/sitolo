@@ -370,3 +370,18 @@ audit. Other tenancy transitions still use the in-memory reference store; the
 new durable path covers organization provisioning only. PR #49 remains open;
 nothing has been merged.
 
+### Exact-head follow-up — 2026-10-20
+
+The assertion helper fix was committed and pushed as
+`1383233691ec2aa0b294ea0311d8143836ca0d19`. On that exact commit, GitHub
+integration run 779 passed all four organization-provisioning tests against
+PostgreSQL, including audit/outbox rollback and retry/conflict behavior. The policy workflow passed. The canonical Rust verifier passed the application
+PostgreSQL cases and all 23 Part 8 persistence tests, then failed the legacy
+RLS suite because its runtime pool's `current_user` was `postgres`, not
+`app_runtime`. Stage 07 added `SET ROLE app_runtime` on runtime-pool
+connections; the exact-head rerun is pending. The security workflow's
+dependency-policy, CodeQL, offensive-regression, and secret-scanning jobs
+passed, while its advisory job failed on `RUSTSEC-2023-0071` for inactive
+locked `rsa 0.9.10` (RustSec lists no patched release). The run remains
+incomplete and PR #49 remains open.
+

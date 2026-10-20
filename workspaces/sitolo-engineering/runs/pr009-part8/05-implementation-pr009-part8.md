@@ -3,7 +3,7 @@
 **Stage:** 05 Implement\
 **Date:** 2026-10-20\
 **Source before changes:** `1223ed3aef3818f56c5b444ee22fff287546349f`\
-**Current tree:** local uncommitted changes on `feat/phase4-pr009-audit-outbox`\
+**Current tree:** `1383233691ec2aa0b294ea0311d8143836ca0d19` plus uncommitted RLS runtime-role correction on `feat/phase4-pr009-audit-outbox` (PR #49 open)\
 **Goal:** PostgreSQL transaction for organization + owner membership + default branch + audit + outbox; repair database-test wiring; keep PR open.
 
 ## Implemented
@@ -39,10 +39,16 @@ The unit/build checks do not prove RLS, role, SQL transaction, or rollback behav
 
 - The worker relay destination remains undefined. “Main and sub” still does not identify a transport, endpoints/topics/queues, event delivery contract, or runtime fields. No relay target has been invented.
 - Destination-dependent relay, idempotent consumer delivery, worker runtime completion, and associated operator evidence remain incomplete.
-- Real PostgreSQL CI has not yet run. The new schema/test code needs its first PostgreSQL execution and any SQL/RLS corrections.
-- Canonical ICM check, main-branch output-shelf cleanup, RSA advisory disposition, scanner/toolchain checks, Stage 06 findings, and exact-head required checks remain.
+- Application PostgreSQL CI passed on `1383233`; the persistence/RLS suite and its catalog, privilege, and concurrency assertions still await the canonical verifier.
+- RSA advisory disposition and the exact-head canonical verifier remain; the ICM check and policy workflow pass on the current artifact/branch state.
 - Other tenancy transitions besides organization provisioning still use the in-memory reference store; this implementation does not claim their business mutations are PostgreSQL-backed.
 
 ## Human check
 
 The requester directed continuation (“do what you have to to make it all work”) after saying the prior memo was not visible. This authorized implementation to proceed without manual file review; it is not a claim that the requester reviewed this diff. Do not merge the PR.
+
+## Exact-head PostgreSQL follow-up — 2026-10-20
+
+Commit `1383233691ec2aa0b294ea0311d8143836ca0d19` fixes the organization assertion helper to query `organizations.id`. GitHub integration run 779 passed on this exact commit. All four `part8_provision_organization_evidence_tests` passed against PostgreSQL, including successful provisioning, audit-failure rollback, outbox-failure rollback, same-payload retry, and divergent-ID conflict. The separate persistence/RLS suite under the canonical verifier has not yet completed; these application tests do not prove its role/catalog/concurrency checks. The requester has no local PostgreSQL instance, which remains true.
+
+Canonical verifier run 629 then passed all 23 Part 8 PostgreSQL persistence tests but failed the legacy `rls_security_tests`: `PgAuthorityPools` opened the runtime pool as `postgres` and did not assume `app_runtime`, so every test failed its explicit identity precondition before exercising its body. The local remediation adds `SET ROLE app_runtime` in the runtime pool's `after_connect` hook. Local format, all-target check, clippy, and diff checks pass after that change; an exact-head PostgreSQL rerun is pending.

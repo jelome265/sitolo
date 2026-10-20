@@ -58,6 +58,12 @@ impl PgAuthorityPools {
 
         let runtime_pool = PgPoolOptions::new()
             .max_connections(20)
+            .after_connect(|conn, _| {
+                Box::pin(async move {
+                    sqlx::query("SET ROLE app_runtime").execute(conn).await?;
+                    Ok(())
+                })
+            })
             .connect_with(runtime_opts)
             .await?;
 
