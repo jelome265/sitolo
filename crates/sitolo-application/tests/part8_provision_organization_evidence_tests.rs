@@ -140,6 +140,14 @@ async fn row_count(pool: &PgPool, table: &str, org_id: &str) -> i64 {
     .unwrap_or_else(|e| panic!("counting {table} for {org_id}: {e}"))
 }
 
+async fn organization_row_count(pool: &PgPool, organization_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM organizations WHERE id = $1")
+        .bind(organization_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|e| panic!("counting organization {organization_id}: {e}"))
+}
+
 struct ProvisionArgs {
     org_id: OrganizationId,
     membership_id: MembershipId,
@@ -179,8 +187,7 @@ async fn provision_organization_emits_audit_and_outbox_on_success() {
 
     let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
     let outbox_count = row_count(&ctx.admin_pool, "outbox_events", args.org_id.as_str()).await;
-    let organization_count =
-        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let organization_count = organization_row_count(&ctx.admin_pool, args.org_id.as_str()).await;
     let membership_count = row_count(
         &ctx.admin_pool,
         "organization_memberships",
@@ -283,8 +290,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
         .await;
 
     let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
-    let organization_count =
-        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let organization_count = organization_row_count(&ctx.admin_pool, args.org_id.as_str()).await;
     let membership_count = row_count(
         &ctx.admin_pool,
         "organization_memberships",
@@ -333,8 +339,7 @@ async fn provision_organization_audit_failure_rolls_back_business_state() {
         )
         .await;
 
-    let organization_count =
-        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let organization_count = organization_row_count(&ctx.admin_pool, args.org_id.as_str()).await;
     let membership_count = row_count(
         &ctx.admin_pool,
         "organization_memberships",
