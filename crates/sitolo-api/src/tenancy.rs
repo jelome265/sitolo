@@ -9,8 +9,8 @@
 //! unknown fields are rejected (§10.1).
 
 use serde::{Deserialize, Serialize};
-use sitolo_audit::ActorRef;
 use sitolo_application::TenancyService;
+use sitolo_audit::ActorRef;
 use sitolo_domain::tenancy::{
     Branch, BranchId, BranchState, MembershipId, Organization, OrganizationId, OrganizationState,
     TenancyError, TenantUserId,

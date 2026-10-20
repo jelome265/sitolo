@@ -51,10 +51,23 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     deduplication_key TEXT NOT NULL UNIQUE,
     schema_version INTEGER NOT NULL,
     aggregate_sequence BIGINT,
+    claim_token TEXT,
+    claim_generation BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_outbox_status CHECK (status IN ('PENDING', 'CLAIMED', 'PUBLISHED', 'QUARANTINED')),
     CONSTRAINT chk_outbox_event_name CHECK (event_name ~ '^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$')
 );
+
+-- The repository assigns aggregate order under a row lock in this table.
+CREATE TABLE IF NOT EXISTS outbox_aggregate_sequences (
+    aggregate_type TEXT NOT NULL,
+    aggregate_id TEXT NOT NULL,
+    next_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
+    PRIMARY KEY (aggregate_type, aggregate_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_outbox_aggregate_sequence
+    ON outbox_events(aggregate_type, aggregate_id, aggregate_sequence);
 
 CREATE INDEX IF NOT EXISTS idx_outbox_events_org ON outbox_events(organization_id);
 CREATE INDEX IF NOT EXISTS idx_outbox_events_aggregate ON outbox_events(aggregate_type, aggregate_id, aggregate_sequence);

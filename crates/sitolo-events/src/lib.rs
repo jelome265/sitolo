@@ -12,4 +12,8 @@
 
 mod outbox;
 
-pub use outbox::{OutboxError, OutboxEvent, OutboxReader, OutboxStatus, OutboxWriter, RetryClass};
+pub use outbox::{
+    ClaimToken, MAX_ATTEMPTS, MAX_BACKOFF, MAX_BATCH_SIZE, MAX_CLAIM_TOKEN_LEN,
+    MAX_ERROR_CLASS_LEN, MAX_LEASE_DURATION, OutboxClaimPolicy, OutboxError, OutboxErrorClass,
+    OutboxEvent, OutboxStatus, RetryClass, validate_backoff,
+};

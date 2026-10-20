@@ -35,9 +35,9 @@ use std::sync::Arc;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyError, TenantUserId};
-use sitolo_persistence::{TenancyDatabase, TenancyStores};
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
+use sitolo_persistence::{TenancyDatabase, TenancyStores};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use uuid::Uuid;
@@ -65,7 +65,7 @@ async fn setup() -> TestContext {
     // "outbox_events") against our isolated test schema. Same approach as
     // crates/sitolo-persistence/tests/rls_security_tests.rs.
     let admin_opts: PgConnectOptions = admin_url
-        .parse()
+        .parse::<PgConnectOptions>()
         .expect("invalid ADMIN_DATABASE_URL/DATABASE_URL")
         .options([("search_path", schema_name.as_str())]);
 
@@ -93,13 +93,16 @@ async fn setup() -> TestContext {
 }
 
 async fn teardown(ctx: &TestContext) {
-    let _ = sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", ctx.schema_name))
-        .execute(&ctx.admin_pool)
-        .await;
+    let _ = sqlx::raw_sql(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
+        ctx.schema_name
+    ))
+    .execute(&ctx.admin_pool)
+    .await;
 }
 
 fn service_with_evidence(pool: PgPool) -> TenancyService {
-    let audit = Arc::new(PostgresAuditWriter::new(pool.clone()));
+    let audit = Arc::new(PostgresAuditWriter::new());
     let outbox = Arc::new(PostgresOutboxRepository::new(pool.clone()));
     let sink = TenancyEvidenceSink::new(pool, audit, outbox);
     TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(sink)
@@ -228,7 +231,7 @@ async fn provision_organization_known_gap_business_state_survives_evidence_failu
         .expect("rename outbox_events to induce a deterministic outbox write failure");
 
     let db = Arc::new(TenancyDatabase::new());
-    let audit = Arc::new(PostgresAuditWriter::new(ctx.admin_pool.clone()));
+    let audit = Arc::new(PostgresAuditWriter::new());
     let outbox = Arc::new(PostgresOutboxRepository::new(ctx.admin_pool.clone()));
     let sink = TenancyEvidenceSink::new(ctx.admin_pool.clone(), audit, outbox);
     let service = TenancyService::new(db.clone(), Vec::new()).with_evidence(sink);

@@ -1,14 +1,23 @@
 //! Phase 4 Part 8 Audit and Outbox PostgreSQL Integration Tests.
 
-use sitolo_audit::{IamAuditEvent, IamEventName, ActorRef, TargetRef};
-use sitolo_domain::tenancy::{OrganizationId, MembershipId};
+use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
+use sitolo_domain::tenancy::{MembershipId, OrganizationId};
 use sitolo_events::{OutboxEvent, OutboxStatus};
 
 #[test]
 fn test_iam_event_names_stable() {
-    assert_eq!(IamEventName::OrganizationCreated.as_str(), "iam.organization.created");
-    assert_eq!(IamEventName::MembershipRevoked.as_str(), "iam.membership.revoked");
-    assert_eq!(IamEventName::AuthorizationDenied.as_str(), "iam.authorization.denied");
+    assert_eq!(
+        IamEventName::OrganizationCreated.as_str(),
+        "iam.organization.created"
+    );
+    assert_eq!(
+        IamEventName::MembershipRevoked.as_str(),
+        "iam.membership.revoked"
+    );
+    assert_eq!(
+        IamEventName::AuthorizationDenied.as_str(),
+        "iam.authorization.denied"
+    );
 }
 
 #[test]

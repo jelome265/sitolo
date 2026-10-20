@@ -8,5 +8,6 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 sitolo-auth.workspace = true
+sitolo-domain.workspace = true
 sitolo-observability.workspace = true
 thiserror.workspace = true

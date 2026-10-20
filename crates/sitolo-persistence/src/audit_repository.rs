@@ -4,10 +4,12 @@
 //! Runtime role has INSERT-only access scoped to transaction tenant context.
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{Postgres, Transaction};
 use thiserror::Error;
 
 use sitolo_audit::{IamAuditEvent, IamEventResult};
+
+use crate::postgres_time::to_utc;
 
 /// Audit persistence error.
 #[derive(Debug, Error)]
@@ -16,6 +18,17 @@ pub enum AuditPersistenceError {
     Database(#[from] sqlx::Error),
     #[error("serialization error")]
     Serialization,
+    #[error("timestamp outside the supported range")]
+    InvalidTimestamp,
+    /// A persisted numeric value exceeds the Rust/PostgreSQL representation.
+    #[error("value out of range for {field}: {source}")]
+    NumericRange {
+        /// Column or field name.
+        field: &'static str,
+        /// Conversion failure.
+        #[source]
+        source: std::num::TryFromIntError,
+    },
 }
 
 /// Audit writer port for transactional persistence.
@@ -33,14 +46,16 @@ pub trait AuditWriter: Send + Sync {
 }
 
 /// PostgreSQL audit writer implementation.
-pub struct PostgresAuditWriter {
-    pool: PgPool,
-}
+///
+/// The writer is stateless: callers supply the transaction so audit evidence is
+/// committed or rolled back with the business mutation it describes.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PostgresAuditWriter;
 
 impl PostgresAuditWriter {
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -58,6 +73,14 @@ impl AuditWriter for PostgresAuditWriter {
 
         let reason_class = event.reason_class.as_ref().map(|r| r.as_str().to_string());
         let branch_id = event.branch_id.as_ref().map(|b| b.to_string());
+        let occurred_at =
+            to_utc(event.occurred_at).ok_or(AuditPersistenceError::InvalidTimestamp)?;
+        let event_version = i32::try_from(event.event_version.0).map_err(|source| {
+            AuditPersistenceError::NumericRange {
+                field: "event_version",
+                source,
+            }
+        })?;
 
         let (target_type, target_ref) = match &event.target {
             sitolo_audit::TargetRef::Organization(id) => ("Organization", id.to_string()),
@@ -83,8 +106,8 @@ impl AuditWriter for PostgresAuditWriter {
         )
         .bind(event.event_id.to_string())
         .bind(event.event_name.as_str())
-        .bind(event.event_version.0 as i32)
-        .bind(event.occurred_at)
+        .bind(event_version)
+        .bind(occurred_at)
         .bind(event.organization_id.to_string())
         .bind(branch_id)
         .bind(&event.actor.subject_ref)

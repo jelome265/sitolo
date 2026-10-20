@@ -73,9 +73,7 @@ use sitolo_domain::tenancy::{
 use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
-    TenancyDatabase, TenancyStores,
-    audit_repository::AuditWriter,
-    outbox_repository::OutboxWriter,
+    TenancyDatabase, TenancyStores, audit_repository::AuditWriter, outbox_repository::OutboxWriter,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
 use sqlx::PgPool;
@@ -671,7 +669,10 @@ impl TenancyService {
         role: Role,
         actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
-        let assignment = self.db.revoke_role(organization_id, membership_id, role).await?;
+        let assignment = self
+            .db
+            .revoke_role(organization_id, membership_id, role)
+            .await?;
         self.record_evidence(
             IamEventName::RoleRemoved,
             organization_id,
@@ -749,7 +750,10 @@ impl TenancyService {
         grant_id: &ScopeGrantId,
         actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
-        let grant = self.db.revoke_scope_grant(organization_id, grant_id).await?;
+        let grant = self
+            .db
+            .revoke_scope_grant(organization_id, grant_id)
+            .await?;
         self.record_evidence(
             IamEventName::ScopeRevoked,
             organization_id,
@@ -981,13 +985,8 @@ impl TenancyService {
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
         let branch = self.db.resume_branch(organization_id, id).await?;
-        self.record_branch_evidence(
-            IamEventName::BranchResumed,
-            &branch,
-            actor,
-            "resume_branch",
-        )
-        .await?;
+        self.record_branch_evidence(IamEventName::BranchResumed, &branch, actor, "resume_branch")
+            .await?;
         Ok(branch)
     }
 
@@ -1015,13 +1014,8 @@ impl TenancyService {
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
         let branch = self.db.close_branch(organization_id, id).await?;
-        self.record_branch_evidence(
-            IamEventName::BranchClosed,
-            &branch,
-            actor,
-            "close_branch",
-        )
-        .await?;
+        self.record_branch_evidence(IamEventName::BranchClosed, &branch, actor, "close_branch")
+            .await?;
         Ok(branch)
     }
 
@@ -1193,7 +1187,8 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         assert!(!invited.has_authority());
@@ -1203,7 +1198,10 @@ mod tests {
             Err(TenancyError::InvalidTransition)
         );
         service.mark_member_pending(org, &invited.id).await.unwrap();
-        let active = service.accept_member(org, &invited.id, actor("test")).await.unwrap();
+        let active = service
+            .accept_member(org, &invited.id, actor("test"))
+            .await
+            .unwrap();
         assert!(active.has_authority());
 
         let scope = service
@@ -1212,14 +1210,23 @@ mod tests {
             .unwrap();
         assert_eq!(scope.organization_id, *org);
 
-        service.suspend_member(org, &active.id, actor("test")).await.unwrap();
+        service
+            .suspend_member(org, &active.id, actor("test"))
+            .await
+            .unwrap();
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
         );
-        service.resume_member(org, &active.id, actor("test")).await.unwrap();
+        service
+            .resume_member(org, &active.id, actor("test"))
+            .await
+            .unwrap();
         assert!(service.effective_scope(org, &active.id, None).await.is_ok());
-        service.revoke_member(org, &active.id, actor("test")).await.unwrap();
+        service
+            .revoke_member(org, &active.id, actor("test"))
+            .await
+            .unwrap();
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
@@ -1276,7 +1283,8 @@ mod tests {
                 bundle.owner_membership.id.clone(),
                 RoleAssignmentId::new("ra-owner").unwrap(),
                 Role::Owner,
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         let owner_permissions = service
@@ -1290,18 +1298,23 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         service.mark_member_pending(org, &cashier.id).await.unwrap();
-        service.accept_member(org, &cashier.id, actor("test")).await.unwrap();
+        service
+            .accept_member(org, &cashier.id, actor("test"))
+            .await
+            .unwrap();
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier").unwrap(),
                 Role::Cashier,
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -1329,10 +1342,14 @@ mod tests {
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier-2").unwrap(),
                 Role::Cashier,
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
-        service.suspend_member(org, &cashier.id, actor("test")).await.unwrap();
+        service
+            .suspend_member(org, &cashier.id, actor("test"))
+            .await
+            .unwrap();
         assert!(
             service
                 .member_permissions(org, &cashier.id)
@@ -1389,7 +1406,12 @@ mod tests {
         // from the server-loaded record only (sections 9.2, T4). A tampered
         // client cannot smuggle OWNER through any argument.
         let accepted = service
-            .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-inv").unwrap(), None, actor("test"))
+            .accept_invitation(
+                INVITE_TOKEN,
+                RoleAssignmentId::new("ra-inv").unwrap(),
+                None,
+                actor("test"),
+            )
             .await
             .unwrap();
         assert!(accepted.membership.has_authority());
@@ -1408,7 +1430,8 @@ mod tests {
                     INVITE_TOKEN,
                     RoleAssignmentId::new("ra-replay").unwrap(),
                     None,
-                 actor("test"))
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::AlreadyAccepted)
         );
@@ -1427,14 +1450,20 @@ mod tests {
                     "tok-unknown-0123456789abcdefghijkl",
                     RoleAssignmentId::new("ra-ghost").unwrap(),
                     None,
-                 actor("test"))
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::Invalid)
         );
         // Malformed tokens never reach the store.
         assert_eq!(
             service
-                .accept_invitation("short", RoleAssignmentId::new("ra-x").unwrap(), None, actor("test"))
+                .accept_invitation(
+                    "short",
+                    RoleAssignmentId::new("ra-x").unwrap(),
+                    None,
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -1472,7 +1501,8 @@ mod tests {
                     INVITE_TOKEN_2,
                     RoleAssignmentId::new("ra-scoped").unwrap(),
                     None,
-                 actor("test"))
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -1481,7 +1511,8 @@ mod tests {
                 INVITE_TOKEN_2,
                 RoleAssignmentId::new("ra-scoped").unwrap(),
                 Some(ScopeGrantId::new("g-scoped").unwrap()),
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         let grant = accepted.scope_grant.expect("proposed scope granted");
@@ -1528,7 +1559,8 @@ mod tests {
                     INVITE_TOKEN,
                     RoleAssignmentId::new("ra-dead").unwrap(),
                     None,
-                 actor("test"))
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::Invalid)
         );
@@ -1599,13 +1631,23 @@ mod tests {
         let throttle = strict_service();
         assert_eq!(
             throttle
-                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None, actor("test"))
+                .accept_invitation(
+                    INVITE_TOKEN,
+                    RoleAssignmentId::new("ra-t").unwrap(),
+                    None,
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::Invalid)
         );
         assert_eq!(
             throttle
-                .accept_invitation(INVITE_TOKEN, RoleAssignmentId::new("ra-t").unwrap(), None, actor("test"))
+                .accept_invitation(
+                    INVITE_TOKEN,
+                    RoleAssignmentId::new("ra-t").unwrap(),
+                    None,
+                    actor("test")
+                )
                 .await,
             Err(InvitationError::RateLimited)
         );
@@ -1627,11 +1669,17 @@ mod tests {
                 owner.clone(),
                 RoleAssignmentId::new("ra-owner").unwrap(),
                 Role::Owner,
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         let second_branch = service
-            .create_branch(BranchId::new("b2").unwrap(), org.clone(), "Second Branch", actor("test"))
+            .create_branch(
+                BranchId::new("b2").unwrap(),
+                org.clone(),
+                "Second Branch",
+                actor("test"),
+            )
             .await
             .unwrap();
         service
@@ -1660,7 +1708,8 @@ mod tests {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         assert!(
@@ -1686,18 +1735,23 @@ mod tests {
                 MembershipId::new("m-cashier").unwrap(),
                 org.clone(),
                 user("cashier"),
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         service.mark_member_pending(org, &cashier.id).await.unwrap();
-        service.accept_member(org, &cashier.id, actor("test")).await.unwrap();
+        service
+            .accept_member(org, &cashier.id, actor("test"))
+            .await
+            .unwrap();
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
                 RoleAssignmentId::new("ra-cashier").unwrap(),
                 Role::Cashier,
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         service
@@ -1709,7 +1763,8 @@ mod tests {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
-             actor("test"))
+                actor("test"),
+            )
             .await
             .unwrap();
         assert!(

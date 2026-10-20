@@ -7,10 +7,8 @@
 
 mod memory;
 mod ports;
-#[cfg(any(test, feature = "test-support"))]
 pub mod postgres;
-#[cfg(not(any(test, feature = "test-support")))]
-pub(crate) mod postgres;
+mod postgres_time;
 mod runtime;
 mod tenancy;
 
