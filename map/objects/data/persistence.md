@@ -3,9 +3,9 @@ type: object
 status: verified
 universe: live
 cluster: data
-source_revision: feat/phase4-pr009-audit-outbox@0b851583030687cc7d663289b995c63991224dc2
+source_revision: feat/phase4-pr009-audit-outbox@bd2f60a5a2c24041905c1fe1555278094f059264
 source: crates/sitolo-persistence/src/postgres.rs
-source_citation: crates/sitolo-persistence/src/postgres.rs:43-73
+source_citation: crates/sitolo-persistence/src/postgres.rs:45-77
 ---
 # Persistence
 

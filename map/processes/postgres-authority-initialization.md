@@ -2,9 +2,9 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@0b851583030687cc7d663289b995c63991224dc2
+source_revision: feat/phase4-pr009-audit-outbox@bd2f60a5a2c24041905c1fe1555278094f059264
 source: crates/sitolo-persistence/src/postgres.rs
-source_citation: crates/sitolo-persistence/src/postgres.rs:41-73
+source_citation: crates/sitolo-persistence/src/postgres.rs:45-77
 ---
 
 # PostgreSQL Authority Initialization
@@ -15,9 +15,9 @@ Administrative and runtime PostgreSQL connection options; the runtime connection
 
 ## Movement
 
-1. Build the administrative pool with bounded connection capacity. (crates/sitolo-persistence/src/postgres.rs:54-57)
-2. Build the bounded runtime pool and execute `SET ROLE app_runtime` on every new connection. (crates/sitolo-persistence/src/postgres.rs:59-68)
-3. Return both pools as a single authority pair for downstream persistence operations. (crates/sitolo-persistence/src/postgres.rs:70-73)
+1. Build the administrative pool with bounded connection capacity. (crates/sitolo-persistence/src/postgres.rs:58-61)
+2. Build the bounded runtime pool and execute `SET ROLE app_runtime` on every new connection. (crates/sitolo-persistence/src/postgres.rs:63-72)
+3. Return both pools as a single authority pair for downstream persistence operations. (crates/sitolo-persistence/src/postgres.rs:74-77)
 
 ## Output
 
