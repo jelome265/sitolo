@@ -14,36 +14,25 @@
 //!
 //! ## What these tests prove, and what they do not
 //!
-//! - `provision_organization_emits_audit_and_outbox_on_success` proves Test
-//!   C (§61): one successful command produces exactly one audit event and
-//!   one paired outbox event (§38), and the audit/outbox pair is written
-//!   through one PostgreSQL transaction.
-//! - `provision_organization_rolls_back_audit_when_outbox_write_fails`
-//!   proves Test B (§61): if the outbox half of that shared transaction
-//!   fails, the audit half that already ran in the same transaction is
-//!   rolled back with it — the pair is atomic with each other.
-//! - `provision_organization_known_gap_business_state_survives_evidence_failure`
-//!   documents, rather than hides, the residual gap disclosed in the
-//!   `sitolo-application` tenancy module docs: because `TenancyDatabase` is
-//!   still in-memory pending Phase 5, the organization/membership/branch
-//!   mutation itself is NOT rolled back when the evidence transaction
-//!   fails. Full Test A (§61) — business mutation rolled back together with
-//!   failed audit — remains blocked on Phase 5 and is not claimed here.
+//! Success and failure cases exercise the same PostgreSQL transaction for
+//! the organization, owner membership, default branch, audit row and outbox
+//! event. They intentionally panic rather than skip without PostgreSQL.
 
 use std::env;
 use std::sync::Arc;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyError, TenantUserId};
+use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
-use sitolo_persistence::{TenancyDatabase, TenancyStores};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use uuid::Uuid;
 
 struct TestContext {
     admin_pool: PgPool,
+    runtime_pool: PgPool,
     schema_name: String,
 }
 
@@ -80,14 +69,47 @@ async fn setup() -> TestContext {
         .await
         .expect("create test schema");
 
-    let schema_sql = include_str!("fixtures/part8_evidence_schema.sql");
-    sqlx::raw_sql(schema_sql)
+    let schema_sql =
+        include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
+            .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    sqlx::raw_sql(&schema_sql)
         .execute(&admin_pool)
         .await
-        .expect("apply Part 8 evidence schema fixture");
+        .expect("apply Part 8 audit/outbox schema fixture");
+
+    let tenancy_sql =
+        include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
+    sqlx::raw_sql(tenancy_sql)
+        .execute(&admin_pool)
+        .await
+        .expect("apply PostgreSQL tenancy provisioning schema");
+
+    let runtime_url = env::var("RUNTIME_DATABASE_URL")
+        .expect("RUNTIME_DATABASE_URL must be set for PostgreSQL provisioning tests");
+    let runtime_opts: PgConnectOptions = runtime_url
+        .parse::<PgConnectOptions>()
+        .expect("invalid RUNTIME_DATABASE_URL")
+        .options([("search_path", schema_name.as_str())]);
+    let runtime_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("SET ROLE app_runtime").execute(conn).await?;
+                Ok(())
+            })
+        })
+        .connect_with(runtime_opts)
+        .await
+        .expect("connect runtime test pool");
+    let identity: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&runtime_pool)
+        .await
+        .expect("read runtime identity");
+    assert_eq!(identity, "app_runtime");
 
     TestContext {
         admin_pool,
+        runtime_pool,
         schema_name,
     }
 }
@@ -141,7 +163,7 @@ fn fresh_provision_args() -> ProvisionArgs {
 async fn provision_organization_emits_audit_and_outbox_on_success() {
     let ctx = setup().await;
 
-    let service = service_with_evidence(ctx.admin_pool.clone());
+    let service = service_with_evidence(ctx.runtime_pool.clone());
     let args = fresh_provision_args();
 
     let provisioned = service
@@ -157,11 +179,23 @@ async fn provision_organization_emits_audit_and_outbox_on_success() {
 
     let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
     let outbox_count = row_count(&ctx.admin_pool, "outbox_events", args.org_id.as_str()).await;
+    let organization_count =
+        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let membership_count = row_count(
+        &ctx.admin_pool,
+        "organization_memberships",
+        args.org_id.as_str(),
+    )
+    .await;
+    let branch_count = row_count(&ctx.admin_pool, "branches", args.org_id.as_str()).await;
 
     teardown(&ctx).await;
 
     let provisioned = provisioned.expect("provision_organization should succeed");
     assert_eq!(provisioned.organization.id, args.org_id);
+    assert_eq!(organization_count, 1);
+    assert_eq!(membership_count, 1);
+    assert_eq!(branch_count, 1);
     assert_eq!(
         audit_count, 1,
         "exactly one audit event for one successful command (§38)"
@@ -172,11 +206,58 @@ async fn provision_organization_emits_audit_and_outbox_on_success() {
     );
 }
 
-/// Test B (§61): business mutation succeeds, outbox write fails -> the
-/// audit write in the same transaction is rolled back with it. Failure is
-/// induced by renaming `outbox_events` out from under the write after audit
-/// would otherwise have already been staged in the same transaction, which
-/// is deterministic and does not depend on guessing a generated event id.
+/// A repeated command with the same complete topology payload returns the
+/// existing result and does not emit a second semantic audit/outbox event.
+#[tokio::test]
+async fn provision_organization_retry_is_idempotent_and_divergence_conflicts() {
+    let ctx = setup().await;
+    let service = service_with_evidence(ctx.runtime_pool.clone());
+    let args = fresh_provision_args();
+
+    let first = service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await;
+    let retry = service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await;
+    let divergent = service
+        .provision_organization(
+            args.org_id.clone(),
+            "Different name",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await;
+    let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
+    let outbox_count = row_count(&ctx.admin_pool, "outbox_events", args.org_id.as_str()).await;
+
+    teardown(&ctx).await;
+
+    assert!(first.is_ok());
+    assert_eq!(retry, first);
+    assert_eq!(divergent, Err(TenancyError::Conflict));
+    assert_eq!(audit_count, 1);
+    assert_eq!(outbox_count, 1);
+}
+
+/// Test A (§61): outbox failure rolls back business and audit rows already
+/// staged in the same transaction.
 #[tokio::test]
 async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
     let ctx = setup().await;
@@ -187,7 +268,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
         .await
         .expect("rename outbox_events to induce a deterministic outbox write failure");
 
-    let service = service_with_evidence(ctx.admin_pool.clone());
+    let service = service_with_evidence(ctx.runtime_pool.clone());
     let args = fresh_provision_args();
 
     let result = service
@@ -202,6 +283,15 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
         .await;
 
     let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
+    let organization_count =
+        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let membership_count = row_count(
+        &ctx.admin_pool,
+        "organization_memberships",
+        args.org_id.as_str(),
+    )
+    .await;
+    let branch_count = row_count(&ctx.admin_pool, "branches", args.org_id.as_str()).await;
 
     teardown(&ctx).await;
 
@@ -213,28 +303,23 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
         audit_count, 0,
         "audit insert must roll back with the outbox insert in the same transaction (§5, §29)"
     );
+    assert_eq!(organization_count, 0, "business row must roll back");
+    assert_eq!(membership_count, 0, "business row must roll back");
+    assert_eq!(branch_count, 0, "business row must roll back");
 }
 
-/// Documents the disclosed residual gap (see the `sitolo-application`
-/// tenancy module docs): `TenancyDatabase` is in-memory pending Phase 5, so
-/// the business mutation is NOT part of the same transaction as the
-/// evidence writes and is not rolled back when they fail. This is not
-/// Test A passing — it is the opposite, made explicit rather than silently
-/// true. Closing it requires Phase 5 (out of Part 8 scope, contract §51).
+/// Mandatory audit failure also rolls back business state. The renamed table
+/// causes the audit insert to fail after the three business inserts.
 #[tokio::test]
-async fn provision_organization_known_gap_business_state_survives_evidence_failure() {
+async fn provision_organization_audit_failure_rolls_back_business_state() {
     let ctx = setup().await;
 
-    sqlx::raw_sql("ALTER TABLE outbox_events RENAME TO outbox_events_disabled")
+    sqlx::raw_sql("ALTER TABLE audit_events RENAME TO audit_events_disabled")
         .execute(&ctx.admin_pool)
         .await
-        .expect("rename outbox_events to induce a deterministic outbox write failure");
+        .expect("rename audit_events to induce a deterministic audit write failure");
 
-    let db = Arc::new(TenancyDatabase::new());
-    let audit = Arc::new(PostgresAuditWriter::new());
-    let outbox = Arc::new(PostgresOutboxRepository::new(ctx.admin_pool.clone()));
-    let sink = TenancyEvidenceSink::new(ctx.admin_pool.clone(), audit, outbox);
-    let service = TenancyService::new(db.clone(), Vec::new()).with_evidence(sink);
+    let service = service_with_evidence(ctx.runtime_pool.clone());
     let args = fresh_provision_args();
 
     let result = service
@@ -248,15 +333,19 @@ async fn provision_organization_known_gap_business_state_survives_evidence_failu
         )
         .await;
 
-    let in_memory_snapshot = db.organization_snapshot(&args.org_id).await;
-
+    let organization_count =
+        row_count(&ctx.admin_pool, "organizations", args.org_id.as_str()).await;
+    let membership_count = row_count(
+        &ctx.admin_pool,
+        "organization_memberships",
+        args.org_id.as_str(),
+    )
+    .await;
+    let branch_count = row_count(&ctx.admin_pool, "branches", args.org_id.as_str()).await;
     teardown(&ctx).await;
 
     assert!(result.is_err(), "evidence write was induced to fail");
-    assert!(
-        in_memory_snapshot.is_some(),
-        "known gap: in-memory business state is not rolled back by evidence \
-         failure until Phase 5 moves tenancy state into PostgreSQL — this \
-         assertion documents that gap rather than concealing it"
-    );
+    assert_eq!(organization_count, 0);
+    assert_eq!(membership_count, 0);
+    assert_eq!(branch_count, 0);
 }

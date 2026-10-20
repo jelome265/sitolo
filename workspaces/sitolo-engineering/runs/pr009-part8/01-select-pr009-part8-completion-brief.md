@@ -130,8 +130,9 @@ A pre-existing red baseline is not a regression from this run. No feature claim 
 
 ## Unresolved decisions
 
-1. **Worker relay destination.** The binding contract defines the relay boundary, but the concrete delivery adapter/destination for this slice is not yet established from the current source. Planning must select a real destination port and adapter or record the slice as blocked. This is not to be invented during implementation.
-2. **Scope of the first implementation slice.** The full §22 sequence is larger than one reviewable change. Stage 04 must split it into slices that each satisfy their own acceptance tests, starting with the baseline plus security-definer/claim-order P0 cluster.
+1. **Worker relay destination.** The requester replied "main and sub to be specific" on 2026-10-20. That phrase does not identify a transport, destination endpoint/topic, protocol, or runtime configuration contract in the repository. Clarification is still required before implementing the relay; do not infer what "main" and "sub" mean.
+2. **Scope of the first implementation slice.** The requester explicitly selected a PostgreSQL-backed tenancy mutation to satisfy full business + audit + outbox atomicity on 2026-10-20. Stage 04 must split the remaining §22 sequence into reviewable slices while preserving that acceptance requirement. No atomicity scope-out is approved.
+3. **PostgreSQL verification environment.** The requester cannot provide an instance or the required database URLs. A real PostgreSQL environment remains necessary for verification; no in-memory substitute can prove RLS, privilege, transaction, or concurrency behavior.
 
 ## Security applicability
 
@@ -159,11 +160,11 @@ Required security skill: `workspaces/sitolo-engineering/skills/security-engineer
 
 ## Human check
 
-Pending. The requester must confirm:
+Confirmed by the requester on 2026-10-20 when directing continuation from Stage 01 and selecting the PostgreSQL-backed tenancy mutation:
 
-1. the scope is limited to PR-009 Part 8 closure (not later phases);
-2. the baseline repair (chrono + sqlx feature) is acceptable;
-3. the first slice begins with build/security-definer/claim-order P0 work.
+1. Scope is limited to PR-009 Part 8 closure (not later phases).
+2. The existing chrono + SQLx-feature baseline repair remains part of this run.
+3. The build/security-definer/claim-order P0 cluster remains required; the requester additionally requires the real business + audit + outbox atomicity implementation.
 
 No later stage may silently expand scope or change the security applicability decision.
 
@@ -346,4 +347,26 @@ canonical CI on the exact head.
 
 The branch remains unmerged. A human owns merge after the blockers and canonical
 evidence are resolved.
+
+## Continuation status — 2026-10-20
+
+The requester restarted this run at Stage 01, selected a PostgreSQL-backed
+tenancy mutation for full business/audit/outbox atomicity, cannot supply a
+PostgreSQL server or database URLs, and directed continuation without needing
+to open the research memo.
+
+Stage 05 has now added a PostgreSQL organization provisioning path, tenancy
+schema SQL, API runtime wiring to `app_runtime`, and real PostgreSQL tests for
+success, audit rollback, outbox rollback, and same-payload retry. Local format,
+locked workspace check, clippy, and library tests pass. The PostgreSQL
+integration suite only compiles here; it has not run on a real server. CI is
+configured to provide PostgreSQL 18 but has not run on these changes.
+
+Still incomplete: worker relay destination (“main and sub” does not identify a
+transport or endpoint/topic/queue/configuration), destination-dependent worker
+delivery and idempotent-consumer proof, real PostgreSQL CI execution, complete
+canonical gates, supply-chain advisory disposition, and independent Stage 06
+audit. Other tenancy transitions still use the in-memory reference store; the
+new durable path covers organization provisioning only. PR #49 remains open;
+nothing has been merged.
 

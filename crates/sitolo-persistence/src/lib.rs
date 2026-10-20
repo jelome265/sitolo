@@ -11,6 +11,7 @@ pub mod postgres;
 mod postgres_time;
 mod runtime;
 mod tenancy;
+pub mod tenancy_postgres;
 
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,

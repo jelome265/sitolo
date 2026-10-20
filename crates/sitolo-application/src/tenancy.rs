@@ -44,17 +44,13 @@
 //! rather than the contract, defines the audit vocabulary; each such method
 //! carries a doc comment explaining the specific gap.
 //!
-//! What is **not** yet atomic with any of this: [`TenancyDatabase`] is an
-//! in-memory reference store (`sitolo-persistence` lib docs: "PostgreSQL
-//! implementations arrive in Phase 5"), so the business mutation itself
-//! cannot share a transaction with the PostgreSQL audit/outbox insert. A
-//! process crash between the in-memory commit and the evidence transaction
-//! can therefore still leave committed state without its evidence. This is
-//! a disclosed, pre-existing architectural gap tied to Phase 5, not
-//! something this change conceals or claims to close. Closing it fully
-//! requires moving tenancy state into the same PostgreSQL authority Part 8
-//! already uses for audit/outbox — that is Phase 5 work, out of Part 8's
-//! scope (contract §51).
+//! Organization provisioning uses PostgreSQL for its business bundle when
+//! the durable evidence sink is configured: organization, owner membership,
+//! default branch, audit, and outbox share one application-owned transaction.
+//! Other tenancy transitions still use the in-memory reference store before
+//! writing evidence and do not yet have business/evidence atomicity. The API
+//! composition root must wire the durable path before it can be considered a
+//! production tenancy authority.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -74,17 +70,18 @@ use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores, audit_repository::AuditWriter, outbox_repository::OutboxWriter,
+    tenancy_postgres::insert_provisioned_organization,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 /// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
 /// events (contract §5, §29). The audit insert and the outbox insert run in
 /// one PostgreSQL transaction: either both land, or neither does.
 ///
-/// See the module-level "Phase 4 Part 8 evidence" note for what this does
-/// and does not make atomic with the (currently in-memory) business
-/// mutation.
+/// Organization provisioning uses this same pool for the business mutation
+/// and evidence transaction. Other tenancy operations currently use the
+/// in-memory reference store.
 pub struct TenancyEvidenceSink {
     pool: PgPool,
     audit: Arc<dyn AuditWriter>,
@@ -227,6 +224,61 @@ impl TenancyService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn record_evidence_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        event_name: IamEventName,
+        organization_id: &OrganizationId,
+        branch_id: Option<&BranchId>,
+        target: TargetRef,
+        actor: ActorRef,
+        action: &'static str,
+        aggregate_type: &'static str,
+        aggregate_id: String,
+        payload: serde_json::Value,
+    ) -> Result<(), TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let event_id_raw = uuid::Uuid::new_v4().to_string();
+        let event_id = AuditEventId::new(event_id_raw.clone())
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let audit_event = IamAuditEvent::success(
+            event_id,
+            event_name,
+            organization_id.clone(),
+            branch_id.cloned(),
+            actor,
+            target,
+            action,
+            "tenancy_service",
+        );
+        let payload_str =
+            serde_json::to_string(&payload).map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let outbox_event = OutboxEvent::new(
+            event_id_raw,
+            aggregate_type.to_string(),
+            aggregate_id,
+            event_name.as_str().to_string(),
+            1,
+            organization_id.clone(),
+            branch_id.cloned(),
+            payload_str,
+        )
+        .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        sink.audit
+            .record_required(tx, &audit_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        sink.outbox
+            .enqueue(tx, &outbox_event)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        Ok(())
+    }
+
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
         let mut limiter = self
             .limiter
@@ -253,6 +305,85 @@ impl TenancyService {
         branch_id: BranchId,
         branch_name: &str,
     ) -> Result<ProvisionedOrganization, TenancyError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let mut organization =
+                Organization::provision(organization_id.clone(), organization_name)?;
+            organization.activate()?;
+            let mut owner_membership = Membership::invite(
+                owner_membership_id.clone(),
+                organization_id.clone(),
+                owner_user_id.clone(),
+            );
+            owner_membership.mark_pending()?;
+            owner_membership.activate()?;
+            let mut default_branch =
+                Branch::provision(branch_id.clone(), organization_id.clone(), branch_name)?;
+            default_branch.activate()?;
+            let provisioned = ProvisionedOrganization {
+                organization,
+                owner_membership,
+                default_branch,
+            };
+
+            let mut tx = sink
+                .pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            sqlx::query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let newly_created = insert_provisioned_organization(
+                &mut tx,
+                &provisioned.organization,
+                &provisioned.owner_membership,
+                &provisioned.default_branch,
+            )
+            .await
+            .map_err(|error| match error {
+                sitolo_persistence::tenancy_postgres::TenancyProvisioningError::Conflict => {
+                    TenancyError::Conflict
+                }
+                sitolo_persistence::tenancy_postgres::TenancyProvisioningError::Database(_) => {
+                    TenancyError::EvidencePersistenceFailed
+                }
+            })?;
+            if !newly_created {
+                tx.commit()
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+                return Ok(provisioned);
+            }
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::OrganizationCreated,
+                &organization_id,
+                Some(&branch_id),
+                TargetRef::Organization(organization_id.clone()),
+                ActorRef {
+                    subject_ref: owner_user_id.to_string(),
+                    membership_ref: Some(owner_membership_id.to_string()),
+                    device_ref: None,
+                },
+                "provision_organization",
+                "organization",
+                organization_id.to_string(),
+                serde_json::json!({
+                    "organization_id": organization_id.as_str(),
+                    "organization_name": provisioned.organization.name,
+                    "owner_membership_id": owner_membership_id.as_str(),
+                    "branch_id": branch_id.as_str(),
+                }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            return Ok(provisioned);
+        }
+
         let provisioned = self
             .db
             .provision_organization(
