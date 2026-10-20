@@ -10,3 +10,12 @@ name = "sitolo-worker"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
+sitolo-audit.workspace = true
+sitolo-domain = { path = "../../crates/sitolo-domain" }
+sitolo-events.workspace = true
+sitolo-persistence.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

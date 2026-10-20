@@ -1319,6 +1319,17 @@ version = "0.1.0"
 [[package]]
 name = "sitolo-worker-bin"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "sitolo-audit",
+ "sitolo-domain",
+ "sitolo-events",
+ "sitolo-persistence",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "slab"

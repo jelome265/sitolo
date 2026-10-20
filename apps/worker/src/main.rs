@@ -1,10 +1,13 @@
 //! Sitolo worker binary.
 //!
-//! Owns durable-job execution: validation, application operation, transaction,
-//! external side effect when applicable, durable result, and retry/DLQ
-//! classification. Business rules must not be duplicated with the API path.
-//!
-//! This is a Phase 1 scaffold and is not production functionality.
+//! Runs the durable outbox relay. The processing engine is transport-neutral;
+//! a concrete publisher and its configuration must be supplied by an approved
+//! relay contract before this executable may start.
 #![forbid(unsafe_code)]
 
-fn main() {}
+fn main() {
+    eprintln!(
+        "sitolo-worker: refusing to start without an approved relay destination adapter and configuration"
+    );
+    std::process::exit(78);
+}

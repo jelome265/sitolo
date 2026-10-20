@@ -44,6 +44,41 @@ pub enum IamEventName {
 }
 
 impl IamEventName {
+    /// Complete set of registered IAM event names. Outbox consumers use this
+    /// catalogue to fail closed on an event name that this release does not
+    /// understand.
+    pub const ALL: &'static [Self] = &[
+        Self::OrganizationCreated,
+        Self::OrganizationActivated,
+        Self::OrganizationSuspended,
+        Self::OrganizationResumed,
+        Self::OrganizationClosingStarted,
+        Self::OrganizationClosed,
+        Self::BranchCreated,
+        Self::BranchActivated,
+        Self::BranchSuspended,
+        Self::BranchResumed,
+        Self::BranchClosingStarted,
+        Self::BranchClosed,
+        Self::MembershipInvited,
+        Self::MembershipInvitationAccepted,
+        Self::MembershipActivated,
+        Self::MembershipSuspended,
+        Self::MembershipRevoked,
+        Self::RoleAssigned,
+        Self::RoleChanged,
+        Self::RoleRemoved,
+        Self::ScopeGranted,
+        Self::ScopeChanged,
+        Self::ScopeRevoked,
+        Self::AuthorizationDenied,
+        Self::SecurityScopeViolation,
+        Self::DeviceBound,
+        Self::DeviceUnbound,
+        Self::DeviceSuspended,
+        Self::DeviceRevoked,
+    ];
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -77,6 +112,25 @@ impl IamEventName {
             IamEventName::DeviceSuspended => "iam.device.suspended",
             IamEventName::DeviceRevoked => "iam.device.revoked",
         }
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::IamEventName;
+
+    #[test]
+    fn registered_iam_event_names_are_unique_and_dotted() {
+        let names: Vec<_> = IamEventName::ALL
+            .iter()
+            .map(|event| event.as_str())
+            .collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+
+        assert_eq!(names.len(), unique.len());
+        assert!(names.iter().all(|name| name.starts_with("iam.")));
     }
 }
 
