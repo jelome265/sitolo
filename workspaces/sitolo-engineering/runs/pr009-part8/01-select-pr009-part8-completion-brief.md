@@ -389,3 +389,7 @@ incomplete and PR #49 remains open.
 ### Policy follow-up — 2026-10-20
 
 Policy run 483 on `0b85158` failed because the verified PostgreSQL authority process card still cited the pre-change `postgres.rs` revision. The card and persistence object source references now point to `0b85158`; the generated object index was refreshed, and the local System Map verifier passes. A new exact-head policy run is required after these map updates are pushed.
+
+### Verification follow-up — 2026-10-20
+
+On commit `1aad95cf03e98d63f610c7fe8bc268aae45b2e4c`, policy run 484 passed and application PostgreSQL integration run 781 passed. Canonical Rust run 631 passed the 23-test Part 8 persistence suite and the 27-test legacy RLS suite (including its standalone invocation), then failed at `cargo audit` on `RUSTSEC-2023-0071`; cargo-deny and all other security workflow jobs passed. A two-request concurrent same-payload provisioning test was added locally after that run; it compiles and passes local clippy but still needs PostgreSQL CI execution. No local PostgreSQL was available. PR #49 remains open and not merge-ready.

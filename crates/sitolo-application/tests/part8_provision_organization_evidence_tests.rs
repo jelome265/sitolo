@@ -28,6 +28,7 @@ use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use tokio::sync::Barrier;
 use uuid::Uuid;
 
 struct TestContext {
@@ -148,6 +149,7 @@ async fn organization_row_count(pool: &PgPool, organization_id: &str) -> i64 {
         .unwrap_or_else(|e| panic!("counting organization {organization_id}: {e}"))
 }
 
+#[derive(Clone)]
 struct ProvisionArgs {
     org_id: OrganizationId,
     membership_id: MembershipId,
@@ -259,6 +261,74 @@ async fn provision_organization_retry_is_idempotent_and_divergence_conflicts() {
     assert!(first.is_ok());
     assert_eq!(retry, first);
     assert_eq!(divergent, Err(TenancyError::Conflict));
+    assert_eq!(audit_count, 1);
+    assert_eq!(outbox_count, 1);
+}
+
+/// Concurrent identical requests converge on one complete provisioning
+/// bundle and one mandatory audit/outbox pair.
+#[tokio::test]
+async fn provision_organization_concurrent_same_payload_is_idempotent() {
+    let ctx = setup().await;
+    let service = Arc::new(service_with_evidence(ctx.runtime_pool.clone()));
+    let args = fresh_provision_args();
+    let barrier = Arc::new(Barrier::new(2));
+
+    let first_service = Arc::clone(&service);
+    let first_barrier = Arc::clone(&barrier);
+    let first_args = args.clone();
+    let first = tokio::spawn(async move {
+        first_barrier.wait().await;
+        first_service
+            .provision_organization(
+                first_args.org_id,
+                "Acme Corp",
+                first_args.membership_id,
+                first_args.user_id,
+                first_args.branch_id,
+                "HQ",
+            )
+            .await
+    });
+
+    let second_barrier = Arc::clone(&barrier);
+    let second_args = args.clone();
+    let second = tokio::spawn(async move {
+        second_barrier.wait().await;
+        service
+            .provision_organization(
+                second_args.org_id,
+                "Acme Corp",
+                second_args.membership_id,
+                second_args.user_id,
+                second_args.branch_id,
+                "HQ",
+            )
+            .await
+    });
+
+    let first_result = first.await.expect("first provisioning task did not panic");
+    let second_result = second
+        .await
+        .expect("second provisioning task did not panic");
+    let audit_count = row_count(&ctx.admin_pool, "audit_events", args.org_id.as_str()).await;
+    let outbox_count = row_count(&ctx.admin_pool, "outbox_events", args.org_id.as_str()).await;
+    let organization_count = organization_row_count(&ctx.admin_pool, args.org_id.as_str()).await;
+    let membership_count = row_count(
+        &ctx.admin_pool,
+        "organization_memberships",
+        args.org_id.as_str(),
+    )
+    .await;
+    let branch_count = row_count(&ctx.admin_pool, "branches", args.org_id.as_str()).await;
+
+    teardown(&ctx).await;
+
+    assert!(first_result.is_ok());
+    assert!(second_result.is_ok());
+    assert_eq!(organization_count, 1);
+    assert_eq!(membership_count, 1);
+    assert_eq!(branch_count, 1);
     assert_eq!(audit_count, 1);
     assert_eq!(outbox_count, 1);
 }
