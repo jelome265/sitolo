@@ -2,26 +2,26 @@
 type: process
 status: verified
 universe: live
-source_revision: main@623f7aed6105664d10d1a2802480fde8316ed5f8
+source_revision: feat/phase4-pr009-audit-outbox@0b851583030687cc7d663289b995c63991224dc2
 source: crates/sitolo-persistence/src/postgres.rs
-source_citation: crates/sitolo-persistence/src/postgres.rs:38-61
+source_citation: crates/sitolo-persistence/src/postgres.rs:41-73
 ---
 
 # PostgreSQL Authority Initialization
 
 ## Input
 
-Administrative and least-privileged runtime PostgreSQL connection options.
+Administrative and runtime PostgreSQL connection options; the runtime connection must be able to assume `app_runtime`.
 
 ## Movement
 
-1. Build the administrative pool with bounded connection capacity. (crates/sitolo-persistence/src/postgres.rs:38-52)
-2. Build the least-privileged runtime pool with the same bounded pool policy. (crates/sitolo-persistence/src/postgres.rs:53-58)
-3. Return both pools as a single authority pair for downstream persistence operations. (crates/sitolo-persistence/src/postgres.rs:59-61)
+1. Build the administrative pool with bounded connection capacity. (crates/sitolo-persistence/src/postgres.rs:54-57)
+2. Build the bounded runtime pool and execute `SET ROLE app_runtime` on every new connection. (crates/sitolo-persistence/src/postgres.rs:59-68)
+3. Return both pools as a single authority pair for downstream persistence operations. (crates/sitolo-persistence/src/postgres.rs:70-73)
 
 ## Output
 
-Initialized PostgreSQL authority pools with separate setup and runtime identities.
+Initialized PostgreSQL authority pools with administrative setup authority and a runtime session assuming the least-privileged `app_runtime` role.
 
 ## Consumes
 
@@ -43,7 +43,7 @@ Business transaction semantics inside later repository/application operations.
 
 ## Verification
 
-Verified against the current PostgreSQL authority implementation. This movement establishes persistence authority; it does not claim that the complete business mutation/outbox flow is executable.
+Verified against the current PostgreSQL authority implementation. The runtime pool explicitly assumes `app_runtime`; the RLS integration suite must verify the actual session identity. This movement does not claim that the complete business mutation/outbox flow is production-wired.
 
 ## See
 

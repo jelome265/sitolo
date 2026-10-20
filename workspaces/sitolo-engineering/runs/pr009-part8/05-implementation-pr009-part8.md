@@ -3,7 +3,7 @@
 **Stage:** 05 Implement\
 **Date:** 2026-10-20\
 **Source before changes:** `1223ed3aef3818f56c5b444ee22fff287546349f`\
-**Current tree:** `1383233691ec2aa0b294ea0311d8143836ca0d19` plus uncommitted RLS runtime-role correction on `feat/phase4-pr009-audit-outbox` (PR #49 open)\
+**Current tree:** `0b851583030687cc7d663289b995c63991224dc2` plus uncommitted System Map source-revision updates on `feat/phase4-pr009-audit-outbox` (PR #49 open)\
 **Goal:** PostgreSQL transaction for organization + owner membership + default branch + audit + outbox; repair database-test wiring; keep PR open.
 
 ## Implemented
@@ -40,7 +40,7 @@ The unit/build checks do not prove RLS, role, SQL transaction, or rollback behav
 - The worker relay destination remains undefined. “Main and sub” still does not identify a transport, endpoints/topics/queues, event delivery contract, or runtime fields. No relay target has been invented.
 - Destination-dependent relay, idempotent consumer delivery, worker runtime completion, and associated operator evidence remain incomplete.
 - Application PostgreSQL CI passed on `1383233`; the persistence/RLS suite and its catalog, privilege, and concurrency assertions still await the canonical verifier.
-- RSA advisory disposition and the exact-head canonical verifier remain; the ICM check and policy workflow pass on the current artifact/branch state.
+- RSA advisory disposition and the exact-head canonical verifier remain. The 0b85158 policy run found a stale verified System Map source revision after the `postgres.rs` change; the process/object cards and generated index are corrected locally, and exact-head policy rerun is pending.
 - Other tenancy transitions besides organization provisioning still use the in-memory reference store; this implementation does not claim their business mutations are PostgreSQL-backed.
 
 ## Human check

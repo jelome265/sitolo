@@ -44,6 +44,7 @@ For pushed SHA `1223ed3aef3818f56c5b444ee22fff287546349f`, GitHub reported:
 - The original integration job omitted database URLs. `dca49f8` correctly started PostgreSQL and exposed the shared-role setup race; `561bbe9` confirmed the fixture lock removed it and surfaced an incorrect organization count query. Integration run 779 on `1383233` passed all four app provisioning tests against PostgreSQL after the assertion fix.
 - `dca49f8` dependency-policy passed with the pinned cargo-deny action and toolchain override. The advisory job still fails for RUSTSEC-2023-0071. CodeQL/offensive-regression were in progress in the last snapshot; secret scanning passed.
 - On `1383233`, the canonical verifier reached all-target tests and the PostgreSQL suites: the application provisioning tests and 23 Part 8 persistence tests passed; the legacy RLS suite failed its runtime identity precondition because its pool connected as `postgres`. Stage 07 added `SET ROLE app_runtime` to the runtime-pool connection path; exact-head rerun is pending. Cargo audit fails on `RUSTSEC-2023-0071`; exact-head cargo-deny passes.
+- Policy run 483 on `0b85158` failed the System Map process check because the PostgreSQL authority card still cited the pre-change source revision. The process card and persistence object card now cite `0b85158`, describe the role assumption, and the generated object index has been refreshed. Local map verification passes; the policy rerun is pending.
 
 ## Audit conclusion
 

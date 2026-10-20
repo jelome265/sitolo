@@ -385,3 +385,7 @@ passed, while its advisory job failed on `RUSTSEC-2023-0071` for inactive
 locked `rsa 0.9.10` (RustSec lists no patched release). The run remains
 incomplete and PR #49 remains open.
 
+
+### Policy follow-up — 2026-10-20
+
+Policy run 483 on `0b85158` failed because the verified PostgreSQL authority process card still cited the pre-change `postgres.rs` revision. The card and persistence object source references now point to `0b85158`; the generated object index was refreshed, and the local System Map verifier passes. A new exact-head policy run is required after these map updates are pushed.
