@@ -2,7 +2,7 @@
 
 **Stage:** 04 Plan\
 **Date:** 2026-10-20\
-**Inputs:** `../01-select/output/pr009-part8-completion-brief.md`, `../02-research/output/pr009-part8-research.md`, `../03-investigate/output/pr009-part8-investigation.md`\
+**Inputs:** `01-select-pr009-part8-completion-brief.md`, `02-research-pr009-part8.md`, `03-investigation-pr009-part8.md`\
 **Target:** PR #49, branch `feat/phase4-pr009-audit-outbox`; leave open and unmerged.
 
 ## Objective
@@ -117,7 +117,7 @@ This plan follows the requester's instruction to proceed autonomously. It does n
 
 Stage 05 implemented the transaction, RLS-scoped provisioning schema, API
 runtime wiring, and PostgreSQL failure/retry tests. See
-`../05-implement/output/pr009-part8-implementation.md` for changed files and
+`05-implementation-pr009-part8.md` for changed files and
 verification gaps. Relay semantics and exact-head evidence remain open.
 
 ## Audit-driven implementation deviation

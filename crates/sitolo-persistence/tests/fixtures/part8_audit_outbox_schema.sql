@@ -20,9 +20,11 @@
 -- ============================================================================
 
 -- Roles are cluster-global, so parallel test schemas can race on creation.
--- Catch duplicate_object instead of relying on a check-then-create.
+-- Serialize creation across test processes; duplicate_object alone cannot
+-- catch a concurrent unique-index violation from pg_authid.
 DO $$
 BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('sitolo.part8.role-bootstrap'), 8);
     BEGIN
         CREATE ROLE app_runtime NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     EXCEPTION WHEN duplicate_object THEN

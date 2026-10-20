@@ -70,6 +70,6 @@ Investigation is complete. Continue to Stage 04 under the requester's instructio
 
 Stage 05 has since added the selected PostgreSQL provisioning path and runtime
 wiring. Its source/test evidence is recorded in
-`../05-implement/output/pr009-part8-implementation.md`. The findings above
+`05-implementation-pr009-part8.md`. The findings above
 remain a dated description of the pre-implementation revision; see the
 implementation report for current status.

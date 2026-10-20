@@ -26,7 +26,7 @@
 
 ### F-02 — PostgreSQL behavior is unverified
 
-The requester cannot provide a local PostgreSQL instance/URLs. The pushed head's integration job failed because it ran these non-skipping tests without `ADMIN_DATABASE_URL` / `RUNTIME_DATABASE_URL`; the current local workflow change adds a PostgreSQL 18 service and those fields, but has not run on this revision. Local compilation is not evidence for schema compatibility, forced RLS, `SET LOCAL`, real transaction rollback, role identity, or retry races. The integration suite must pass on an exact revision before those claims can be accepted.
+The requester cannot provide a local PostgreSQL instance/URLs. The pushed `dca49f8` integration job reached PostgreSQL but the application tests raced while creating cluster-global fixture roles (`app_runtime`), producing duplicate key `pg_authid_rolname_index`. A transaction advisory lock was added to serialize role bootstrap in the schema fixture; this fix still needs an exact-head PostgreSQL run. Local compilation is not evidence for schema compatibility, forced RLS, `SET LOCAL`, real transaction rollback, role identity, or retry races.
 
 ### F-03 — Worker relay contract is unresolved
 
@@ -40,10 +40,10 @@ The pushed head's `cargo audit` reports `RUSTSEC-2023-0071` for `rsa 0.9.10` (Ma
 
 For pushed SHA `1223ed3aef3818f56c5b444ee22fff287546349f`, GitHub reported:
 
-- Policy failed because the tracked Stage 01 brief and Stage 06 transport audit were in reusable output shelves; after moving reports to `runs/`, the local ICM cold-walk passes.
-- Integration failed because PostgreSQL integration tests were included in a job without database URLs; the current workflow adds PostgreSQL 18 and admin/runtime/worker URL variables, pending exact-head CI.
-- CodeQL, secret scanning, and offensive-regression jobs passed; cargo-audit and dependency-policy jobs failed for F-04 above.
-- Rust verify failed at ICM output layout; local ICM verification now passes. Exact-head CI is still absent.
+- The original pushed head's policy run rejected reports inside reusable output shelves. The later `dca49f8` policy run passed ICM, PowerShell parity, and System Map checks, then found six archived-document links still pointing into those shelves. The links are fixed locally; `python scripts/ci/check-doc-references` passes with 0 unresolved references.
+- The original integration job omitted database URLs. `dca49f8` correctly started PostgreSQL and exposed the shared-role setup race; the fixture lock is the follow-up fix.
+- `dca49f8` dependency-policy passed with the pinned cargo-deny action and toolchain override. The advisory job still fails for RUSTSEC-2023-0071. CodeQL/offensive-regression were in progress in the last snapshot; secret scanning passed.
+- The Rust verification run was still in progress in the last snapshot. Exact-head results for the local fixture and archive-reference fixes are pending.
 
 ## Audit conclusion
 
