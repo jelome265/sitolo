@@ -1,7 +1,12 @@
 //! PostgreSQL writes for tenancy operations that must share the application
 //! transaction with audit and outbox evidence.
 
-use sqlx::{Postgres, Transaction};
+use sqlx_core::error::Error;
+use sqlx_core::query::query;
+use sqlx_core::query_as::query_as;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::Postgres;
 use thiserror::Error;
 
 use sitolo_domain::tenancy::{Branch, Membership, Organization};
@@ -11,11 +16,11 @@ pub enum TenancyProvisioningError {
     #[error("organization provisioning conflicts with existing tenancy state")]
     Conflict,
     #[error("database operation failed")]
-    Database(#[source] sqlx::Error),
+    Database(#[source] Error),
 }
 
-impl From<sqlx::Error> for TenancyProvisioningError {
-    fn from(error: sqlx::Error) -> Self {
+impl From<Error> for TenancyProvisioningError {
+    fn from(error: Error) -> Self {
         if error
             .as_database_error()
             .and_then(|database_error| database_error.code())
@@ -58,16 +63,15 @@ pub async fn insert_provisioned_organization(
     }
 
     let organization_version = i64::try_from(organization.state_version).map_err(|_| {
-        sqlx::Error::Protocol("organization state version exceeds PostgreSQL BIGINT".into())
+        Error::Protocol("organization state version exceeds PostgreSQL BIGINT".into())
     })?;
     let membership_version = i64::try_from(owner_membership.state_version).map_err(|_| {
-        sqlx::Error::Protocol("membership state version exceeds PostgreSQL BIGINT".into())
+        Error::Protocol("membership state version exceeds PostgreSQL BIGINT".into())
     })?;
-    let branch_version = i64::try_from(default_branch.state_version).map_err(|_| {
-        sqlx::Error::Protocol("branch state version exceeds PostgreSQL BIGINT".into())
-    })?;
+    let branch_version = i64::try_from(default_branch.state_version)
+        .map_err(|_| Error::Protocol("branch state version exceeds PostgreSQL BIGINT".into()))?;
 
-    let inserted_id: Option<String> = sqlx::query_scalar(
+    let inserted_id: Option<String> = query_scalar(
         "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING RETURNING id",
     )
     .bind(organization.id.as_str())
@@ -78,20 +82,19 @@ pub async fn insert_provisioned_organization(
     .await?;
 
     if inserted_id.is_none() {
-        let existing_organization: Option<(String, String, String, i64)> = sqlx::query_as(
-            "SELECT id, name, state, state_version FROM organizations WHERE id = $1",
-        )
-        .bind(organization.id.as_str())
-        .fetch_optional(&mut **tx)
-        .await?;
-        let existing_membership: Option<(String, String, String, String, i64)> = sqlx::query_as(
+        let existing_organization: Option<(String, String, String, i64)> =
+            query_as("SELECT id, name, state, state_version FROM organizations WHERE id = $1")
+                .bind(organization.id.as_str())
+                .fetch_optional(&mut **tx)
+                .await?;
+        let existing_membership: Option<(String, String, String, String, i64)> = query_as(
             "SELECT id, organization_id, user_id, state, state_version FROM organization_memberships WHERE id = $1 AND organization_id = $2",
         )
         .bind(owner_membership.id.as_str())
         .bind(organization.id.as_str())
         .fetch_optional(&mut **tx)
         .await?;
-        let existing_branch: Option<(String, String, String, String, i64)> = sqlx::query_as(
+        let existing_branch: Option<(String, String, String, String, i64)> = query_as(
             "SELECT id, organization_id, name, state, state_version FROM branches WHERE id = $1 AND organization_id = $2",
         )
         .bind(default_branch.id.as_str())
@@ -125,7 +128,7 @@ pub async fn insert_provisioned_organization(
         };
     }
 
-    sqlx::query(
+    query(
         "INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(owner_membership.id.as_str())
@@ -136,7 +139,7 @@ pub async fn insert_provisioned_organization(
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query(
+    query(
         "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(default_branch.id.as_str())

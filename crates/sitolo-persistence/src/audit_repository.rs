@@ -4,7 +4,10 @@
 //! Runtime role has INSERT-only access scoped to transaction tenant context.
 
 use async_trait::async_trait;
-use sqlx::{Postgres, Transaction};
+use sqlx_core::error::Error;
+use sqlx_core::query::query;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::Postgres;
 use thiserror::Error;
 
 use sitolo_audit::{IamAuditEvent, IamEventResult};
@@ -15,7 +18,7 @@ use crate::postgres_time::to_utc;
 #[derive(Debug, Error)]
 pub enum AuditPersistenceError {
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] Error),
     #[error("serialization error")]
     Serialization,
     #[error("timestamp outside the supported range")]
@@ -91,7 +94,7 @@ impl AuditWriter for PostgresAuditWriter {
             sitolo_audit::TargetRef::Device(id) => ("Device", id.clone()),
         };
 
-        sqlx::query(
+        query(
             r#"
             INSERT INTO audit_events (
                 event_id, event_name, event_version, occurred_at,

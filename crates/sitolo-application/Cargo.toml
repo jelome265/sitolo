@@ -16,7 +16,8 @@ sitolo-observability.workspace = true
 sitolo-persistence.workspace = true
 sitolo-security.workspace = true
 sitolo-tenancy = { path = "../sitolo-tenancy" }
-sqlx.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

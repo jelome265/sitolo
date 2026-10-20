@@ -25,8 +25,14 @@ use sitolo_persistence::audit_repository::{AuditWriter, PostgresAuditWriter};
 use sitolo_persistence::outbox_repository::{
     OutboxPersistenceError, OutboxReader, OutboxWriter, PostgresOutboxRepository,
 };
-use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx_core::error::Error;
+use sqlx_core::from_row::FromRow;
+use sqlx_core::query::query;
+use sqlx_core::query_as::query_as;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::raw_sql::raw_sql;
+use sqlx_core::row::Row;
+use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use uuid::Uuid;
 
 /// Test context with admin, runtime, and worker pools.
@@ -38,7 +44,7 @@ struct TestContext {
 }
 
 /// Catalog row proving the security-definer hardening of one function.
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 struct FunctionSecurityRow {
     proname: String,
     owner: String,
@@ -50,13 +56,39 @@ struct FunctionSecurityRow {
     public_can_execute: bool,
 }
 
+impl<'r> FromRow<'r, PgRow> for FunctionSecurityRow {
+    fn from_row(row: &'r PgRow) -> Result<Self, Error> {
+        Ok(Self {
+            proname: row.try_get("proname")?,
+            owner: row.try_get("owner")?,
+            prosecdef: row.try_get("prosecdef")?,
+            proconfig: row.try_get("proconfig")?,
+            acl_is_explicit: row.try_get("acl_is_explicit")?,
+            worker_can_execute: row.try_get("worker_can_execute")?,
+            runtime_can_execute: row.try_get("runtime_can_execute")?,
+            public_can_execute: row.try_get("public_can_execute")?,
+        })
+    }
+}
+
 /// Catalog row proving ownership and RLS posture of one relation.
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 struct RelationSecurityRow {
     relname: String,
     owner: String,
     relrowsecurity: bool,
     relforcerowsecurity: bool,
+}
+
+impl<'r> FromRow<'r, PgRow> for RelationSecurityRow {
+    fn from_row(row: &'r PgRow) -> Result<Self, Error> {
+        Ok(Self {
+            relname: row.try_get("relname")?,
+            owner: row.try_get("owner")?,
+            relrowsecurity: row.try_get("relrowsecurity")?,
+            relforcerowsecurity: row.try_get("relforcerowsecurity")?,
+        })
+    }
 }
 
 /// Sets up an isolated schema with Part 8 tables, roles, and RLS policies.
@@ -77,7 +109,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .max_connections(1)
         .connect(&admin_url)
         .await?;
-    sqlx::raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{}\"", schema_name))
+    raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{}\"", schema_name))
         .execute(&bootstrap)
         .await?;
     bootstrap.close().await;
@@ -93,7 +125,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     // the runtime and worker pools attempt SET ROLE.
     let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
-    sqlx::raw_sql(&schema_sql).execute(&admin_pool).await?;
+    raw_sql(&schema_sql).execute(&admin_pool).await?;
 
     let runtime_opts =
         PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema_name.as_str())]);
@@ -101,7 +133,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .max_connections(5)
         .after_connect(|conn, _| {
             Box::pin(async move {
-                sqlx::query("SET ROLE app_runtime").execute(conn).await?;
+                query("SET ROLE app_runtime").execute(conn).await?;
                 Ok(())
             })
         })
@@ -114,7 +146,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .max_connections(5)
         .after_connect(|conn, _| {
             Box::pin(async move {
-                sqlx::query("SET ROLE app_worker").execute(conn).await?;
+                query("SET ROLE app_worker").execute(conn).await?;
                 Ok(())
             })
         })
@@ -124,7 +156,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     // Prove the pools execute as the intended roles. A worker test that
     // silently runs as app_runtime (or as the migration superuser) would not
     // prove the worker privilege boundary.
-    let runtime_identity: String = sqlx::query_scalar("SELECT current_user")
+    let runtime_identity: String = query_scalar("SELECT current_user")
         .fetch_one(&runtime_pool)
         .await?;
     if runtime_identity != "app_runtime" {
@@ -132,7 +164,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
             format!("runtime pool must execute as app_runtime, got {runtime_identity}").into(),
         );
     }
-    let worker_identity: String = sqlx::query_scalar("SELECT current_user")
+    let worker_identity: String = query_scalar("SELECT current_user")
         .fetch_one(&worker_pool)
         .await?;
     if worker_identity != "app_worker" {
@@ -173,7 +205,7 @@ async fn enqueue_pending_event(
     )?;
     let writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
     let mut tx = ctx.admin_pool.begin().await?;
-    sqlx::query("SELECT set_config('app.organization_id', $1, true)")
+    query("SELECT set_config('app.organization_id', $1, true)")
         .bind(organization_id.to_string())
         .execute(&mut *tx)
         .await?;
@@ -184,7 +216,7 @@ async fn enqueue_pending_event(
 
 /// Tears down test schema.
 async fn teardown_test_context(ctx: &TestContext) {
-    let _ = sqlx::raw_sql(&format!(
+    let _ = raw_sql(&format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
     ))
@@ -224,7 +256,7 @@ async fn test_atomicity_business_succeeds_audit_fails() {
         let mut tx = ctx.admin_pool.begin().await?;
 
         // Set tenant context
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-atomic-1'")
+        raw_sql("SET LOCAL app.organization_id = 'org-atomic-1'")
             .execute(&mut *tx)
             .await?;
 
@@ -241,7 +273,7 @@ async fn test_atomicity_business_succeeds_audit_fails() {
         tx.rollback().await?;
 
         // Verify the first audit write did not survive the failure.
-        let count: i64 = sqlx::query_scalar(&format!(
+        let count: i64 = query_scalar(&format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -299,7 +331,7 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
 
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-atomic-2'")
+        raw_sql("SET LOCAL app.organization_id = 'org-atomic-2'")
             .execute(&mut *tx)
             .await?;
 
@@ -317,7 +349,7 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
         tx.rollback().await?;
 
         // Verify neither the audit nor the successful outbox write survived.
-        let audit_count: i64 = sqlx::query_scalar(&format!(
+        let audit_count: i64 = query_scalar(&format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -325,7 +357,7 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
         .fetch_one(&ctx.admin_pool)
         .await?;
 
-        let outbox_count: i64 = sqlx::query_scalar(&format!(
+        let outbox_count: i64 = query_scalar(&format!(
             "SELECT COUNT(*) FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -387,7 +419,7 @@ async fn test_atomicity_all_succeed_commit() {
         let mut tx = ctx.admin_pool.begin().await?;
 
         // Set tenant context
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-atomic-3'")
+        raw_sql("SET LOCAL app.organization_id = 'org-atomic-3'")
             .execute(&mut *tx)
             .await?;
 
@@ -401,7 +433,7 @@ async fn test_atomicity_all_succeed_commit() {
         tx.commit().await?;
 
         // Verify both exist
-        let audit_count: i64 = sqlx::query_scalar(&format!(
+        let audit_count: i64 = query_scalar(&format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -409,7 +441,7 @@ async fn test_atomicity_all_succeed_commit() {
         .fetch_one(&ctx.admin_pool)
         .await?;
 
-        let outbox_count: i64 = sqlx::query_scalar(&format!(
+        let outbox_count: i64 = query_scalar(&format!(
             "SELECT COUNT(*) FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -441,7 +473,7 @@ async fn test_missing_tenant_context_fails_closed() {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
         // No SET LOCAL app.organization_id
-        let insert_result = sqlx::query(&format!(
+        let insert_result = query(&format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
@@ -477,11 +509,11 @@ async fn test_invalid_tenant_context_fails_closed() {
         let mut tx = ctx.runtime_pool.begin().await?;
 
         // Set context to org-A on the same connection, then write org-B.
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-A'")
+        raw_sql("SET LOCAL app.organization_id = 'org-A'")
             .execute(&mut *tx)
             .await?;
 
-        let insert_result = sqlx::query(&format!(
+        let insert_result = query(&format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
@@ -520,7 +552,7 @@ async fn test_runtime_cannot_update_audit() {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
         // Admin inserts audit record
-        sqlx::query(&format!(
+        query(&format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
@@ -539,11 +571,11 @@ async fn test_runtime_cannot_update_audit() {
 
         // Runtime tries to update within a valid tenant context.
         let mut tx = ctx.runtime_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-1'")
+        raw_sql("SET LOCAL app.organization_id = 'org-1'")
             .execute(&mut *tx)
             .await?;
 
-        let update_result = sqlx::query(&format!(
+        let update_result = query(&format!(
             "UPDATE {}.audit_events SET result = 'FAILURE' WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -572,7 +604,7 @@ async fn test_runtime_cannot_delete_audit() {
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
-        sqlx::query(&format!(
+        query(&format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
@@ -591,11 +623,11 @@ async fn test_runtime_cannot_delete_audit() {
 
         // Runtime tries to delete within a valid tenant context.
         let mut tx = ctx.runtime_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-1'")
+        raw_sql("SET LOCAL app.organization_id = 'org-1'")
             .execute(&mut *tx)
             .await?;
 
-        let delete_result = sqlx::query(&format!(
+        let delete_result = query(&format!(
             "DELETE FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -644,7 +676,7 @@ async fn test_concurrent_worker_claim() {
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-concurrent'")
+        raw_sql("SET LOCAL app.organization_id = 'org-concurrent'")
             .execute(&mut *tx)
             .await?;
         outbox_writer.enqueue(&mut tx, &outbox_event).await?;
@@ -666,7 +698,7 @@ async fn test_concurrent_worker_claim() {
         assert_eq!(total_claims, 1, "Exactly one worker must claim the event");
 
         // Verify event is now CLAIMED
-        let status: String = sqlx::query_scalar(&format!(
+        let status: String = query_scalar(&format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -707,7 +739,7 @@ async fn test_lease_recovery() {
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-lease'")
+        raw_sql("SET LOCAL app.organization_id = 'org-lease'")
             .execute(&mut *tx)
             .await?;
         outbox_writer.enqueue(&mut tx, &outbox_event).await?;
@@ -741,7 +773,7 @@ async fn test_lease_recovery() {
         );
 
         // Verify event is back to PENDING
-        let status: String = sqlx::query_scalar(&format!(
+        let status: String = query_scalar(&format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -785,14 +817,14 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-worker-test'")
+        raw_sql("SET LOCAL app.organization_id = 'org-worker-test'")
             .execute(&mut *tx)
             .await?;
         outbox_writer.enqueue(&mut tx, &outbox_event).await?;
         tx.commit().await?;
 
         // Worker tries to update organization_id (immutable field)
-        let update_result = sqlx::query(&format!(
+        let update_result = query(&format!(
             "UPDATE {}.outbox_events SET organization_id = 'org-HACKED' WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -806,7 +838,7 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
         );
 
         // Verify organization_id unchanged
-        let org: String = sqlx::query_scalar(&format!(
+        let org: String = query_scalar(&format!(
             "SELECT organization_id FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -850,7 +882,7 @@ async fn test_published_event_is_not_reclaimable() {
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-dup'")
+        raw_sql("SET LOCAL app.organization_id = 'org-dup'")
             .execute(&mut *tx)
             .await?;
         outbox_writer.enqueue(&mut tx, &outbox_event).await?;
@@ -881,7 +913,7 @@ async fn test_published_event_is_not_reclaimable() {
         );
 
         // Verify status is PUBLISHED
-        let status: String = sqlx::query_scalar(&format!(
+        let status: String = query_scalar(&format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
         ))
@@ -931,7 +963,7 @@ async fn test_concurrent_aggregate_sequence_assignment() {
                 let organization_id = event.organization_id.to_string();
                 let writer = PostgresOutboxRepository::new(pool.clone());
                 let mut tx = pool.begin().await?;
-                sqlx::query("SELECT set_config('app.organization_id', $1, true)")
+                query("SELECT set_config('app.organization_id', $1, true)")
                     .bind(organization_id)
                     .execute(&mut *tx)
                     .await?;
@@ -945,7 +977,7 @@ async fn test_concurrent_aggregate_sequence_assignment() {
             joined??;
         }
 
-        let sequences: Vec<i64> = sqlx::query_scalar(
+        let sequences: Vec<i64> = query_scalar(
             "SELECT aggregate_sequence \
              FROM outbox_events \
              WHERE aggregate_type = $1 AND aggregate_id = $2 \
@@ -1059,7 +1091,7 @@ async fn test_release_for_retry_reschedules_and_fences() {
             i32,
             Option<String>,
             Option<String>,
-        ) = sqlx::query_as(
+        ) = query_as(
             "SELECT status, attempt_count, claim_token, last_error_class \
              FROM outbox_events WHERE event_id = $1",
         )
@@ -1138,7 +1170,7 @@ async fn test_quarantine_is_terminal() {
             Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
-        ) = sqlx::query_as(
+        ) = query_as(
             "SELECT status, claim_token, locked_at, last_error_class \
              FROM outbox_events WHERE event_id = $1",
         )
@@ -1216,11 +1248,10 @@ async fn test_attempt_budget_exhaustion_quarantines() {
             "an exhausted event must not be claimed again"
         );
 
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM outbox_events WHERE event_id = $1")
-                .bind(&outbox_id)
-                .fetch_one(&ctx.admin_pool)
-                .await?;
+        let status: String = query_scalar("SELECT status FROM outbox_events WHERE event_id = $1")
+            .bind(&outbox_id)
+            .fetch_one(&ctx.admin_pool)
+            .await?;
         assert_eq!(
             status, "QUARANTINED",
             "claim must quarantine an event that exhausted its attempt budget"
@@ -1240,7 +1271,7 @@ async fn test_attempt_budget_exhaustion_quarantines() {
 
 /// Extracts the SQLSTATE from a database error, failing loudly when the error
 /// is not a PostgreSQL error at all.
-fn sqlstate(error: &sqlx::Error) -> String {
+fn sqlstate(error: &Error) -> String {
     error
         .as_database_error()
         .and_then(|error| error.code())
@@ -1255,7 +1286,7 @@ async fn test_security_definer_functions_are_hardened() {
     let ctx = setup_test_context().await.unwrap();
 
     let result = async {
-        let rows: Vec<FunctionSecurityRow> = sqlx::query_as(
+        let rows: Vec<FunctionSecurityRow> = query_as(
             "SELECT
                  p.proname,
                  r.rolname AS owner,
@@ -1335,7 +1366,7 @@ async fn test_security_definer_functions_are_hardened() {
             );
         }
 
-        let roles: Vec<(String, bool, bool, bool, bool, bool)> = sqlx::query_as(
+        let roles: Vec<(String, bool, bool, bool, bool, bool)> = query_as(
             "SELECT rolname, rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolreplication
              FROM pg_roles
              WHERE rolname IN ('app_runtime', 'app_worker')
@@ -1367,7 +1398,7 @@ async fn test_part8_relation_ownership_and_rls_metadata() {
     let ctx = setup_test_context().await.unwrap();
 
     let result = async {
-        let relations: Vec<RelationSecurityRow> = sqlx::query_as(
+        let relations: Vec<RelationSecurityRow> = query_as(
             "SELECT
                  c.relname,
                  pg_get_userbyid(c.relowner) AS owner,
@@ -1410,7 +1441,7 @@ async fn test_part8_relation_ownership_and_rls_metadata() {
         assert!(outbox.relrowsecurity, "outbox_events must enable RLS");
         assert!(outbox.relforcerowsecurity, "outbox_events must force RLS");
 
-        let policies: Vec<(String, String, String, String)> = sqlx::query_as(
+        let policies: Vec<(String, String, String, String)> = query_as(
             "SELECT tablename, policyname, array_to_string(roles, ',') AS roles, cmd
              FROM pg_policies
              WHERE schemaname = $1
@@ -1454,7 +1485,7 @@ async fn test_part8_relation_ownership_and_rls_metadata() {
             "no table policy may target the worker role: {policies:?}"
         );
 
-        let memberships: Vec<(String, String)> = sqlx::query_as(
+        let memberships: Vec<(String, String)> = query_as(
             "SELECT member.rolname, granted.rolname
              FROM pg_auth_members AS membership
              JOIN pg_roles AS member ON member.oid = membership.member
@@ -1482,7 +1513,7 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
     let ctx = setup_test_context().await.unwrap();
 
     let result = async {
-        let audit_read = sqlx::query("SELECT event_id FROM audit_events LIMIT 1")
+        let audit_read = query("SELECT event_id FROM audit_events LIMIT 1")
             .fetch_all(&ctx.runtime_pool)
             .await
             .expect_err("runtime must not read audit events");
@@ -1492,7 +1523,7 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
             "expected insufficient_privilege, got: {audit_read}"
         );
 
-        let outbox_read = sqlx::query("SELECT event_id FROM outbox_events LIMIT 1")
+        let outbox_read = query("SELECT event_id FROM outbox_events LIMIT 1")
             .fetch_all(&ctx.runtime_pool)
             .await
             .expect_err("runtime must not read outbox events");
@@ -1502,7 +1533,7 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
             "expected insufficient_privilege, got: {outbox_read}"
         );
 
-        let truncate = sqlx::query("TRUNCATE audit_events")
+        let truncate = query("TRUNCATE audit_events")
             .execute(&ctx.runtime_pool)
             .await
             .expect_err("runtime must not truncate audit events");
@@ -1528,11 +1559,11 @@ async fn test_outbox_cross_tenant_insert_is_denied() {
 
     let result = async {
         let mut tx = ctx.runtime_pool.begin().await?;
-        sqlx::raw_sql("SET LOCAL app.organization_id = 'org-A'")
+        raw_sql("SET LOCAL app.organization_id = 'org-A'")
             .execute(&mut *tx)
             .await?;
 
-        let insert = sqlx::query(
+        let insert = query(
             "INSERT INTO outbox_events (
                  event_id, aggregate_type, aggregate_id, event_name, event_version,
                  organization_id, payload, deduplication_key, schema_version,
@@ -1570,7 +1601,7 @@ async fn test_worker_cannot_select_outbox_table() {
     let ctx = setup_test_context().await.unwrap();
 
     let result = async {
-        let error = sqlx::query("SELECT event_id FROM outbox_events LIMIT 1")
+        let error = query("SELECT event_id FROM outbox_events LIMIT 1")
             .fetch_one(&ctx.worker_pool)
             .await
             .expect_err("worker must not read the outbox table directly");
@@ -1595,7 +1626,7 @@ async fn test_runtime_cannot_execute_worker_transitions() {
     let ctx = setup_test_context().await.unwrap();
 
     let result = async {
-        let mark_error = sqlx::query_scalar::<_, bool>("SELECT outbox_mark_published($1, $2)")
+        let mark_error = query_scalar::<_, bool>("SELECT outbox_mark_published($1, $2)")
             .bind("any-event")
             .bind("any-token")
             .fetch_one(&ctx.runtime_pool)
@@ -1607,7 +1638,7 @@ async fn test_runtime_cannot_execute_worker_transitions() {
             "expected insufficient_privilege, got: {mark_error}"
         );
 
-        let claim_error = sqlx::query("SELECT * FROM outbox_claim_events($1, $2, $3)")
+        let claim_error = query("SELECT * FROM outbox_claim_events($1, $2, $3)")
             .bind(1i32)
             .bind(chrono::Duration::seconds(60))
             .bind(10i32)
@@ -1639,12 +1670,12 @@ async fn test_worker_metrics_view_is_bounded() {
         enqueue_pending_event(&ctx, &org_id, &format!("outbox-{}", Uuid::new_v4())).await?;
 
         let counts: Vec<(String, i64)> =
-            sqlx::query_as("SELECT status, event_count FROM outbox_metrics ORDER BY status")
+            query_as("SELECT status, event_count FROM outbox_metrics ORDER BY status")
                 .fetch_all(&ctx.worker_pool)
                 .await?;
         assert_eq!(counts, vec![("PENDING".to_owned(), 1)]);
 
-        let columns: Vec<String> = sqlx::query_scalar(
+        let columns: Vec<String> = query_scalar(
             "SELECT column_name FROM information_schema.columns \
              WHERE table_schema = $1 AND table_name = 'outbox_metrics' \
              ORDER BY column_name",

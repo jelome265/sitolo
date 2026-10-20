@@ -73,7 +73,9 @@ use sitolo_persistence::{
     tenancy_postgres::insert_provisioned_organization,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx_core::query::query;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::{PgPool, Postgres};
 
 /// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
 /// events (contract §5, §29). The audit insert and the outbox insert run in
@@ -330,7 +332,7 @@ impl TenancyService {
                 .begin()
                 .await
                 .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
-            sqlx::query("SELECT set_config('app.organization_id', $1, true)")
+            query("SELECT set_config('app.organization_id', $1, true)")
                 .bind(organization_id.as_str())
                 .execute(&mut *tx)
                 .await

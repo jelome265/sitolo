@@ -10,7 +10,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx_core::error::Error;
+use sqlx_core::from_row::FromRow;
+use sqlx_core::query::query;
+use sqlx_core::query_as::query_as;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::row::Row;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::{PgPool, PgRow, Postgres};
 use thiserror::Error;
 
 use sitolo_events::{
@@ -25,7 +32,7 @@ use crate::postgres_time::{from_utc, to_utc};
 pub enum OutboxPersistenceError {
     /// PostgreSQL rejected or could not execute the operation.
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] Error),
     /// The caller supplied an invalid outbox request.
     #[error("invalid outbox request: {0}")]
     InvalidRequest(#[from] OutboxError),
@@ -219,7 +226,7 @@ impl OutboxWriter for PostgresOutboxRepository {
         // Assign the aggregate sequence under a row lock. `ON CONFLICT DO
         // UPDATE` serialises concurrent writers for the same aggregate, so
         // there is no MAX()+1 race.
-        let aggregate_sequence: i64 = sqlx::query_scalar(
+        let aggregate_sequence: i64 = query_scalar(
             r#"
             INSERT INTO outbox_aggregate_sequences (
                 aggregate_type, aggregate_id, next_sequence
@@ -239,7 +246,7 @@ impl OutboxWriter for PostgresOutboxRepository {
             return Err(OutboxPersistenceError::InvalidRow("aggregate_sequence"));
         }
 
-        sqlx::query(
+        query(
             r#"
             INSERT INTO outbox_events (
                 event_id, aggregate_type, aggregate_id, event_name, event_version,
@@ -300,7 +307,7 @@ impl OutboxReader for PostgresOutboxRepository {
         let lease_interval = chrono::Duration::from_std(policy.lease_duration())
             .map_err(OutboxPersistenceError::InvalidDuration)?;
 
-        let rows = sqlx::query_as::<_, OutboxEventRow>(
+        let rows = query_as::<_, OutboxEventRow>(
             r#"
             SELECT
                 event_id, aggregate_type, aggregate_id, event_name, event_version,
@@ -327,7 +334,7 @@ impl OutboxReader for PostgresOutboxRepository {
         event_id: &str,
         claim_token: &ClaimToken,
     ) -> Result<(), OutboxPersistenceError> {
-        let updated: bool = sqlx::query_scalar("SELECT outbox_mark_published($1, $2)")
+        let updated: bool = query_scalar("SELECT outbox_mark_published($1, $2)")
             .bind(event_id)
             .bind(claim_token.as_str())
             .fetch_one(&self.pool)
@@ -350,7 +357,7 @@ impl OutboxReader for PostgresOutboxRepository {
         let backoff_interval =
             chrono::Duration::from_std(backoff).map_err(OutboxPersistenceError::InvalidDuration)?;
 
-        let updated: bool = sqlx::query_scalar("SELECT outbox_release_for_retry($1, $2, $3, $4)")
+        let updated: bool = query_scalar("SELECT outbox_release_for_retry($1, $2, $3, $4)")
             .bind(event_id)
             .bind(claim_token.as_str())
             .bind(error_class.as_str())
@@ -370,7 +377,7 @@ impl OutboxReader for PostgresOutboxRepository {
         claim_token: &ClaimToken,
         error_class: &OutboxErrorClass,
     ) -> Result<(), OutboxPersistenceError> {
-        let updated: bool = sqlx::query_scalar("SELECT outbox_quarantine($1, $2, $3)")
+        let updated: bool = query_scalar("SELECT outbox_quarantine($1, $2, $3)")
             .bind(event_id)
             .bind(claim_token.as_str())
             .bind(error_class.as_str())
@@ -393,7 +400,7 @@ impl OutboxReader for PostgresOutboxRepository {
         let timeout_interval = chrono::Duration::from_std(lease_timeout)
             .map_err(OutboxPersistenceError::InvalidDuration)?;
 
-        let recovered: i32 = sqlx::query_scalar("SELECT outbox_recover_stale_claims($1)")
+        let recovered: i32 = query_scalar("SELECT outbox_recover_stale_claims($1)")
             .bind(timeout_interval)
             .fetch_one(&self.pool)
             .await?;
@@ -405,7 +412,7 @@ impl OutboxReader for PostgresOutboxRepository {
 }
 
 /// Database row representation.
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 struct OutboxEventRow {
     event_id: String,
     aggregate_type: String,
@@ -427,6 +434,33 @@ struct OutboxEventRow {
     aggregate_sequence: i64,
     claim_token: Option<String>,
     claim_generation: i64,
+}
+
+impl<'r> FromRow<'r, PgRow> for OutboxEventRow {
+    fn from_row(row: &'r PgRow) -> Result<Self, Error> {
+        Ok(Self {
+            event_id: row.try_get("event_id")?,
+            aggregate_type: row.try_get("aggregate_type")?,
+            aggregate_id: row.try_get("aggregate_id")?,
+            event_name: row.try_get("event_name")?,
+            event_version: row.try_get("event_version")?,
+            organization_id: row.try_get("organization_id")?,
+            branch_id: row.try_get("branch_id")?,
+            occurred_at: row.try_get("occurred_at")?,
+            payload: row.try_get("payload")?,
+            status: row.try_get("status")?,
+            available_at: row.try_get("available_at")?,
+            attempt_count: row.try_get("attempt_count")?,
+            locked_at: row.try_get("locked_at")?,
+            published_at: row.try_get("published_at")?,
+            last_error_class: row.try_get("last_error_class")?,
+            deduplication_key: row.try_get("deduplication_key")?,
+            schema_version: row.try_get("schema_version")?,
+            aggregate_sequence: row.try_get("aggregate_sequence")?,
+            claim_token: row.try_get("claim_token")?,
+            claim_generation: row.try_get("claim_generation")?,
+        })
+    }
 }
 
 impl TryFrom<OutboxEventRow> for OutboxEvent {

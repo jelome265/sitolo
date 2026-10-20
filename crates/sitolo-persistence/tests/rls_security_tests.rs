@@ -14,8 +14,13 @@ use sitolo_persistence::postgres::{
 use sitolo_tenancy::{
     AuthorizedScope, RequestedOrganizationId, bind_organization, resolve_effective_scope,
 };
-use sqlx::postgres::PgConnectOptions;
-use sqlx::{Postgres, Row, Transaction};
+use sqlx_core::error::Error;
+use sqlx_core::query::query;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::raw_sql::raw_sql;
+use sqlx_core::row::Row;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, Postgres};
 use std::env;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -41,12 +46,12 @@ pub struct TenantResource {
 
 /// Test-harness repository helper for Part 7 security proof operations with invocation tracking.
 pub struct PgTestTenantRepository {
-    pub runtime_pool: sqlx::PgPool,
+    pub runtime_pool: PgPool,
     pub invocation_count: Arc<AtomicUsize>,
 }
 
 impl PgTestTenantRepository {
-    pub fn new(runtime_pool: sqlx::PgPool) -> Self {
+    pub fn new(runtime_pool: PgPool) -> Self {
         Self {
             runtime_pool,
             invocation_count: Arc::new(AtomicUsize::new(0)),
@@ -69,7 +74,7 @@ impl PgTestTenantRepository {
         resource: &TenantResource,
     ) -> Result<(), PgAuthorityError> {
         let mut tx = self.begin_tx(scope).await?;
-        sqlx::query(
+        query(
             "INSERT INTO tenant_resources (id, organization_id, branch_id, data)
              VALUES ($1, $2, $3, $4)",
         )
@@ -90,7 +95,7 @@ impl PgTestTenantRepository {
         resource_id: &str,
     ) -> Result<TenantResource, PgAuthorityError> {
         let mut tx = self.begin_tx(scope).await?;
-        let row = sqlx::query(
+        let row = query(
             "SELECT id, organization_id, branch_id, data
              FROM tenant_resources
              WHERE id = $1 AND organization_id = $2",
@@ -120,7 +125,7 @@ impl PgTestTenantRepository {
         new_data: &str,
     ) -> Result<(), PgAuthorityError> {
         let mut tx = self.begin_tx(scope).await?;
-        let result = sqlx::query(
+        let result = query(
             "UPDATE tenant_resources
              SET data = $1
              WHERE id = $2 AND organization_id = $3",
@@ -146,7 +151,7 @@ impl PgTestTenantRepository {
         resource_id: &str,
     ) -> Result<(), PgAuthorityError> {
         let mut tx = self.begin_tx(scope).await?;
-        let result = sqlx::query(
+        let result = query(
             "DELETE FROM tenant_resources
              WHERE id = $1 AND organization_id = $2",
         )
@@ -192,13 +197,13 @@ pub async fn execute_application_tenant_operation(
 /// Test context holding admin and runtime pools, plus pre-seeded fixture IDs.
 struct SchemaGuard {
     schema_name: String,
-    admin_pool: sqlx::PgPool,
+    admin_pool: PgPool,
 }
 
 impl SchemaGuard {
     async fn teardown(&self) -> Result<(), PgAuthorityError> {
         let drop_sql = format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema_name);
-        sqlx::raw_sql(&drop_sql).execute(&self.admin_pool).await?;
+        raw_sql(&drop_sql).execute(&self.admin_pool).await?;
         Ok(())
     }
 }
@@ -236,7 +241,7 @@ where
     };
 
     // Verify explicit runtime pool user identity is strictly app_runtime
-    let current_user_res: Result<String, sqlx::Error> = sqlx::query_scalar("SELECT current_user")
+    let current_user_res: Result<String, Error> = query_scalar("SELECT current_user")
         .fetch_one(ctx.pools.runtime_pool())
         .await;
 
@@ -315,7 +320,7 @@ async fn setup_test_context(
     admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
     runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
 
-    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+    let admin_pool = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(admin_opts.clone())
         .await?;
@@ -323,7 +328,7 @@ async fn setup_test_context(
     MIGRATIONS_INIT
         .get_or_init(|| async {
             let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
-            sqlx::raw_sql(role_sql)
+            raw_sql(role_sql)
                 .execute(&admin_pool)
                 .await
                 .expect("Failed to initialize app_runtime role");
@@ -332,9 +337,7 @@ async fn setup_test_context(
 
     // Create isolated schema
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
-    sqlx::raw_sql(&create_schema_sql)
-        .execute(&admin_pool)
-        .await?;
+    raw_sql(&create_schema_sql).execute(&admin_pool).await?;
 
     let guard = SchemaGuard {
         schema_name: schema_name.clone(),
@@ -360,17 +363,17 @@ async fn setup_test_context_inner(
     schema_name: &str,
     admin_opts: &PgConnectOptions,
     runtime_opts: &PgConnectOptions,
-    admin_pool: &sqlx::PgPool,
+    admin_pool: &PgPool,
 ) -> Result<TestContext, PgAuthorityError> {
     // Apply Part 7 schema inside search_path
     let schema_sql = include_str!("fixtures/rls_schema.sql");
-    sqlx::raw_sql(schema_sql).execute(admin_pool).await?;
+    raw_sql(schema_sql).execute(admin_pool).await?;
 
     // Grant schema USAGE and table privileges on isolated schema to app_runtime
     let grant_schema_sql = format!(
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
     );
-    sqlx::raw_sql(&grant_schema_sql).execute(admin_pool).await?;
+    raw_sql(&grant_schema_sql).execute(admin_pool).await?;
 
     let pools = PgAuthorityPools::connect_options(admin_opts.clone(), runtime_opts.clone()).await?;
 
@@ -443,7 +446,7 @@ async fn setup_test_context_inner(
     let repo = PgTestTenantRepository::new(pools.runtime_pool().clone());
 
     // Seed Orgs A and B via admin pool
-    sqlx::query(
+    query(
         "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
     )
     .bind(&org_a_id_str)
@@ -458,7 +461,7 @@ async fn setup_test_context_inner(
     .await?;
 
     // Seed Branches A1, A2, B1 via admin pool
-    sqlx::query(
+    query(
         "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES
          ($1, $2, 'Branch A1', 'ACTIVE', 1),
          ($3, $4, 'Branch A2', 'ACTIVE', 1),
@@ -474,7 +477,7 @@ async fn setup_test_context_inner(
     .await?;
 
     // Seed Tenant Resources via admin pool
-    sqlx::query(
+    query(
         "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES
          ($1, $2, $3, 'Secret Data A1'),
          ($4, $5, $6, 'Secret Data A2'),
@@ -842,7 +845,7 @@ async fn test_negative_tenant_a_cannot_insert_b_owned_row_relationally_valid() {
 
         let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-        let raw_res = sqlx::query(
+        let raw_res = query(
             "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
         )
         .bind(&res_malicious_id)
@@ -879,7 +882,7 @@ async fn test_negative_ownership_changing_update_relationally_valid() {
     run_test_with_teardown(|ctx| async move {
         let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-        let update_res = sqlx::query(
+        let update_res = query(
             "UPDATE tenant_resources
              SET organization_id = $1, branch_id = $2
              WHERE id = $3",
@@ -963,7 +966,7 @@ async fn test_end_to_end_application_and_db_composition() {
         let eff_scope_a = resolve_effective_scope(&ctx.mem_a, &ctx.org_a, None).unwrap();
         let authorized_scope_a = AuthorizedScope::from_effective(&eff_scope_a);
         let mut tx = ctx.repo.begin_tx(&authorized_scope_a).await.unwrap();
-        let row_b = sqlx::query("SELECT id FROM tenant_resources WHERE id = $1")
+        let row_b = query("SELECT id FROM tenant_resources WHERE id = $1")
             .bind(&ctx.res_b1_id)
             .fetch_optional(&mut *tx)
             .await
@@ -992,7 +995,7 @@ async fn test_direct_db_query_without_application_predicate() {
     run_test_with_teardown(|ctx| async move {
         let mut tx = ctx.repo.begin_tx(&ctx.org_a_scope).await.unwrap();
 
-        let row = sqlx::query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
+        let row = query("SELECT id, organization_id FROM tenant_resources WHERE id = $1")
             .bind(&ctx.res_b1_id)
             .fetch_optional(&mut *tx)
             .await
@@ -1042,7 +1045,7 @@ async fn test_cross_tenant_branch_binding_denial() {
 
         let mut tx = ctx.repo.begin_tx(&ctx.org_b_scope).await.unwrap();
 
-        let insert_res = sqlx::query(
+        let insert_res = query(
             "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
         )
         .bind(&invalid_resource.id)
@@ -1078,7 +1081,7 @@ async fn test_missing_tenant_context_fails_closed() {
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
 
         // 1. Read denial proof
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
+        let count: i64 = query_scalar("SELECT COUNT(*) FROM tenant_resources")
             .fetch_one(&mut *tx)
             .await
             .unwrap();
@@ -1089,7 +1092,7 @@ async fn test_missing_tenant_context_fails_closed() {
         );
 
         // 2. Write denial proof
-        let insert_res = sqlx::query(
+        let insert_res = query(
             "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES ($1, $2, $3, $4)",
         )
         .bind("res_no_context")
@@ -1126,12 +1129,12 @@ async fn test_invalid_tenant_context_fails_closed() {
         assert!(bind_res.is_err(), "Binding nonexistent org must fail");
 
         let mut tx = ctx.pools.runtime_pool().begin().await.unwrap();
-        sqlx::query("SELECT set_config('app.organization_id', 'org_NONEXISTENT', true)")
+        query("SELECT set_config('app.organization_id', 'org_NONEXISTENT', true)")
             .execute(&mut *tx)
             .await
             .unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources")
+        let count: i64 = query_scalar("SELECT COUNT(*) FROM tenant_resources")
             .fetch_one(&mut *tx)
             .await
             .unwrap();
@@ -1159,7 +1162,7 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
                     .unwrap();
 
                 let count: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                    query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
                         .bind(&ctx.res_a1_id)
                         .fetch_one(&mut *tx)
                         .await
@@ -1176,7 +1179,7 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
                     .unwrap();
 
                 let count_b: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                    query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
                         .bind(&ctx.res_b1_id)
                         .fetch_one(&mut *tx)
                         .await
@@ -1184,7 +1187,7 @@ async fn test_connection_pool_context_leakage_and_rollback_safety() {
                 assert_eq!(count_b, 1);
 
                 let count_a: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
+                    query_scalar("SELECT COUNT(*) FROM tenant_resources WHERE id = $1")
                         .bind(&ctx.res_a1_id)
                         .fetch_one(&mut *tx)
                         .await
@@ -1293,7 +1296,7 @@ async fn test_setup_failure_injection_cleans_up_schema() {
         .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
 
     let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
-    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+    let admin_pool = PgPoolOptions::new()
         .max_connections(2)
         .connect_with(admin_opts)
         .await
@@ -1301,7 +1304,7 @@ async fn test_setup_failure_injection_cleans_up_schema() {
 
     // Verify schema does not exist prior to setup
     let exists_before: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+        query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)
             .fetch_one(&admin_pool)
             .await
@@ -1320,7 +1323,7 @@ async fn test_setup_failure_injection_cleans_up_schema() {
 
     // Prove schema no longer exists in PostgreSQL catalog after setup_test_context error handling
     let exists_after: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+        query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)")
             .bind(&schema_name)
             .fetch_one(&admin_pool)
             .await

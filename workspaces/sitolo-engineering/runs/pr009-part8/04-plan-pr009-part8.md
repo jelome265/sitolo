@@ -128,3 +128,18 @@ request-supplied owner identity. The application-level PostgreSQL transaction
 capability remains, but production API wiring is deferred until authentication
 derives owner, actor, and tenant authority server-side. The re-audit leaves
 this integration requirement open and does not clear Stage 08.
+
+## Destination-independent worker work — 2026-10-20
+
+The requester’s “main and sub” response still provides no transport or delivery contract. Per the planned destination-independent slice, add a transport-neutral worker processing engine with bounded claim/recovery, event name/version/envelope validation, typed retry/quarantine handling, and stable event-ID handoff to a future publisher adapter. Keep the executable fail-closed until an approved adapter/configuration is available. This does not satisfy actual relay delivery, consumer deduplication, or production runtime composition; those remain blocked on the exact destination contract.
+
+## Advisory remediation decision - 2026-10-21
+
+The lockfile-only RSA advisory is removed by dependency construction, not by waiver:
+
+1. Replace the `sqlx` meta-crate and its `macros` feature with direct `sqlx-core` and `sqlx-postgres` dependencies. This is within the approved stack because both are published SQLx 0.8 backend crates, and the workspace only uses PostgreSQL.
+2. Keep the runtime behavior identical: `sqlx-core` carries the `_rt-tokio` feature the meta-crate forwarded; `sqlx-postgres` carries `chrono` and `json`.
+3. Replace the three `sqlx::FromRow` derives with explicit `FromRow` implementations, because retaining `sqlx-macros` would keep the optional MySQL package in `Cargo.lock`.
+4. Do not add an advisory ignore, do not remove `--locked`, and do not change the CI gate.
+
+Exit criteria: locked workspace check, clippy, all non-PostgreSQL tests, release build, `cargo-deny`, and `cargo audit` pass locally; exact-head CI `verify` and `advisories` pass after push. PostgreSQL behavior remains CI-evidenced only.

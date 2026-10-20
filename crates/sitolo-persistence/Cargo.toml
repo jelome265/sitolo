@@ -21,7 +21,8 @@ sitolo-domain = { path = "../sitolo-domain" }
 sitolo-events.workspace = true
 sitolo-security.workspace = true
 sitolo-tenancy = { path = "../sitolo-tenancy" }
-sqlx.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

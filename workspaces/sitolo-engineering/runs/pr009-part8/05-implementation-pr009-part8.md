@@ -3,7 +3,7 @@
 **Stage:** 05 Implement\
 **Date:** 2026-10-20\
 **Source before changes:** `1223ed3aef3818f56c5b444ee22fff287546349f`\
-**Current tree:** `0b851583030687cc7d663289b995c63991224dc2` plus uncommitted System Map source-revision updates on `feat/phase4-pr009-audit-outbox` (PR #49 open)\
+**Base commit:** `dd583b24a4f548437b368d59e91fe4e438dc624a`; worker engine commit: `2048c8a6a2a216d466240e1e1a1f5f99dae111d7` (local, not yet pushed to PR #49)\
 **Goal:** PostgreSQL transaction for organization + owner membership + default branch + audit + outbox; repair database-test wiring; keep PR open.
 
 ## Implemented
@@ -31,7 +31,7 @@
 | `cargo check --workspace --all-targets --locked` (after audit remediation) | PASS |
 | Real PostgreSQL application integration suite | NOT RUN locally: no PostgreSQL server or database URLs are available; CI workflow is configured but has not run on these changes |
 | Full canonical verification / exact-head CI | NOT RUN on these changes |
-| `cargo audit`, `cargo deny check` | NOT RUN locally; `cargo-audit` installation failed while unpacking `aws-lc-sys` because the system C: volume is full. Prior CI reported the inactive locked `rsa 0.9.10` advisory, which remains unresolved pending an applicability/remediation decision |
+| `cargo audit`, `cargo deny check` | Initially NOT RUN locally because `cargo-audit` installation failed on the full C: volume. After the 2026-10-21 PostgreSQL-only SQLx remediation: `cargo-audit` 0.22.2 PASS (191 dependencies, no vulnerabilities) and `cargo-deny` 0.20.2 PASS (advisories, bans, licenses, sources). The prior locked `rsa 0.9.10` advisory is no longer in `Cargo.lock`; exact-head CI is pending. |
 
 The unit/build checks do not prove RLS, role, SQL transaction, or rollback behavior. Those claims remain unverified until the real PostgreSQL workflow passes on the exact pushed revision.
 
@@ -40,7 +40,7 @@ The unit/build checks do not prove RLS, role, SQL transaction, or rollback behav
 - The worker relay destination remains undefined. “Main and sub” still does not identify a transport, endpoints/topics/queues, event delivery contract, or runtime fields. No relay target has been invented.
 - Destination-dependent relay, idempotent consumer delivery, worker runtime completion, and associated operator evidence remain incomplete.
 - Application PostgreSQL CI passed on `1383233`; the persistence/RLS suite and its catalog, privilege, and concurrency assertions still await the canonical verifier.
-- RSA advisory disposition and the exact-head canonical verifier remain. The 0b85158 policy run found a stale verified System Map source revision after the `postgres.rs` change; the process/object cards and generated index are corrected locally, and exact-head policy rerun is pending.
+- RSA advisory disposition: the PostgreSQL-only SQLx remediation is implemented locally and removes `rsa` from `Cargo.lock`; exact-head `verify` and `advisories` runs remain pending after push. See the 2026-10-21 section.
 - Other tenancy transitions besides organization provisioning still use the in-memory reference store; this implementation does not claim their business mutations are PostgreSQL-backed.
 
 ## Human check
@@ -57,4 +57,47 @@ Canonical verifier run 629 then passed all 23 Part 8 PostgreSQL persistence test
 
 On commit `1aad95cf03e98d63f610c7fe8bc268aae45b2e4c`, policy run 484 passed, application PostgreSQL integration run 781 passed, and canonical Rust run 631 passed the all-target test set, 23 Part 8 PostgreSQL tests, and the legacy RLS suite (27 tests, also passed in its explicit standalone invocation). The verifier then failed at `cargo audit` on `RUSTSEC-2023-0071`; all preceding canonical gates passed, including cargo-deny. The security workflow's dependency-policy, CodeQL, offensive-regression, and secrets jobs passed, while its advisory job failed on the same RSA finding.
 
-A concurrent identical-provisioning test was added after that run to exercise two PostgreSQL transactions racing on the same organization ID. It formats, compiles, and passes clippy locally, but cannot run without a local PostgreSQL service; exact-head CI must execute it after push. The current `1aad95c` pass does not cover this new test.
+A concurrent identical-provisioning test was added after that run to exercise two PostgreSQL transactions racing on the same organization ID.
+
+## Exact-head follow-up — 2026-10-20
+
+On `dd583b24a4f548437b368d59e91fe4e438dc624a`, integration run 782 passed the 5-test application evidence suite against PostgreSQL, including the concurrent identical-provisioning case. Canonical Rust run 632 passed that test, all 23 Part 8 persistence tests, and both invocations of the 27-test RLS suite. Policy run 485 passed. Canonical verification reached `cargo audit` and failed on `RUSTSEC-2023-0071` for locked `rsa 0.9.10`; security run 639 passed dependency-policy, CodeQL, offensive-regression, and secrets while advisories failed on the same finding. No local PostgreSQL was available; these PostgreSQL assertions are based on CI. The API durable wiring remains removed until a trusted authenticated principal is available. Worker relay and other tenancy mutations remain incomplete.
+
+## Destination-independent worker engine — 2026-10-20 (`2048c8a`, local)
+
+- Added `apps/worker/src/lib.rs` and `relay.rs` with a bounded claim loop, stale-claim recovery before each batch, a registry of the known IAM event names, version/schema-version agreement, and a JSON-object envelope check.
+- A concrete publisher receives the stable `event_id` as the idempotency key. Retryable failures use capped exponential backoff; terminal/unknown failures and unsupported event envelopes are quarantined. Persistence errors propagate and stop processing. Batch totals are emitted as structured tracing fields.
+- `apps/worker/src/main.rs` exits with a clear fail-closed error until the approved transport adapter and its configuration contract exist. No database connection, destination, topic/queue, or acknowledgement behavior has been invented.
+- Local verification after this change: `cargo fmt --all -- --check`; `cargo test -p sitolo-worker-bin -p sitolo-audit --locked` (7 worker + 3 audit tests passed); `cargo clippy -p sitolo-worker-bin -p sitolo-audit --all-targets --locked -- -D warnings`; `cargo check --workspace --all-targets --locked`; and `git diff --check` all pass.
+- This is a transport-neutral processing engine, not an operational relay. It does not prove consumer idempotency, event-specific JSON schemas, destination configuration, database pool composition, exported metrics, runbooks, or delivery under a real adapter. Exact-head CI for these new files is pending because `2048c8a` has not yet been pushed.
+
+## Advisory remediation implementation — 2026-10-21
+
+The RSA advisory is removed from the lockfile by construction:
+
+- `Cargo.toml`: the `sqlx` meta-crate workspace dependency was replaced with `sqlx-core` (feature `_rt-tokio`) and `sqlx-postgres` (features `chrono`, `json`). The comment records why.
+- `crates/sitolo-application/Cargo.toml` and `crates/sitolo-persistence/Cargo.toml`: replaced `sqlx.workspace = true` with the two backend crates.
+- `crates/sitolo-persistence/src/outbox_repository.rs`: replaced `#[derive(sqlx::FromRow)]` with an explicit `FromRow<PgRow>` implementation for `OutboxEventRow`.
+- `crates/sitolo-persistence/tests/part8_postgres_integration_tests.rs`: replaced the two `sqlx::FromRow` derives with explicit implementations for `FunctionSecurityRow` and `RelationSecurityRow`.
+- Remaining SQLx imports now come from `sqlx_core` (query builders, `Error`, `FromRow`, `Row`, `Transaction`) and `sqlx_postgres` (`PgPool`, `PgRow`, `Postgres`, `PgConnectOptions`, `PgPoolOptions`). No `sqlx::query!`, migration, or other macro is used.
+- `Cargo.lock` was regenerated by Cargo, not edited by hand. It dropped from 220 to 191 packages and no longer contains `rsa`, `sqlx`, `sqlx-mysql`, `sqlx-macros`, `sqlx-macros-core`, or `sqlx-sqlite`.
+
+Local verification after this change:
+
+| Command / evidence | Result |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo metadata --format-version 1 --locked` | PASS |
+| `cargo check --workspace --all-targets --all-features --locked` | PASS |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS |
+| `cargo test --workspace --locked --lib -j 1` | PASS (210 workspace library tests plus 7 worker tests) |
+| `cargo test -p sitolo-api-bin --test startup --test tenancy_api --all-features --locked -j 1` | PASS (11 tests) |
+| `cargo test -p sitolo-persistence --test part8_audit_outbox_tests --all-features --locked -j 1` | PASS (5 tests) |
+| `cargo test -p sitolo-security --test provider_env --all-features --locked -j 1` | PASS (4 tests) |
+| `cargo test --workspace --all-targets --all-features --locked --no-run -j 1` | PASS; every test target compiles, including the PostgreSQL integration and RLS targets |
+| `cargo build --workspace --release --locked -j 1` | PASS |
+| `cargo audit` 0.22.2 | PASS; 1348 advisories loaded, 191 dependencies scanned, no vulnerabilities |
+| `cargo deny check` 0.20.2 | PASS; advisories ok, bans ok, licenses ok, sources ok |
+| PostgreSQL integration and RLS execution | NOT RUN locally: no PostgreSQL server or database URLs are available. Compilation and prior CI evidence only. |
+
+The explicit `FromRow` mappings use the same field names as the derives, so column lookup behavior is unchanged. `deny.toml` remains `ignore = []`; no advisory suppression, `--locked` removal, or gate weakening was applied.

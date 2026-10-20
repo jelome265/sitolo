@@ -46,3 +46,21 @@ No external standard resolves the worker destination or business-command semanti
 ## Human check
 
 Requester decisions recorded: restart at Stage 01; implement PostgreSQL-backed tenancy mutation for full atomicity; requester cannot provide an existing PostgreSQL service. Relay phrase "main and sub" requires clarification before it is treated as an implementation contract.
+
+## Exact-head update — 2026-10-20
+
+The requester later said they cannot view this memo and directed continuation. This records their input; it is not represented as a human review of the memo. They confirmed the names “main and sub” but supplied no transport, destination identifiers/endpoints, payload/version boundary, acknowledgement behavior, or runtime configuration fields. The research decision therefore remains unchanged: no relay can be implemented without inventing product/architecture semantics.
+
+For `dd583b24a4f548437b368d59e91fe4e438dc624a`, GitHub reports integration run 782 and policy run 485 passed. Canonical Rust run 632 passed format, lint, compile, unit/application tests, the 23-test Part 8 persistence suite, the 27-test RLS suite (including the separate invocation), release build, architecture, Phase 2 policy, and dependency/license policy; it then failed at `cargo audit` for `RUSTSEC-2023-0071` in locked `rsa 0.9.10`. Security run 639 passed dependency-policy, CodeQL, offensive-regression, and secrets; advisories failed on the same RSA finding. This confirms the earlier CI wiring fixes and exercises the concurrent provisioning test on PostgreSQL; it does not resolve the relay contract or advisory.
+
+### Dependency remediation check
+
+Reviewed upstream SQLx 0.9.0 release metadata and its `sqlx-mysql` manifest as a possible legitimate removal path for the lockfile-only RSA finding. SQLx 0.9.0 introduces breaking changes and its MySQL crate still declares `rsa 0.10.0-rc.18` as an optional dependency. RustSec's current advisory explicitly lists both `rsa 0.9.10` and `0.10.0-rc.18` as affected, with no patched release. A SQLx version bump therefore does not safely resolve the scanner finding and would add a major dependency migration. No version bump or scanner suppression was applied. Sources: [SQLx 0.9.0 changelog](https://github.com/transact-rs/sqlx/blob/v0.9.0/CHANGELOG.md), [SQLx 0.9.0 MySQL manifest](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-mysql/Cargo.toml), [RustSec RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071.html).
+
+### Implemented remediation - 2026-10-21
+
+Root cause confirmed: the `sqlx` meta-crate and `sqlx-macros` declare optional `sqlx-mysql` and `sqlx-sqlite` dependencies. Cargo records every optional package in `Cargo.lock`, so `cargo audit` scans `rsa 0.9.10` even though no enabled workspace feature or target compiles the MySQL backend.
+
+Remediation applied in the working tree: the root workspace and both database-using crates now depend on `sqlx-core` and `sqlx-postgres` directly. `sqlx-core` enables the `_rt-tokio` runtime feature that the meta-crate previously forwarded, and `sqlx-postgres` enables `chrono` and `json`. The three `sqlx::FromRow` derives are replaced with explicit `FromRow` implementations so no macro crate is needed. `deny.toml` still has `ignore = []`, `--locked` is still used, and no CI gate was changed.
+
+Local evidence: `Cargo.lock` dropped from 220 to 191 dependencies and no longer contains `rsa`, `sqlx`, `sqlx-mysql`, `sqlx-macros`, `sqlx-macros-core`, or `sqlx-sqlite`. `cargo audit` 0.22.2 loaded 1348 advisories and scanned 191 dependencies with no vulnerabilities. `cargo-deny` 0.20.2 reported advisories ok, bans ok, licenses ok, and sources ok. Exact-head CI evidence is pending the push.

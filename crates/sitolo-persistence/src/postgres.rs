@@ -6,8 +6,12 @@
 
 use sitolo_domain::tenancy::TenancyError;
 use sitolo_tenancy::AuthorizedScope;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx_core::error::Error;
+use sqlx_core::query::query;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::row::Row;
+use sqlx_core::transaction::Transaction;
+use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, Postgres};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -29,10 +33,10 @@ pub enum PgAuthorityError {
     },
 }
 
-impl From<sqlx::Error> for PgAuthorityError {
-    fn from(err: sqlx::Error) -> Self {
+impl From<Error> for PgAuthorityError {
+    fn from(err: Error) -> Self {
         match err {
-            sqlx::Error::RowNotFound => PgAuthorityError::NotFoundOrDenied,
+            Error::RowNotFound => PgAuthorityError::NotFoundOrDenied,
             _ => PgAuthorityError::Sqlx,
         }
     }
@@ -60,7 +64,7 @@ impl PgAuthorityPools {
             .max_connections(20)
             .after_connect(|conn, _| {
                 Box::pin(async move {
-                    sqlx::query("SET ROLE app_runtime").execute(conn).await?;
+                    query("SET ROLE app_runtime").execute(conn).await?;
                     Ok(())
                 })
             })
@@ -81,7 +85,7 @@ impl PgAuthorityPools {
     /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
     /// has zero role memberships in `pg_auth_members`, rolinherit = false, rolreplication = false, and does NOT own protected relations.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
-        let row = sqlx::query(
+        let row = query(
             "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolreplication
              FROM pg_roles
              WHERE rolname = 'app_runtime'",
@@ -101,7 +105,7 @@ impl PgAuthorityPools {
         }
 
         // Verify runtime role has NO role memberships in pg_auth_members
-        let member_count: i64 = sqlx::query_scalar(
+        let member_count: i64 = query_scalar(
             "SELECT COUNT(*)
              FROM pg_auth_members m
              JOIN pg_roles r ON r.oid = m.member
@@ -118,7 +122,7 @@ impl PgAuthorityPools {
         let protected_tables = vec!["organizations", "branches", "tenant_resources"];
 
         for table in protected_tables {
-            let owner_role: Option<String> = sqlx::query_scalar(
+            let owner_role: Option<String> = query_scalar(
                 "SELECT pg_get_userbyid(c.relowner)
                  FROM pg_class c
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -143,7 +147,7 @@ impl PgAuthorityPools {
         &self,
         schema_name: &str,
     ) -> Result<(), PgAuthorityError> {
-        let has_connect: bool = sqlx::query_scalar(
+        let has_connect: bool = query_scalar(
             "SELECT has_database_privilege('app_runtime', current_database(), 'CONNECT')",
         )
         .fetch_one(&self.admin_pool)
@@ -155,7 +159,7 @@ impl PgAuthorityPools {
 
         // Assert schema CREATE is FALSE
         let has_schema_create: bool =
-            sqlx::query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'CREATE')")
+            query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'CREATE')")
                 .bind(schema_name)
                 .fetch_one(&self.admin_pool)
                 .await?;
@@ -165,7 +169,7 @@ impl PgAuthorityPools {
         }
 
         let has_usage: bool =
-            sqlx::query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'USAGE')")
+            query_scalar("SELECT has_schema_privilege('app_runtime', $1, 'USAGE')")
                 .bind(schema_name)
                 .fetch_one(&self.admin_pool)
                 .await?;
@@ -183,9 +187,7 @@ impl PgAuthorityPools {
                 let query = format!(
                     "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
                 );
-                let has_priv: bool = sqlx::query_scalar(&query)
-                    .fetch_one(&self.admin_pool)
-                    .await?;
+                let has_priv: bool = query_scalar(&query).fetch_one(&self.admin_pool).await?;
 
                 if !has_priv {
                     return Err(PgAuthorityError::SecurityViolation);
@@ -197,9 +199,7 @@ impl PgAuthorityPools {
                 let query = format!(
                     "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
                 );
-                let has_priv: bool = sqlx::query_scalar(&query)
-                    .fetch_one(&self.admin_pool)
-                    .await?;
+                let has_priv: bool = query_scalar(&query).fetch_one(&self.admin_pool).await?;
 
                 if has_priv {
                     return Err(PgAuthorityError::SecurityViolation);
@@ -219,7 +219,7 @@ impl PgAuthorityPools {
         let protected_tables = vec!["organizations", "branches", "tenant_resources"];
 
         for table in protected_tables {
-            let row = sqlx::query(
+            let row = query(
                 "SELECT c.relrowsecurity, c.relforcerowsecurity
                  FROM pg_class c
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -238,7 +238,7 @@ impl PgAuthorityPools {
             }
 
             // Verify EXACT policy count on relation = 1
-            let policy_count: i64 = sqlx::query_scalar(
+            let policy_count: i64 = query_scalar(
                 "SELECT COUNT(*)
                  FROM pg_policy p
                  JOIN pg_class c ON c.oid = p.polrelid
@@ -255,7 +255,7 @@ impl PgAuthorityPools {
             }
 
             let expected_policy_name = format!("{table}_isolation_policy");
-            let policy_row = sqlx::query(
+            let policy_row = query(
                 "SELECT polname, polcmd, polroles::bigint[] as polroles,
                         pg_get_expr(polqual, polrelid) as qual_expr,
                         pg_get_expr(polwithcheck, polrelid) as check_expr
@@ -283,7 +283,7 @@ impl PgAuthorityPools {
                     }
 
                     // Verify polroles strictly targets app_runtime role (and NOT 0/PUBLIC, nor empty)
-                    let runtime_oid: i64 = sqlx::query_scalar(
+                    let runtime_oid: i64 = query_scalar(
                         "SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'",
                     )
                     .fetch_one(&self.admin_pool)
@@ -345,18 +345,18 @@ pub async fn set_transaction_tenant_context(
     tx: &mut Transaction<'_, Postgres>,
     scope: &AuthorizedScope,
 ) -> Result<(), PgAuthorityError> {
-    sqlx::query("SELECT set_config('app.organization_id', $1, true)")
+    query("SELECT set_config('app.organization_id', $1, true)")
         .bind(scope.organization_id().as_str())
         .execute(&mut **tx)
         .await?;
 
     if let Some(branch_id) = scope.branch_id() {
-        sqlx::query("SELECT set_config('app.branch_id', $1, true)")
+        query("SELECT set_config('app.branch_id', $1, true)")
             .bind(branch_id.as_str())
             .execute(&mut **tx)
             .await?;
     } else {
-        sqlx::query("SELECT set_config('app.branch_id', '', true)")
+        query("SELECT set_config('app.branch_id', '', true)")
             .execute(&mut **tx)
             .await?;
     }

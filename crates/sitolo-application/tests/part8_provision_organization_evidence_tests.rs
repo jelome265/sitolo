@@ -26,8 +26,10 @@ use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyErro
 use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
-use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx_core::query::query;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::raw_sql::raw_sql;
+use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::sync::Barrier;
 use uuid::Uuid;
 
@@ -65,7 +67,7 @@ async fn setup() -> TestContext {
         .await
         .expect("connect to Postgres");
 
-    sqlx::raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""))
+    raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""))
         .execute(&admin_pool)
         .await
         .expect("create test schema");
@@ -73,14 +75,14 @@ async fn setup() -> TestContext {
     let schema_sql =
         include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
             .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    sqlx::raw_sql(&schema_sql)
+    raw_sql(&schema_sql)
         .execute(&admin_pool)
         .await
         .expect("apply Part 8 audit/outbox schema fixture");
 
     let tenancy_sql =
         include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
-    sqlx::raw_sql(tenancy_sql)
+    raw_sql(tenancy_sql)
         .execute(&admin_pool)
         .await
         .expect("apply PostgreSQL tenancy provisioning schema");
@@ -95,14 +97,14 @@ async fn setup() -> TestContext {
         .max_connections(5)
         .after_connect(|conn, _| {
             Box::pin(async move {
-                sqlx::query("SET ROLE app_runtime").execute(conn).await?;
+                query("SET ROLE app_runtime").execute(conn).await?;
                 Ok(())
             })
         })
         .connect_with(runtime_opts)
         .await
         .expect("connect runtime test pool");
-    let identity: String = sqlx::query_scalar("SELECT current_user")
+    let identity: String = query_scalar("SELECT current_user")
         .fetch_one(&runtime_pool)
         .await
         .expect("read runtime identity");
@@ -116,7 +118,7 @@ async fn setup() -> TestContext {
 }
 
 async fn teardown(ctx: &TestContext) {
-    let _ = sqlx::raw_sql(&format!(
+    let _ = raw_sql(&format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
     ))
@@ -132,7 +134,7 @@ fn service_with_evidence(pool: PgPool) -> TenancyService {
 }
 
 async fn row_count(pool: &PgPool, table: &str, org_id: &str) -> i64 {
-    sqlx::query_scalar(&format!(
+    query_scalar(&format!(
         "SELECT COUNT(*) FROM {table} WHERE organization_id = $1"
     ))
     .bind(org_id)
@@ -142,7 +144,7 @@ async fn row_count(pool: &PgPool, table: &str, org_id: &str) -> i64 {
 }
 
 async fn organization_row_count(pool: &PgPool, organization_id: &str) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM organizations WHERE id = $1")
+    query_scalar("SELECT COUNT(*) FROM organizations WHERE id = $1")
         .bind(organization_id)
         .fetch_one(pool)
         .await
@@ -340,7 +342,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
     let ctx = setup().await;
 
     // Break the outbox half of the shared transaction only.
-    sqlx::raw_sql("ALTER TABLE outbox_events RENAME TO outbox_events_disabled")
+    raw_sql("ALTER TABLE outbox_events RENAME TO outbox_events_disabled")
         .execute(&ctx.admin_pool)
         .await
         .expect("rename outbox_events to induce a deterministic outbox write failure");
@@ -390,7 +392,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
 async fn provision_organization_audit_failure_rolls_back_business_state() {
     let ctx = setup().await;
 
-    sqlx::raw_sql("ALTER TABLE audit_events RENAME TO audit_events_disabled")
+    raw_sql("ALTER TABLE audit_events RENAME TO audit_events_disabled")
         .execute(&ctx.admin_pool)
         .await
         .expect("rename audit_events to induce a deterministic audit write failure");
