@@ -3,7 +3,7 @@
 **Stage:** 05 Implement\
 **Date:** 2026-10-20\
 **Source before changes:** `1223ed3aef3818f56c5b444ee22fff287546349f`\
-**Base commit:** `dd583b24a4f548437b368d59e91fe4e438dc624a`; worker engine commit: `2048c8a6a2a216d466240e1e1a1f5f99dae111d7` (local, not yet pushed to PR #49)\
+**Base commit:** `dd583b24a4f548437b368d59e91fe4e438dc624a`; worker engine commit: `2048c8a6a2a216d466240e1e1a1f5f99dae111d7` (included in pushed exact head `862775c`)\
 **Goal:** PostgreSQL transaction for organization + owner membership + default branch + audit + outbox; repair database-test wiring; keep PR open.
 
 ## Implemented
@@ -29,18 +29,18 @@
 | `cargo test -p sitolo-api-bin --test startup --test tenancy_api` (after audit remediation) | PASS (11 tests) |
 | `cargo fmt --all -- --check` (after audit remediation) | PASS |
 | `cargo check --workspace --all-targets --locked` (after audit remediation) | PASS |
-| Real PostgreSQL application integration suite | NOT RUN locally: no PostgreSQL server or database URLs are available; CI workflow is configured but has not run on these changes |
-| Full canonical verification / exact-head CI | NOT RUN on these changes |
-| `cargo audit`, `cargo deny check` | Initially NOT RUN locally because `cargo-audit` installation failed on the full C: volume. After the 2026-10-21 PostgreSQL-only SQLx remediation: `cargo-audit` 0.22.2 PASS (191 dependencies, no vulnerabilities) and `cargo-deny` 0.20.2 PASS (advisories, bans, licenses, sources). The prior locked `rsa 0.9.10` advisory is no longer in `Cargo.lock`; exact-head CI is pending. |
+| Real PostgreSQL application integration suite | NOT RUN locally: no PostgreSQL server or database URLs are available. Exact-head CI at `862775c` passed the integration job and the canonical verifier's PostgreSQL suites. |
+| Full canonical verification / exact-head CI | PASS at `862775c`: `rust` run 39508142399 (`verify` job 8m2s), `security` run 39508142385, `policy` run 39508142377, and `integration` run 39508142396. |
+| `cargo audit`, `cargo deny check` | Initially NOT RUN locally because `cargo-audit` installation failed on the full C: volume. After the 2026-10-21 PostgreSQL-only SQLx remediation: `cargo-audit` 0.22.2 PASS (191 dependencies, no vulnerabilities) and `cargo-deny` 0.20.2 PASS (advisories, bans, licenses, sources). The prior locked `rsa 0.9.10` advisory is no longer in `Cargo.lock`; exact-head `verify` and `advisories` passed at `862775c`. |
 
-The unit/build checks do not prove RLS, role, SQL transaction, or rollback behavior. Those claims remain unverified until the real PostgreSQL workflow passes on the exact pushed revision.
+The unit/build checks do not by themselves prove RLS, role, SQL transaction, or rollback behavior. Those claims now have exact-head PostgreSQL CI evidence at `862775c`; the local host still could not execute them.
 
 ## Remaining gates
 
 - The worker relay destination remains undefined. “Main and sub” still does not identify a transport, endpoints/topics/queues, event delivery contract, or runtime fields. No relay target has been invented.
 - Destination-dependent relay, idempotent consumer delivery, worker runtime completion, and associated operator evidence remain incomplete.
-- Application PostgreSQL CI passed on `1383233`; the persistence/RLS suite and its catalog, privilege, and concurrency assertions still await the canonical verifier.
-- RSA advisory disposition: the PostgreSQL-only SQLx remediation is implemented locally and removes `rsa` from `Cargo.lock`; exact-head `verify` and `advisories` runs remain pending after push. See the 2026-10-21 section.
+- Application PostgreSQL CI passed on `1383233`; the persistence/RLS suite and its catalog, privilege, and concurrency assertions passed in the canonical verifier at `862775c` (23 Part 8 tests, 27 RLS tests in-suite and standalone).
+- RSA advisory disposition: the PostgreSQL-only SQLx remediation removes `rsa` from `Cargo.lock`; exact-head `verify` and `advisories` passed at `862775c`. See the 2026-10-21 section.
 - Other tenancy transitions besides organization provisioning still use the in-memory reference store; this implementation does not claim their business mutations are PostgreSQL-backed.
 
 ## Human check
@@ -49,9 +49,9 @@ The requester directed continuation (“do what you have to to make it all work�
 
 ## Exact-head PostgreSQL follow-up — 2026-10-20
 
-Commit `1383233691ec2aa0b294ea0311d8143836ca0d19` fixes the organization assertion helper to query `organizations.id`. GitHub integration run 779 passed on this exact commit. All four `part8_provision_organization_evidence_tests` passed against PostgreSQL, including successful provisioning, audit-failure rollback, outbox-failure rollback, same-payload retry, and divergent-ID conflict. The separate persistence/RLS suite under the canonical verifier has not yet completed; these application tests do not prove its role/catalog/concurrency checks. The requester has no local PostgreSQL instance, which remains true.
+Commit `1383233691ec2aa0b294ea0311d8143836ca0d19` fixes the organization assertion helper to query `organizations.id`. GitHub integration run 779 passed on this exact commit. All four `part8_provision_organization_evidence_tests` passed against PostgreSQL, including successful provisioning, audit-failure rollback, outbox-failure rollback, same-payload retry, and divergent-ID conflict. The separate persistence/RLS suite under the canonical verifier had not yet completed at that point; it later passed at `862775c`. These application tests do not prove its role/catalog/concurrency checks by themselves. The requester has no local PostgreSQL instance, which remains true.
 
-Canonical verifier run 629 then passed all 23 Part 8 PostgreSQL persistence tests but failed the legacy `rls_security_tests`: `PgAuthorityPools` opened the runtime pool as `postgres` and did not assume `app_runtime`, so every test failed its explicit identity precondition before exercising its body. The local remediation adds `SET ROLE app_runtime` in the runtime pool's `after_connect` hook. Local format, all-target check, clippy, and diff checks pass after that change; an exact-head PostgreSQL rerun is pending.
+Canonical verifier run 629 then passed all 23 Part 8 PostgreSQL persistence tests but failed the legacy `rls_security_tests`: `PgAuthorityPools` opened the runtime pool as `postgres` and did not assume `app_runtime`, so every test failed its explicit identity precondition before exercising its body. The local remediation adds `SET ROLE app_runtime` in the runtime pool's `after_connect` hook. Local format, all-target check, clippy, and diff checks pass after that change; the exact-head rerun passed at `862775c`.
 
 ## Exact-head verification follow-up — 2026-10-20
 
@@ -69,7 +69,7 @@ On `dd583b24a4f548437b368d59e91fe4e438dc624a`, integration run 782 passed the 5-
 - A concrete publisher receives the stable `event_id` as the idempotency key. Retryable failures use capped exponential backoff; terminal/unknown failures and unsupported event envelopes are quarantined. Persistence errors propagate and stop processing. Batch totals are emitted as structured tracing fields.
 - `apps/worker/src/main.rs` exits with a clear fail-closed error until the approved transport adapter and its configuration contract exist. No database connection, destination, topic/queue, or acknowledgement behavior has been invented.
 - Local verification after this change: `cargo fmt --all -- --check`; `cargo test -p sitolo-worker-bin -p sitolo-audit --locked` (7 worker + 3 audit tests passed); `cargo clippy -p sitolo-worker-bin -p sitolo-audit --all-targets --locked -- -D warnings`; `cargo check --workspace --all-targets --locked`; and `git diff --check` all pass.
-- This is a transport-neutral processing engine, not an operational relay. It does not prove consumer idempotency, event-specific JSON schemas, destination configuration, database pool composition, exported metrics, runbooks, or delivery under a real adapter. Exact-head CI for these new files is pending because `2048c8a` has not yet been pushed.
+- This is a transport-neutral processing engine, not an operational relay. It does not prove consumer idempotency, event-specific JSON schemas, destination configuration, database pool composition, exported metrics, runbooks, or delivery under a real adapter. Exact-head CI for these files passed at `862775c`.
 
 ## Advisory remediation implementation — 2026-10-21
 
