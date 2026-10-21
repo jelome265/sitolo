@@ -57,10 +57,10 @@ jobs:
           cargo install cargo-audit --locked
       - name: Run canonical verification
         env:
+          # The admin DSN is used only for schema and role setup. Runtime and
+          # worker authenticate as their own restricted LOGIN roles, which the
+          # isolated-schema fixture creates before the pools connect.
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
-          # The harness connects with the PostgreSQL service administrator,
-          # then SET ROLEs each pool to the NOLOGIN identity created by its
-          # isolated-schema fixture.
-          RUNTIME_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
-          WORKER_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
+          RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
+          WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test
         run: ./scripts/ci/verify

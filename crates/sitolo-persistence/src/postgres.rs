@@ -51,6 +51,10 @@ pub struct PgAuthorityPools {
 
 impl PgAuthorityPools {
     /// Creates an administrative pool and a runtime pool given database connection options.
+    ///
+    /// `runtime_opts` must authenticate as the restricted runtime role. The pool does not
+    /// assume that role with `SET ROLE`; `verify_runtime_role` fails closed if the login
+    /// identity differs.
     pub async fn connect_options(
         admin_opts: PgConnectOptions,
         runtime_opts: PgConnectOptions,
@@ -62,12 +66,6 @@ impl PgAuthorityPools {
 
         let runtime_pool = PgPoolOptions::new()
             .max_connections(20)
-            .after_connect(|conn, _| {
-                Box::pin(async move {
-                    query("SET ROLE app_runtime").execute(conn).await?;
-                    Ok(())
-                })
-            })
             .connect_with(runtime_opts)
             .await?;
 
@@ -82,14 +80,32 @@ impl PgAuthorityPools {
         &self.runtime_pool
     }
 
-    /// Verifies via PostgreSQL catalogs that `app_runtime` has no administrative privileges,
-    /// has zero role memberships in `pg_auth_members`, rolinherit = false, rolreplication = false, and does NOT own protected relations.
+    /// Verifies that the runtime pool authenticates as `app_runtime` and that the role has no
+    /// administrative privileges, has zero role memberships in `pg_auth_members`,
+    /// rolinherit = false, rolreplication = false, and does NOT own protected relations.
+    ///
+    /// `SET ROLE` is reversible for the remainder of a session, so a pool that logs in as an
+    /// administrator and then drops privileges is not a boundary. Both `current_user` and
+    /// `session_user` are asserted on the runtime pool itself.
     pub async fn verify_runtime_role(&self, schema_name: &str) -> Result<(), PgAuthorityError> {
+        let identity =
+            query("SELECT current_user::text AS current_user, session_user::text AS session_user")
+                .fetch_one(&self.runtime_pool)
+                .await?;
+
+        let current_user: String = identity.get("current_user");
+        let session_user: String = identity.get("session_user");
+
+        if current_user != "app_runtime" || session_user != "app_runtime" {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
         let row = query(
             "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolreplication
              FROM pg_roles
-             WHERE rolname = 'app_runtime'",
+             WHERE rolname::text = $1",
         )
+        .bind(session_user.as_str())
         .fetch_one(&self.admin_pool)
         .await?;
 

@@ -1,10 +1,11 @@
 -- Phase 4 Part 8 Audit and Outbox Schema
 --
 -- Security model:
---   * `app_runtime` (NOLOGIN) may INSERT audit/outbox rows inside the request
+--   * `app_runtime` (LOGIN) may INSERT audit/outbox rows inside the request
 --     transaction and may advance aggregate sequences. RLS constrains inserts
---     to the transaction tenant context.
---   * `app_worker` (NOLOGIN) has EXECUTE on five narrow state-transition
+--     to the transaction tenant context. The runtime pool authenticates as
+--     this role directly; `SET ROLE` is not the authority mechanism.
+--   * `app_worker` (LOGIN) has EXECUTE on five narrow state-transition
 --     functions and no direct table write privilege. The fixture grants no
 --     direct SELECT on `outbox_events`, so one worker replica cannot read
 --     another replica's claim token.
@@ -26,12 +27,12 @@ DO $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('sitolo.part8.role-bootstrap'), 8);
     BEGIN
-        CREATE ROLE app_runtime NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE app_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     EXCEPTION WHEN duplicate_object THEN
         NULL;
     END;
     BEGIN
-        CREATE ROLE app_worker NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE app_worker LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     EXCEPTION WHEN duplicate_object THEN
         NULL;
     END;
@@ -47,8 +48,8 @@ $$;
 -- exist. This requires the migration/admin role to own the roles or be a
 -- superuser; a failure here is intentional, because a BYPASSRLS worker would
 -- invalidate every RLS test.
-ALTER ROLE app_runtime NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE app_worker NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE app_runtime LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE app_worker LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE app_outbox_owner NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 
 GRANT USAGE ON SCHEMA __SCHEMA__ TO app_runtime, app_worker, app_outbox_owner;

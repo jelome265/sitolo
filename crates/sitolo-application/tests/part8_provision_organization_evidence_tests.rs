@@ -26,7 +26,6 @@ use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyErro
 use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
-use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -92,12 +91,6 @@ async fn setup() -> TestContext {
         .options([("search_path", schema_name.as_str())]);
     let runtime_pool = PgPoolOptions::new()
         .max_connections(5)
-        .after_connect(|conn, _| {
-            Box::pin(async move {
-                query("SET ROLE app_runtime").execute(conn).await?;
-                Ok(())
-            })
-        })
         .connect_with(runtime_opts)
         .await
         .expect("connect runtime test pool");
@@ -105,7 +98,12 @@ async fn setup() -> TestContext {
         .fetch_one(&runtime_pool)
         .await
         .expect("read runtime identity");
+    let session_identity: String = query_scalar("SELECT session_user")
+        .fetch_one(&runtime_pool)
+        .await
+        .expect("read runtime session identity");
     assert_eq!(identity, "app_runtime");
+    assert_eq!(session_identity, "app_runtime");
 
     TestContext {
         admin_pool,

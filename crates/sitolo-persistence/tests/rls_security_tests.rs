@@ -324,7 +324,7 @@ async fn setup_test_context(
 
     MIGRATIONS_INIT
         .get_or_init(|| async {
-            let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$;";
+            let role_sql = "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN CREATE ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS; END IF; END $$; ALTER ROLE app_runtime WITH LOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS;";
             raw_sql(role_sql)
                 .execute(&admin_pool)
                 .await
@@ -538,6 +538,55 @@ async fn test_catalog_runtime_role_privileges() {
             .verify_effective_privileges(&ctx.schema_name)
             .await
             .expect("app_runtime effective privileges failed catalog verification");
+    })
+    .await;
+}
+
+/// The runtime pool must authenticate as `app_runtime`. Privilege reduction
+/// reached through a reversible `SET ROLE` from an administrative login is not
+/// a boundary, so `RESET ROLE` must not change the identity and `SET ROLE
+/// postgres` must fail.
+#[tokio::test]
+async fn test_runtime_pool_identity_cannot_escalate() {
+    run_test_with_teardown(|ctx| async move {
+        let runtime_pool = ctx.pools.runtime_pool();
+
+        let current: String = query_scalar("SELECT current_user")
+            .fetch_one(runtime_pool)
+            .await
+            .expect("read runtime current_user");
+        let session: String = query_scalar("SELECT session_user")
+            .fetch_one(runtime_pool)
+            .await
+            .expect("read runtime session_user");
+
+        assert_eq!(current, "app_runtime");
+        assert_eq!(session, "app_runtime");
+
+        // No role was assumed, so RESET ROLE is a no-op.
+        query("RESET ROLE")
+            .execute(runtime_pool)
+            .await
+            .expect("RESET ROLE must succeed as the restricted identity");
+        let after_reset: String = query_scalar("SELECT current_user")
+            .fetch_one(runtime_pool)
+            .await
+            .expect("read runtime current_user after RESET ROLE");
+        assert_eq!(after_reset, "app_runtime");
+
+        // app_runtime is not a member of postgres and must not be able to
+        // assume it. Run inside a transaction so a failed statement cannot
+        // leave a pooled connection in an aborted state.
+        let mut tx = runtime_pool.begin().await.expect("begin escalation probe");
+        let escalation = query("SET ROLE postgres").execute(&mut *tx).await;
+        tx.rollback()
+            .await
+            .expect("rollback escalation probe transaction");
+
+        assert!(
+            escalation.is_err(),
+            "runtime identity must not be able to SET ROLE postgres"
+        );
     })
     .await;
 }

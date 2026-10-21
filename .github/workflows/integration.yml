@@ -35,8 +35,8 @@ jobs:
       - name: Run boundary and contract tests
         env:
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
-          RUNTIME_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
-          WORKER_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
+          RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
+          WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test
         run: cargo test --workspace --all-targets --all-features --locked --exclude sitolo-persistence
       # F-018 scope-exception governance. This textual record is backed by
       # docs/testing_strategy.md ("PostgreSQL integration exception

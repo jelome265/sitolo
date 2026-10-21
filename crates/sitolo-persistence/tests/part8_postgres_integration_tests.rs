@@ -7,11 +7,12 @@
 //! - `ADMIN_DATABASE_URL` connects as a role that can
 //!   create schemas and roles, transfer table/view ownership to
 //!   `app_outbox_owner`, and grant privileges.
-//! - `RUNTIME_DATABASE_URL` and `WORKER_DATABASE_URL` connect as login roles
-//!   that may `SET ROLE app_runtime` and `SET ROLE app_worker` respectively
-//!   (role membership or superuser). The fixture creates the NOLOGIN
-//!   application roles. Tests fail rather than skip when a variable is absent
-//!   or an identity differs.
+//! - `RUNTIME_DATABASE_URL` and `WORKER_DATABASE_URL` connect as the
+//!   restricted `app_runtime` and `app_worker` LOGIN roles respectively. The
+//!   fixture creates those roles; `NOLOGIN` is not sufficient because the
+//!   pools must authenticate as the role rather than assume it with `SET ROLE`.
+//!   Tests fail rather than skip when a variable is absent or an identity
+//!   differs.
 
 use std::env;
 use std::str::FromStr;
@@ -122,7 +123,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .await?;
 
     // Apply the complete Part 8 schema. The fixture creates the roles before
-    // the runtime and worker pools attempt SET ROLE.
+    // the runtime and worker pools authenticate as them.
     let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
     raw_sql(&schema_sql).execute(&admin_pool).await?;
@@ -131,12 +132,6 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema_name.as_str())]);
     let runtime_pool = PgPoolOptions::new()
         .max_connections(5)
-        .after_connect(|conn, _| {
-            Box::pin(async move {
-                query("SET ROLE app_runtime").execute(conn).await?;
-                Ok(())
-            })
-        })
         .connect_with(runtime_opts)
         .await?;
 
@@ -144,33 +139,39 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         PgConnectOptions::from_str(&worker_url)?.options([("search_path", schema_name.as_str())]);
     let worker_pool = PgPoolOptions::new()
         .max_connections(5)
-        .after_connect(|conn, _| {
-            Box::pin(async move {
-                query("SET ROLE app_worker").execute(conn).await?;
-                Ok(())
-            })
-        })
         .connect_with(worker_opts)
         .await?;
 
-    // Prove the pools execute as the intended roles. A worker test that
+    // Prove the pools authenticate as the intended roles. A worker test that
     // silently runs as app_runtime (or as the migration superuser) would not
-    // prove the worker privilege boundary.
+    // prove the worker privilege boundary. Both identities are checked because
+    // `SET ROLE` would leave `current_user` correct while `session_user`
+    // remains privileged.
     let runtime_identity: String = query_scalar("SELECT current_user")
         .fetch_one(&runtime_pool)
         .await?;
-    if runtime_identity != "app_runtime" {
-        return Err(
-            format!("runtime pool must execute as app_runtime, got {runtime_identity}").into(),
-        );
+    let runtime_session: String = query_scalar("SELECT session_user")
+        .fetch_one(&runtime_pool)
+        .await?;
+    if runtime_identity != "app_runtime" || runtime_session != "app_runtime" {
+        return Err(format!(
+            "runtime pool must authenticate as app_runtime, got current_user={runtime_identity} \
+             session_user={runtime_session}"
+        )
+        .into());
     }
     let worker_identity: String = query_scalar("SELECT current_user")
         .fetch_one(&worker_pool)
         .await?;
-    if worker_identity != "app_worker" {
-        return Err(
-            format!("worker pool must execute as app_worker, got {worker_identity}").into(),
-        );
+    let worker_session: String = query_scalar("SELECT session_user")
+        .fetch_one(&worker_pool)
+        .await?;
+    if worker_identity != "app_worker" || worker_session != "app_worker" {
+        return Err(format!(
+            "worker pool must authenticate as app_worker, got current_user={worker_identity} \
+             session_user={worker_session}"
+        )
+        .into());
     }
 
     Ok(TestContext {
