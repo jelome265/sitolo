@@ -1379,10 +1379,22 @@ async fn test_security_definer_functions_are_hardened() {
         for (name, is_superuser, bypass_rls, can_login, inherits, replication) in roles {
             assert!(!is_superuser, "{name} must not be a superuser");
             assert!(!bypass_rls, "{name} must not bypass RLS");
-            assert!(!can_login, "{name} must be NOLOGIN");
+            assert!(
+                can_login,
+                "{name} must be LOGIN: the pools authenticate as the role instead of reaching it \
+                 with SET ROLE"
+            );
             assert!(!inherits, "{name} must be NOINHERIT");
             assert!(!replication, "{name} must not have replication");
         }
+
+        // app_outbox_owner owns the SECURITY DEFINER functions and tables. It
+        // is never a client identity, so it must not be able to log in.
+        let owner_can_login: bool =
+            query_scalar("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'app_outbox_owner'")
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert!(!owner_can_login, "app_outbox_owner must be NOLOGIN");
 
         Ok::<(), Box<dyn std::error::Error>>(())
     }
