@@ -8,7 +8,7 @@
 //!
 //! Requires a real PostgreSQL instance (contract §59: "No security test may
 //! silently skip because PostgreSQL is unavailable"). Set
-//! `ADMIN_DATABASE_URL` (or `DATABASE_URL`) to a database the connecting
+//! `ADMIN_DATABASE_URL` to a database the connecting
 //! role can create/drop schemas in. These tests intentionally panic rather
 //! than skip when that variable is absent.
 //!
@@ -40,13 +40,10 @@ struct TestContext {
 }
 
 async fn setup() -> TestContext {
-    let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect(
-            "ADMIN_DATABASE_URL or DATABASE_URL must be set to run Part 8 \
-             PostgreSQL integration tests; these tests do not skip silently \
-             (contract §59)",
-        );
+    let admin_url = env::var("ADMIN_DATABASE_URL").expect(
+        "ADMIN_DATABASE_URL must be set to run Part 8 PostgreSQL integration \
+         tests; these tests do not skip silently (contract §59)",
+    );
 
     let schema_name = format!("test_part8_app_{}", Uuid::new_v4().simple());
 
@@ -58,7 +55,7 @@ async fn setup() -> TestContext {
     // crates/sitolo-persistence/tests/rls_security_tests.rs.
     let admin_opts: PgConnectOptions = admin_url
         .parse::<PgConnectOptions>()
-        .expect("invalid ADMIN_DATABASE_URL/DATABASE_URL")
+        .expect("invalid ADMIN_DATABASE_URL")
         .options([("search_path", schema_name.as_str())]);
 
     let admin_pool = PgPoolOptions::new()

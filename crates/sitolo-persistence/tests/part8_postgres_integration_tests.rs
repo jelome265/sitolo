@@ -4,7 +4,7 @@
 //! behavior using real PostgreSQL. No mocks.
 //!
 //! Prerequisites:
-//! - `ADMIN_DATABASE_URL` (or `DATABASE_URL`) connects as a role that can
+//! - `ADMIN_DATABASE_URL` connects as a role that can
 //!   create schemas and roles, transfer table/view ownership to
 //!   `app_outbox_owner`, and grant privileges.
 //! - `RUNTIME_DATABASE_URL` and `WORKER_DATABASE_URL` connect as login roles
@@ -97,7 +97,7 @@ impl<'r> FromRow<'r, PgRow> for RelationSecurityRow {
 /// worker identity is deliberately not allowed to fall back to the runtime
 /// identity: the tests must prove the narrow worker role, not the superuser.
 async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>> {
-    let admin_url = env::var("ADMIN_DATABASE_URL").or_else(|_| env::var("DATABASE_URL"))?;
+    let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
     let worker_url = env::var("WORKER_DATABASE_URL")?;
 

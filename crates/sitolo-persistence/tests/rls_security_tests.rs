@@ -305,10 +305,7 @@ async fn setup_test_context(
     };
 
     let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect(
-            "FAIL-CLOSED: Required ADMIN_DATABASE_URL or DATABASE_URL env variable not provided",
-        );
+        .expect("FAIL-CLOSED: Required ADMIN_DATABASE_URL env variable not provided");
 
     let runtime_url = env::var("RUNTIME_DATABASE_URL")
         .expect("FAIL-CLOSED: Required RUNTIME_DATABASE_URL env variable not provided");
@@ -1291,9 +1288,8 @@ async fn test_setup_failure_injection_cleans_up_schema() {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
 
-    let admin_url = env::var("ADMIN_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .expect("Required ADMIN_DATABASE_URL or DATABASE_URL not provided");
+    let admin_url =
+        env::var("ADMIN_DATABASE_URL").expect("Required ADMIN_DATABASE_URL not provided");
 
     let admin_opts: PgConnectOptions = admin_url.parse().expect("Invalid admin database URL");
     let admin_pool = PgPoolOptions::new()

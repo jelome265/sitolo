@@ -20,11 +20,8 @@ $console = @(rg -n "\b(println!|dbg!)" crates apps -g "*.rs" | Where-Object { $_
 if ($console.Count -gt 0) { $console | ForEach-Object { Write-Output $_ }; throw "PHASE 2 POLICY VIOLATION: unstructured console output" }
 
 # Runtime database identity is assembled only from typed, canonical fields.
-# URL and generic connection-string aliases obscure secret boundaries
-# (docs/phase2_config_secrets_logging_errors_telemetry_implementation.md).
-# Test harnesses read operator-supplied URLs directly; they are not the
-# runtime configuration surface.
-$aliases = @(rg -n "\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b" crates apps -g "*.rs" -g "!**/tests/**")
+# URL and generic connection-string aliases obscure secret boundaries.
+$aliases = @(rg -n "\b(DATABASE_URL|DB_URL|POSTGRES_URL|PGURL|CONNECTION_STRING)\b" crates apps -g "*.rs")
 if ($aliases.Count -gt 0) { $aliases | ForEach-Object { Write-Output $_ }; throw "PHASE 2 POLICY VIOLATION: database URL or connection-string alias in runtime source" }
 
 Write-Output "Phase 2 policy check PASSED"
