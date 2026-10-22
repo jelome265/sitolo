@@ -2,12 +2,12 @@
 
 **Date:** 2026-10-22  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
-**Base SHA:** `5d22468713011911734938e293b28ef0a58764fb`  
+**Reviewed base SHA:** `58fbfbc1b2c3fe1d51d982b654d5a86982df547e`
 **Disposition:** Partial remediation. Re-audit is required for the changed event catalogue. AUD-01 through AUD-05 are not closed.
 
 ## Evidence-first baseline
 
-The branch was fetched and fast-forward checked before edits; it was already at the origin head and clean. `cargo metadata --locked --format-version 1` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed before the change. `cargo test --workspace --locked` compiled, and database-free tests passed, but the suite failed when the PostgreSQL integration harness required the three local test DSNs. The first concurrent test run also hit Windows paging-file exhaustion; the serial retry completed compilation. No PostgreSQL service or Docker executable is available on this host, so database integration evidence is **BLOCKED**, not passed.
+The branch was fetched and fast-forward checked before edits; it was already at the origin head and clean. `cargo metadata --locked --format-version 1` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed before the change. The local `cargo test --workspace --locked` run compiled and its database-free tests passed, but the PostgreSQL integration harness could not run because the three local test DSNs were absent. That local limitation is separate from CI: all 10 PR checks passed for exact source SHA `58fbfbc`, including the PostgreSQL integration workflow using its disposable PostgreSQL service. Real local PostgreSQL execution is planned for the next engineering phase and is not claimed here.
 
 ## Finding disposition
 
@@ -16,7 +16,7 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 | AUD-01 relay | Approved SNS FIFO/SQS FIFO contract requires a real publisher and durable consumer inbox; current worker has no AWS destination adapter or consumer integration. | Platform operations and consumer owners; depends on production AWS account/resources, R2/R3 and R5. | No adapter or fake integration was added. The executable remains fail-closed. | **OPEN / NOT IMPLEMENTED** |
 | AUD-02 authority | HTTP commands need a verified OIDC principal and server-derived membership/tenant authorization; current live boundary does not provide it. | Identity/security owner; owner-approved Cognito choice recorded, but route/application design and real token validation remain. | No authorization shortcut or client-derived authority was added. | **OPEN / NOT IMPLEMENTED** |
 | AUD-03 atomicity | Each mandatory state mutation, audit row and outbox row must share one authoritative PostgreSQL transaction; most tenancy mutations still update the in-memory store before separately recording evidence. | Engineering/persistence owner; depends on durable operation boundaries and trusted actor context (R2). | Not changed because adding event writes after current store mutations would preserve the finding rather than fix it. PostgreSQL fault-injection tests cannot run without the approved disposable database. | **OPEN / BLOCKED** |
-| AUD-04 event mapping | The approved five lifecycle transitions were absent from the binding catalogue and `IamEventName`. | Engineering/domain owner; mappings are owner-approved. | Added five distinct v1 variants and stable dotted names to `IamEventName::ALL` / `as_str()`, updated the binding contract catalogue and minimal payload constraints, and corrected the decision record’s implementation status. A registry test first failed because `iam.membership.pending_acceptance` was missing, then all four `sitolo-audit` library tests passed. Transition wiring, payload validation and transactional evidence remain incomplete. | **PARTIAL / RE-AUDIT REQUIRED** |
+| AUD-04 event mapping | The approved five lifecycle transitions were absent from the binding catalogue and `IamEventName`. | Engineering/domain owner; mappings are owner-approved. | Added five distinct v1 variants and stable dotted names to `IamEventName::ALL` / `as_str()`, updated the binding contract catalogue, and added strict v1 payload validators enforced at outbox construction and relay acceptance. A malformed mapped event is quarantined before publication. Focused validator and relay regression tests pass. Actual transition wiring, transactional evidence, and PostgreSQL integration proof remain incomplete. | **PARTIAL / RE-AUDIT REQUIRED** |
 | AUD-05 runtime | Production composition needs real Secrets Manager, PostgreSQL pools and restricted identities; current bootstrap correctly refuses an absent managed provider. | Platform/security owner; requires AWS account, IAM, secret references and database provisioning. | No production fallback or fabricated integration was introduced. Existing fail-closed guards remain. | **OPEN / NOT IMPLEMENTED** |
 
 ## Changed files
@@ -24,6 +24,8 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 - `crates/sitolo-audit/src/iam_event.rs` — approved event registry values and regression test.
 - `docs/phase4_part8_audit_outbox_implementation_contract.md` — canonical catalogue and payload constraints.
 - `workspaces/sitolo-engineering/runs/pr009-part8/follow-up/decisions/iam-lifecycle-event-mapping-proposal.md` — status now distinguishes catalogue implementation from remaining wiring/atomicity proof.
+- `crates/sitolo-events/src/payload.rs` — strict allowlisted payload validation for the five approved v1 lifecycle schemas.
+- `crates/sitolo-events/src/outbox.rs`, `crates/sitolo-events/Cargo.toml`, and `apps/worker/src/relay.rs` — enforce schemas at construction and relay acceptance; reject/quarantine malformed mapped payloads.
 
 ## Verification
 
@@ -31,6 +33,9 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 |---|---|
 | Failing-before-fix registry test | **FAILED as expected**: missing `iam.membership.pending_acceptance` |
 | `cargo test -p sitolo-audit --lib --locked` | **PASS**, 4 tests |
+| `cargo test -p sitolo-events --lib --locked` | **PASS**, 12 tests |
+| `cargo test -p sitolo-worker-bin --lib --locked` | **PASS**, 7 tests, including malformed lifecycle payload quarantine |
+| `cargo clippy -p sitolo-events -p sitolo-worker-bin --all-targets --locked -- -D warnings` | **PASS** |
 | `cargo fmt --all -- --check` | **PASS** |
 | `cargo check --workspace --all-targets --all-features --locked -j 1` | **PASS** |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | **PASS** |
@@ -42,8 +47,9 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 | `scripts/ci/check-release-workflow` | **PASS**, PostgreSQL services and scoped DSNs are present in the release workflow |
 | Baseline `cargo metadata --locked --format-version 1` | **PASS** |
 | Baseline `cargo clippy --workspace --all-targets --locked -- -D warnings` | **PASS** |
-| `cargo test --workspace --locked` | **BLOCKED** at PostgreSQL integration tests: `ADMIN_DATABASE_URL` absent; Docker/PostgreSQL tooling unavailable locally |
-| Exact-source CI / re-audit | **NOT RUN** |
+| Local `cargo test --workspace --locked` | **NOT RUN TO COMPLETION**: database-free tests passed, but PostgreSQL tests require local `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`; local execution is deferred to the next phase |
+| Exact-source PR CI at `58fbfbc` | **PASS**, all 10 checks, including PostgreSQL integration: [Rust/toolchain](https://github.com/jelome265/sitolo/actions/runs/39712547434), [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39712547423), [security](https://github.com/jelome265/sitolo/actions/runs/39712547416), [policy](https://github.com/jelome265/sitolo/actions/runs/39712547431) |
+| Stage 06 re-audit | **NOT RUN**; required after implementation changes |
 
 ## Next required work
 

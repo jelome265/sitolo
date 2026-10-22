@@ -337,6 +337,8 @@ impl OutboxEvent {
     ///
     /// Returns [`OutboxError::PayloadTooLarge`] when the payload exceeds
     /// [`OutboxEvent::MAX_PAYLOAD_SIZE`].
+    /// Returns [`OutboxError::InvalidSchema`] when a mapped lifecycle event
+    /// does not match its approved versioned payload schema.
     #[allow(
         clippy::too_many_arguments,
         reason = "constructor mirrors the persisted event columns before database assignment"
@@ -354,6 +356,7 @@ impl OutboxEvent {
         if payload.len() > Self::MAX_PAYLOAD_SIZE {
             return Err(OutboxError::PayloadTooLarge);
         }
+        crate::validate_iam_payload(&event_name, event_version, &payload)?;
 
         let now = SystemTime::now();
         Ok(OutboxEvent {
@@ -533,6 +536,22 @@ mod tests {
             oversized,
         );
         assert!(matches!(invalid, Err(OutboxError::PayloadTooLarge)));
+    }
+
+    #[test]
+    fn approved_lifecycle_payload_rejects_unapproved_sensitive_fields() {
+        let result = OutboxEvent::new(
+            "evt-pending".to_owned(),
+            "membership".to_owned(),
+            "membership-1".to_owned(),
+            "iam.membership.pending_acceptance".to_owned(),
+            1,
+            organization(),
+            None,
+            r#"{"membership_id":"membership-1","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2,"email":"person@example.test"}"#.to_owned(),
+        );
+
+        assert!(matches!(result, Err(OutboxError::InvalidSchema)));
     }
 
     #[test]

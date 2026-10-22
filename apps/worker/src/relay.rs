@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use sitolo_audit::IamEventName;
 use sitolo_events::{
     MAX_BACKOFF, OutboxClaimPolicy, OutboxErrorClass, OutboxEvent, OutboxStatus, RetryClass,
+    validate_iam_payload,
 };
 use sitolo_persistence::outbox_repository::{OutboxPersistenceError, OutboxReader};
 use thiserror::Error;
@@ -223,6 +224,7 @@ fn is_registered_event(event: &OutboxEvent) -> bool {
         && IamEventName::ALL
             .iter()
             .any(|registered| registered.as_str() == event.event_name)
+        && validate_iam_payload(&event.event_name, event.event_version, &event.payload).is_ok()
 }
 
 fn retry_backoff(base: Duration, ceiling: Duration, attempt_count: u32) -> Duration {
@@ -505,6 +507,10 @@ mod tests {
     async fn unsupported_event_or_version_is_quarantined_without_publish() {
         let mut invalid_payload = claimed_event("evt-6", "iam.organization.created", 1, 1);
         invalid_payload.payload = "[]".to_owned();
+        let mut invalid_lifecycle_payload =
+            claimed_event("evt-9", "iam.organization.created", 1, 1);
+        invalid_lifecycle_payload.event_name = "iam.membership.pending_acceptance".to_owned();
+        invalid_lifecycle_payload.payload = r#"{"membership_id":"member-1","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2,"email":"person@example.test"}"#.to_owned();
         let mut mismatched_schema = claimed_event("evt-7", "iam.organization.created", 1, 1);
         mismatched_schema.schema_version = 2;
         let (worker, reader, publisher) = worker(
@@ -512,13 +518,14 @@ mod tests {
                 claimed_event("evt-4", "iam.unknown.created", 1, 1),
                 claimed_event("evt-5", "iam.organization.created", 2, 1),
                 invalid_payload,
+                invalid_lifecycle_payload,
                 mismatched_schema,
             ],
             None,
         );
 
         let report = worker.process_batch().await.expect("batch succeeds");
-        assert_eq!(report.quarantined, 4);
+        assert_eq!(report.quarantined, 5);
         assert!(
             publisher
                 .idempotency_keys
@@ -532,7 +539,7 @@ mod tests {
                 .lock()
                 .expect("transition lock")
                 .quarantined,
-            ["evt-4", "evt-5", "evt-6", "evt-7"]
+            ["evt-4", "evt-5", "evt-6", "evt-9", "evt-7"]
         );
     }
 
