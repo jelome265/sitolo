@@ -2200,8 +2200,8 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
     seed_organization(&db, org.as_str()).await.unwrap();
     let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
     for (suffix, raw_token) in [
-        ("audit", "token-for-audit-failure-case"),
-        ("outbox", "token-for-outbox-failure-case"),
+        ("audit", "token-for-audit-failure-case-12345678"),
+        ("outbox", "token-for-outbox-failure-case-12345678"),
     ] {
         let contact = format!("{suffix}@example.test");
         create_service
@@ -2226,7 +2226,7 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
     }
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .accept_invitation(
-            "token-for-audit-failure-case",
+            "token-for-audit-failure-case-12345678",
             sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-audit-failure")
                 .unwrap(),
             None,
@@ -2245,7 +2245,7 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
             Arc::new(FailingOutboxWriter),
         ))
         .accept_invitation(
-            "token-for-outbox-failure-case",
+            "token-for-outbox-failure-case-12345678",
             sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")
                 .unwrap(),
             None,
@@ -2296,7 +2296,7 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
             Role::Cashier,
             None,
             InvitationContact::new(ContactKind::Email, "accept-race@example.test").unwrap(),
-            "token-for-concurrent-acceptance",
+            "token-for-concurrent-acceptance-12345678",
             std::time::Duration::from_secs(3_600),
             ActorRef {
                 subject_ref: "issuer-user".to_owned(),
@@ -2313,13 +2313,13 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
     };
     let (first, second) = tokio::join!(
         tenancy.accept_invitation(
-            "token-for-concurrent-acceptance",
+            "token-for-concurrent-acceptance-12345678",
             sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-a").unwrap(),
             None,
             actor(),
         ),
         tenancy.accept_invitation(
-            "token-for-concurrent-acceptance",
+            "token-for-concurrent-acceptance-12345678",
             sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-b").unwrap(),
             None,
             actor(),
