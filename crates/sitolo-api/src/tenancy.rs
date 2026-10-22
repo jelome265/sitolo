@@ -9,25 +9,21 @@
 //! unknown fields are rejected (§10.1).
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sitolo_application::TenancyService;
+#[cfg(test)]
 use sitolo_audit::ActorRef;
-use sitolo_domain::tenancy::{
-    Branch, BranchId, BranchState, MembershipId, Organization, OrganizationId, OrganizationState,
-    TenancyError, TenantUserId,
-};
+use sitolo_domain::tenancy::{Branch, BranchState, Organization, OrganizationState, TenancyError};
+#[cfg(test)]
+use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenantUserId};
 use sitolo_persistence::ProvisionedOrganization;
 
 use crate::error::AppError;
 
-/// Placeholder actor for Phase 4 Part 8 audit evidence (contract §5, §29)
-/// until authentication middleware lands (PR-007). These handlers have no
-/// authenticated principal to draw a real actor from yet — `serve.rs` calls
-/// them with no security context at all. Rather than fabricate a
-/// caller-looking subject, this records the true current state: there is no
-/// authenticated actor. Every call site below must be revisited once
-/// `SecurityContext`/`AuthenticatedPrincipal` (Phase 3) is threaded through
-/// routing, so the audit trail reflects the real caller instead of this
-/// marker.
+/// Test-only actor for the legacy reference handlers. Production HTTP
+/// composition must never use this identity; protected routes remain denied
+/// until a verified principal and server-derived authority are available.
+#[cfg(test)]
 fn unauthenticated_actor() -> ActorRef {
     ActorRef {
         subject_ref: "unauthenticated-pending-pr007".to_string(),
@@ -236,7 +232,8 @@ pub fn map_tenancy_error(err: &TenancyError) -> AppError {
 // --- Handlers for Organization & Branch Lifecycle (§28 PR-006) ---
 
 /// `POST /v1/organizations` — provisions organization + owner + default branch (§7.1).
-pub async fn handle_provision_organization(
+#[cfg(test)]
+async fn handle_provision_organization(
     service: &TenancyService,
     req: CreateOrganizationRequest,
 ) -> Result<ProvisionedOrganizationResponse, AppError> {
@@ -262,7 +259,8 @@ pub async fn handle_provision_organization(
 }
 
 /// `POST /v1/organizations/{organization_id}/branches` (§28 PR-006).
-pub async fn handle_create_branch(
+#[cfg(test)]
+async fn handle_create_branch(
     service: &TenancyService,
     organization_id: &str,
     req: CreateBranchRequest,
@@ -279,20 +277,8 @@ pub async fn handle_create_branch(
 
 /// Each lifecycle handler validates the path identifiers (reject malformed
 /// before any DB work, §11) and maps domain errors (§30).
-pub async fn handle_activate_organization(
-    service: &TenancyService,
-    organization_id: &str,
-) -> Result<OrganizationResponse, AppError> {
-    validate_identifier(organization_id)?;
-    let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
-    let org = service
-        .activate_organization(&org_id, unauthenticated_actor())
-        .await
-        .map_err(|e| map_tenancy_error(&e))?;
-    Ok(OrganizationResponse::from(&org))
-}
-
-pub async fn handle_suspend_organization(
+#[cfg(test)]
+async fn handle_suspend_organization(
     service: &TenancyService,
     organization_id: &str,
 ) -> Result<OrganizationResponse, AppError> {
@@ -305,7 +291,8 @@ pub async fn handle_suspend_organization(
     Ok(OrganizationResponse::from(&org))
 }
 
-pub async fn handle_resume_organization(
+#[cfg(test)]
+async fn handle_resume_organization(
     service: &TenancyService,
     organization_id: &str,
 ) -> Result<OrganizationResponse, AppError> {
@@ -318,7 +305,8 @@ pub async fn handle_resume_organization(
     Ok(OrganizationResponse::from(&org))
 }
 
-pub async fn handle_begin_close_organization(
+#[cfg(test)]
+async fn handle_begin_close_organization(
     service: &TenancyService,
     organization_id: &str,
 ) -> Result<OrganizationResponse, AppError> {
@@ -331,7 +319,8 @@ pub async fn handle_begin_close_organization(
     Ok(OrganizationResponse::from(&org))
 }
 
-pub async fn handle_close_organization(
+#[cfg(test)]
+async fn handle_close_organization(
     service: &TenancyService,
     organization_id: &str,
 ) -> Result<OrganizationResponse, AppError> {
@@ -344,7 +333,8 @@ pub async fn handle_close_organization(
     Ok(OrganizationResponse::from(&org))
 }
 
-pub async fn handle_activate_branch(
+#[cfg(test)]
+async fn handle_activate_branch(
     service: &TenancyService,
     organization_id: &str,
     branch_id: &str,
@@ -360,7 +350,8 @@ pub async fn handle_activate_branch(
     Ok(BranchResponse::from(&branch))
 }
 
-pub async fn handle_suspend_branch(
+#[cfg(test)]
+async fn handle_suspend_branch(
     service: &TenancyService,
     organization_id: &str,
     branch_id: &str,
@@ -376,7 +367,8 @@ pub async fn handle_suspend_branch(
     Ok(BranchResponse::from(&branch))
 }
 
-pub async fn handle_resume_branch(
+#[cfg(test)]
+async fn handle_resume_branch(
     service: &TenancyService,
     organization_id: &str,
     branch_id: &str,
@@ -387,38 +379,6 @@ pub async fn handle_resume_branch(
     let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
     let branch = service
         .resume_branch(&org_id, &bid, unauthenticated_actor())
-        .await
-        .map_err(|e| map_tenancy_error(&e))?;
-    Ok(BranchResponse::from(&branch))
-}
-
-pub async fn handle_begin_close_branch(
-    service: &TenancyService,
-    organization_id: &str,
-    branch_id: &str,
-) -> Result<BranchResponse, AppError> {
-    validate_identifier(organization_id)?;
-    validate_identifier(branch_id)?;
-    let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
-    let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
-    let branch = service
-        .begin_close_branch(&org_id, &bid, unauthenticated_actor())
-        .await
-        .map_err(|e| map_tenancy_error(&e))?;
-    Ok(BranchResponse::from(&branch))
-}
-
-pub async fn handle_close_branch(
-    service: &TenancyService,
-    organization_id: &str,
-    branch_id: &str,
-) -> Result<BranchResponse, AppError> {
-    validate_identifier(organization_id)?;
-    validate_identifier(branch_id)?;
-    let org_id = OrganizationId::new(organization_id).map_err(|e| map_tenancy_error(&e))?;
-    let bid = BranchId::new(branch_id).map_err(|e| map_tenancy_error(&e))?;
-    let branch = service
-        .close_branch(&org_id, &bid, unauthenticated_actor())
         .await
         .map_err(|e| map_tenancy_error(&e))?;
     Ok(BranchResponse::from(&branch))

@@ -4,13 +4,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sitolo_api::tenancy::{
-    CreateBranchRequest, CreateOrganizationRequest, handle_activate_branch,
-    handle_activate_organization, handle_begin_close_branch, handle_begin_close_organization,
-    handle_close_branch, handle_close_organization, handle_create_branch,
-    handle_provision_organization, handle_resume_branch, handle_resume_organization,
-    handle_suspend_branch, handle_suspend_organization,
-};
 use sitolo_api::{AppError, ProblemDetails};
 use sitolo_observability::RequestId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -76,11 +69,14 @@ async fn handle_connection(mut stream: TcpStream, state: &AppState) {
         .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|p| p + 2))
         .unwrap_or(n);
     let headers_part = String::from_utf8_lossy(&raw[..header_end]);
-    let body_part = if header_end < n {
-        String::from_utf8_lossy(&raw[header_end..]).into_owned()
-    } else {
-        String::new()
-    };
+    let authorization = headers_part
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .find_map(|(name, value)| {
+            name.eq_ignore_ascii_case("authorization")
+                .then_some(value.trim())
+        });
     let first_line = headers_part.lines().next().unwrap_or("");
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     if parts.len() < 2 {
@@ -88,7 +84,8 @@ async fn handle_connection(mut stream: TcpStream, state: &AppState) {
     }
     let method = parts[0];
     let path = parts[1];
-    let (status_str, body) = dispatch_request(method, path, &body_part, state).await;
+    let (status_str, body) =
+        dispatch_request_with_authorization(method, path, authorization, "", state).await;
     let response = format!(
         "HTTP/1.1 {status_str}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
@@ -100,6 +97,21 @@ pub async fn dispatch_request(
     method: &str,
     path: &str,
     body: &str,
+    state: &AppState,
+) -> (&'static str, String) {
+    dispatch_request_with_authorization(method, path, None, body, state).await
+}
+
+/// Dispatches a request while preserving the Authorization header at the
+/// HTTP boundary. The current runtime has no composed OIDC verifier, session
+/// lookup, or membership/permission resolver. Consequently the presence of a
+/// bearer header cannot establish authority and protected writes remain
+/// fail-closed until that verified context is wired end-to-end.
+pub async fn dispatch_request_with_authorization(
+    method: &str,
+    path: &str,
+    _authorization: Option<&str>,
+    _body: &str,
     state: &AppState,
 ) -> (&'static str, String) {
     // Liveness / readiness probes remain authoritative and unconditional.
@@ -118,124 +130,13 @@ pub async fn dispatch_request(
         }
     }
 
-    // Tenancy APIs (§28 PR-006). All mutations are bounded (§10.2) and
-    // validated before domain work (§39); tenant binding is enforced
-    // server-side (§27.1).
-    if method == "POST" {
-        let segments: Vec<&str> = path.split('/').collect();
-        if segments.len() >= 3 && segments[1] == "v1" && segments[2] == "organizations" {
-            if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
-                return format_error_response(&AppError::Validation);
-            }
-            let svc = state.tenancy_service();
-            if segments.len() == 3 {
-                // POST /v1/organizations
-                let req: Result<CreateOrganizationRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_provision_organization(svc, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 && segments[4] == "branches" {
-                // POST /v1/organizations/{org_id}/branches
-                let org_id = segments[3];
-                let req: Result<CreateBranchRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_create_branch(svc, org_id, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 {
-                let org_id = segments[3];
-                let action = segments[4];
-                match action {
-                    "activate" => match handle_activate_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => match handle_begin_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "close" => match handle_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            } else if segments.len() == 7 && segments[4] == "branches" {
-                let org_id = segments[3];
-                let branch_id = segments[5];
-                let action = segments[6];
-                match action {
-                    "activate" => match handle_activate_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => {
-                        match handle_begin_close_branch(svc, org_id, branch_id).await {
-                            Ok(res) => {
-                                return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                            }
-                            Err(e) => return format_error_response(&e),
-                        }
-                    }
-                    "close" => match handle_close_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            }
-        }
+    // The shipped HTTP runtime does not compose an OIDC verifier, validated
+    // session lookup, or membership/permission resolver into AppState. A
+    // syntactically present bearer therefore cannot establish authority.
+    // Keep tenancy writes disabled and never call the pre-auth reference
+    // handlers until the complete server-derived authority chain is wired.
+    if method == "POST" && path.starts_with("/v1/organizations") {
+        return format_error_response(&AppError::Authentication);
     }
 
     ("404 Not Found", "{\"status\":\"not_found\"}".to_string())
