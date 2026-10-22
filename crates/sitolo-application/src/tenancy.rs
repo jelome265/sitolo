@@ -321,16 +321,15 @@ impl TenancyService {
                 stage: "membership_invite_tenant_context",
                 sqlstate: None,
             })?;
-        let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
-        )
-        .bind(organization_id.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
-            stage: "membership_invite_organization_check",
-            sqlstate: None,
-        })?;
+        let organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_invite_organization_check",
+                    sqlstate: None,
+                })?;
         if organization_state.as_deref() != Some("ACTIVE") {
             return Err(TenancyError::InvalidTransition);
         }
@@ -737,16 +736,15 @@ impl TenancyService {
                     stage: "branch_create_tenant_context",
                     sqlstate: None,
                 })?;
-            let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
-                "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
-            )
-            .bind(organization_id.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
-                stage: "branch_create_organization_check",
-                sqlstate: None,
-            })?;
+            let organization_state: Option<String> =
+                sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                    .bind(organization_id.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "branch_create_organization_check",
+                        sqlstate: None,
+                    })?;
             if organization_state.as_deref() != Some("ACTIVE") {
                 return Err(TenancyError::InvalidTransition);
             }
@@ -1277,16 +1275,15 @@ impl TenancyService {
                     stage: "invitation_create_tenant_context",
                     sqlstate: None,
                 })?;
-            let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
-                "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
-            )
-            .bind(organization_id.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
-                stage: "invitation_create_organization_check",
-                sqlstate: None,
-            })?;
+            let organization_state: Option<String> =
+                sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                    .bind(organization_id.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "invitation_create_organization_check",
+                        sqlstate: None,
+                    })?;
             if organization_state.as_deref() != Some("ACTIVE") {
                 return Err(TenancyError::InvalidTransition);
             }

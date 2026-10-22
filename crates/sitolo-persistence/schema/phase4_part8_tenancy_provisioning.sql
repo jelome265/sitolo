@@ -146,6 +146,32 @@ ALTER TABLE invitations OWNER TO app_outbox_owner;
 -- SECURITY DEFINER transition functions keep direct UPDATE unavailable to
 -- app_runtime. Their owner remains subject to forced RLS and can only update
 -- rows matching the transaction-local tenant context.
+-- Serialize organization-scoped mutations without granting app_runtime row
+-- UPDATE privileges (which PostgreSQL requires for SELECT ... FOR UPDATE).
+CREATE FUNCTION lock_organization_mutations(p_organization_id TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path FROM CURRENT
+AS $$
+DECLARE
+    organization_state TEXT;
+BEGIN
+    IF p_organization_id IS NULL OR p_organization_id = '' OR
+       p_organization_id <> NULLIF(current_setting('app.organization_id', true), '') THEN
+        RAISE EXCEPTION 'organization does not match tenant context';
+    END IF;
+
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(p_organization_id, 0)
+    );
+    SELECT state INTO organization_state
+    FROM organizations
+    WHERE id = p_organization_id;
+    RETURN organization_state;
+END;
+$$;
+
 CREATE FUNCTION transition_organization_state(p_from TEXT, p_to TEXT)
 RETURNS TABLE(name TEXT, state_version BIGINT)
 LANGUAGE plpgsql
@@ -153,6 +179,12 @@ SECURITY DEFINER
 SET search_path FROM CURRENT
 AS $$
 BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+            NULLIF(current_setting('app.organization_id', true), ''), 0
+        )
+    );
+
     IF NOT (
         (p_from = 'PROVISIONING' AND p_to = 'ACTIVE') OR
         (p_from = 'ACTIVE' AND p_to IN ('SUSPENDED', 'CLOSING')) OR
@@ -178,6 +210,12 @@ SECURITY DEFINER
 SET search_path FROM CURRENT
 AS $$
 BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+            NULLIF(current_setting('app.organization_id', true), ''), 0
+        )
+    );
+
     IF NOT (
         (p_from = 'PROVISIONING' AND p_to = 'ACTIVE') OR
         (p_from = 'ACTIVE' AND p_to IN ('SUSPENDED', 'CLOSING')) OR
@@ -199,8 +237,10 @@ $$;
 
 ALTER FUNCTION transition_organization_state(TEXT, TEXT) OWNER TO app_outbox_owner;
 ALTER FUNCTION transition_branch_state(TEXT, TEXT, TEXT) OWNER TO app_outbox_owner;
+REVOKE ALL ON FUNCTION lock_organization_mutations(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION transition_organization_state(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION lock_organization_mutations(TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_organization_state(TEXT, TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) TO app_runtime;
 
