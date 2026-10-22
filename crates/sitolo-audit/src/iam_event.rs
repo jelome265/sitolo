@@ -29,6 +29,11 @@ pub enum IamEventName {
     MembershipActivated,
     MembershipSuspended,
     MembershipRevoked,
+    MembershipPendingAcceptance,
+    MembershipExpired,
+    InvitationIssued,
+    InvitationWithdrawn,
+    InvitationExpired,
     RoleAssigned,
     RoleChanged,
     RoleRemoved,
@@ -65,6 +70,11 @@ impl IamEventName {
         Self::MembershipActivated,
         Self::MembershipSuspended,
         Self::MembershipRevoked,
+        Self::MembershipPendingAcceptance,
+        Self::MembershipExpired,
+        Self::InvitationIssued,
+        Self::InvitationWithdrawn,
+        Self::InvitationExpired,
         Self::RoleAssigned,
         Self::RoleChanged,
         Self::RoleRemoved,
@@ -99,6 +109,11 @@ impl IamEventName {
             IamEventName::MembershipActivated => "iam.membership.activated",
             IamEventName::MembershipSuspended => "iam.membership.suspended",
             IamEventName::MembershipRevoked => "iam.membership.revoked",
+            IamEventName::MembershipPendingAcceptance => "iam.membership.pending_acceptance",
+            IamEventName::MembershipExpired => "iam.membership.expired",
+            IamEventName::InvitationIssued => "iam.invitation.issued",
+            IamEventName::InvitationWithdrawn => "iam.invitation.withdrawn",
+            IamEventName::InvitationExpired => "iam.invitation.expired",
             IamEventName::RoleAssigned => "iam.role.assigned",
             IamEventName::RoleChanged => "iam.role.changed",
             IamEventName::RoleRemoved => "iam.role.removed",
@@ -131,6 +146,24 @@ mod registry_tests {
 
         assert_eq!(names.len(), unique.len());
         assert!(names.iter().all(|name| name.starts_with("iam.")));
+    }
+
+    #[test]
+    fn owner_approved_lifecycle_event_names_are_registered() {
+        let names: Vec<_> = IamEventName::ALL
+            .iter()
+            .map(|event| event.as_str())
+            .collect();
+
+        for approved_name in [
+            "iam.membership.pending_acceptance",
+            "iam.membership.expired",
+            "iam.invitation.issued",
+            "iam.invitation.withdrawn",
+            "iam.invitation.expired",
+        ] {
+            assert!(names.contains(&approved_name), "missing {approved_name}");
+        }
     }
 }
 

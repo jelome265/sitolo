@@ -11,7 +11,7 @@
 
 Treat all five undocumented state-changing paths as mandatory durable audit evidence and paired outbox intent. Add distinct event names instead of reusing `MembershipInvited`, `MembershipActivated` or an event with different semantics. Each new event starts at schema version **1**.
 
-The mapping decision is approved, but the binding contract and source registry have not yet been changed. Approval alone does not close the implementation findings.
+The mapping decision is approved. The binding contract and source registry are now updated to include the five names; transition wiring, transaction coupling, payload validation, and integration evidence remain outstanding. This registry update alone does not close AUD-03 or AUD-04.
 
 ## Mapping matrix
 
