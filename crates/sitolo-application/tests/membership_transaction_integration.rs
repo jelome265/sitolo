@@ -1593,6 +1593,162 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
 }
 
 #[tokio::test]
+async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failures() {
+    enum Operation {
+        Accept,
+        Resume,
+        Revoke,
+    }
+
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-membership-transition-failures").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    for (membership_id, user_id, state) in [
+        (
+            "member-accept-audit",
+            "user-accept-audit",
+            "PENDING_ACCEPTANCE",
+        ),
+        (
+            "member-accept-outbox",
+            "user-accept-outbox",
+            "PENDING_ACCEPTANCE",
+        ),
+        ("member-resume-audit", "user-resume-audit", "SUSPENDED"),
+        ("member-resume-outbox", "user-resume-outbox", "SUSPENDED"),
+        ("member-revoke-audit", "user-revoke-audit", "ACTIVE"),
+        ("member-revoke-outbox", "user-revoke-outbox", "ACTIVE"),
+    ] {
+        query(
+            "INSERT INTO organization_memberships \
+             (id, organization_id, user_id, state, state_version) \
+             VALUES ($1, $2, $3, $4, 3)",
+        )
+        .bind(membership_id)
+        .bind(org.as_str())
+        .bind(user_id)
+        .bind(state)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    }
+
+    let actor = || ActorRef {
+        subject_ref: "user-membership-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    let audit_service = service(&db, Arc::new(FailingAuditWriter));
+    let outbox_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ));
+
+    for (audit_id, outbox_id, operation) in [
+        (
+            "member-accept-audit",
+            "member-accept-outbox",
+            Operation::Accept,
+        ),
+        (
+            "member-resume-audit",
+            "member-resume-outbox",
+            Operation::Resume,
+        ),
+        (
+            "member-revoke-audit",
+            "member-revoke-outbox",
+            Operation::Revoke,
+        ),
+    ] {
+        let audit_membership = MembershipId::new(audit_id).unwrap();
+        let outbox_membership = MembershipId::new(outbox_id).unwrap();
+        let audit_result = match operation {
+            Operation::Accept => {
+                audit_service
+                    .accept_member(&org, &audit_membership, actor())
+                    .await
+            }
+            Operation::Resume => {
+                audit_service
+                    .resume_member(&org, &audit_membership, actor())
+                    .await
+            }
+            Operation::Revoke => {
+                audit_service
+                    .revoke_member(&org, &audit_membership, actor())
+                    .await
+            }
+        };
+        assert!(audit_result.is_err(), "{audit_id} audit failure must abort");
+        let outbox_result = match operation {
+            Operation::Accept => {
+                outbox_service
+                    .accept_member(&org, &outbox_membership, actor())
+                    .await
+            }
+            Operation::Resume => {
+                outbox_service
+                    .resume_member(&org, &outbox_membership, actor())
+                    .await
+            }
+            Operation::Revoke => {
+                outbox_service
+                    .revoke_member(&org, &outbox_membership, actor())
+                    .await
+            }
+        };
+        assert!(
+            outbox_result.is_err(),
+            "{outbox_id} outbox failure must abort"
+        );
+    }
+
+    let rows: Vec<(String, String, i64)> = sqlx_core::query_as::query_as(
+        "SELECT id, state, state_version FROM organization_memberships \
+         WHERE organization_id = $1 ORDER BY id",
+    )
+    .bind(org.as_str())
+    .fetch_all(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "member-accept-audit".to_owned(),
+                "PENDING_ACCEPTANCE".to_owned(),
+                3
+            ),
+            (
+                "member-accept-outbox".to_owned(),
+                "PENDING_ACCEPTANCE".to_owned(),
+                3
+            ),
+            ("member-resume-audit".to_owned(), "SUSPENDED".to_owned(), 3),
+            ("member-resume-outbox".to_owned(), "SUSPENDED".to_owned(), 3),
+            ("member-revoke-audit".to_owned(), "ACTIVE".to_owned(), 3),
+            ("member-revoke-outbox".to_owned(), "ACTIVE".to_owned(), 3),
+        ]
+    );
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() {
     use sitolo_authz::RoleAssignmentState;
 
