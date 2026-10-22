@@ -1,5 +1,13 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Exact-head update — `39cb7ddb9b07400873466a3b8d2ec8aa4fa9500a` (2026-10-22)
+
+Added and executed `every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures` in the PostgreSQL-enabled CI workflow. The test injects audit and outbox write failures for all ten organization/branch lifecycle commands and verifies that business state/version and evidence rows remain unchanged. The membership transaction integration target reported 39 passing tests, including the new regression.
+
+All ten PR checks passed on this exact source SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39743712879), [Rust/toolchain verification](https://github.com/jelome265/sitolo/actions/runs/39743712958), [security, dependency policy, advisories, secrets, offensive regression and CodeQL](https://github.com/jelome265/sitolo/actions/runs/39743712881), [policy](https://github.com/jelome265/sitolo/actions/runs/39743712882), and [standalone CodeQL](https://github.com/jelome265/sitolo/runs/119708509575). Local formatting, integration-target compilation, targeted Clippy, documentation references, and ICM workspace checks also passed. No local PostgreSQL was started or used.
+
+**Disposition remains open:** AUD-03 now has rollback-failure coverage for all organization and branch lifecycle commands, plus the previously added membership, invitation, role, scope, branch-creation, and provisioning transaction coverage. It remains **OPEN** pending Stage 06 re-audit of the complete mandatory mutation/actor-provenance matrix and the unresolved authenticated API authority boundary. AUD-04 remains **PARTIAL pending independent Stage 06 re-audit**. AUD-01, AUD-02, and AUD-05 remain open. Protected HTTP writes remain fail-closed. PR #49 remains open and unmerged.
+
 ## Latest exact-head update — `96ca56b08804211895106612fb5b393e2d66e686` (2026-10-22)
 
 This update supersedes earlier evidence statements below where they conflict. Added PostgreSQL integration regressions for branch creation rollback, direct member invitation rollback, and scope-grant revocation rollback. Each injects audit and outbox write failures and verifies the changed state/evidence is absent or unchanged. The latest PostgreSQL workflow reports 37 membership transaction integration tests passing, including these new cases.
