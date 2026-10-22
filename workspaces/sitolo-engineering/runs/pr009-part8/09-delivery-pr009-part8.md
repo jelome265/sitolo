@@ -8,6 +8,16 @@
 **Disposition:** Review-ready, not merge-ready. Exact-head CI is green at `144a284` (code `e49de42`), the release workflow branch dispatch passed both jobs, F-01 and F-02 remain closed, and the additional follow-up P1 findings are closed. The stage 08 release blockers and human review remain.\
 **Human check:** Not performed. A human owns the review and merge decision.
 
+## Follow-up review packet — 2026-10-22
+
+A current post-Stage-08 source review and action plan are recorded alongside this handoff:
+
+- [Follow-up audit](follow-up/audit.md) — current source findings and evidence boundaries.
+- [Remediation plan](follow-up/remediation-plan.md) — dependency-ordered closure tasks and acceptance criteria.
+- [Continuation guide](follow-up/guide.md) — practical implementation, verification, and reviewer handoff.
+
+This follow-up review is not human approval. PR #49 remains open and unmerged until the implementation gaps have an approved disposition and a human reviewer completes the merge decision.
+
 ## Summary
 
 This handoff carries the PR-009 Part 8 audit/outbox implementation plus a final CI-policy increment applied after stage 08 verification.
@@ -150,7 +160,7 @@ The temporary `rg` binary on this host had been purged between runs. Because the
 
 All stage 06 findings remain closed as recorded in `07-remediation-pr009-part8.md` and re-verified in `08-verification-pr009-part8.md`.
 
-**Scope gap, stated plainly:** the commits in this increment were produced after stage 08 verification and were **not** re-audited at stage 06. Stage 08's evidence is pinned to `862775c`; this handoff delivers `e49de42`. The increment is covered by exact-head CI and the post-hoc static reviews below, not by a stage 06 re-audit. A human may require one before merge; that is a human-controlled decision, not an automatic dependency. The follow-up increment was likewise reviewed after the fact, not at stage 06.
+**Scope gap, stated plainly:** the commits in this increment were produced after stage 08 verification and were **not** re-audited at stage 06. Stage 08's evidence is pinned to `862775c`; this handoff delivers `e49de42`. The increment is covered by exact-head CI and the post-hoc static reviews below, not by a stage 06 re-audit. A human may require one before merge; that is a human-controlled decision, not an automatic dependency. The follow-up packet now records a post-Stage-08 static review in [follow-up/audit.md](follow-up/audit.md). This is not human approval; the human review remains pending.
 
 ### Static audits received after stage 08
 
@@ -201,7 +211,7 @@ The security-control positions recorded in stage 08 are unchanged for the tenanc
    - the relay response does not name a transport, endpoint/topic/queue, payload contract, acknowledgement behavior, or runtime configuration; `apps/worker/src/main.rs` refuses to start without an approved adapter;
    - the live HTTP command path still lacks authenticated principal-derived owner/actor authority;
    - no real destination adapter or production worker runtime exists.
-4. **This increment was not re-audited** at stage 06, as stated above.
+4. **Human review remains pending.** The post-Stage-08 follow-up audit is linked above; it does not substitute for an authorized human review or the merge decision.
 5. **The release path has a successful branch-dispatch proof, not a tagged release.** `artifact.yml` was dispatched at `144a284`; both jobs passed (5m35s and 2m13s), including the exact-source test step in the release job's own PostgreSQL service. A tagged release would still execute the release-record and publication steps. The static `check-release-workflow` check is structural; the dispatch is the execution evidence.
 6. **Development secret values are process-environment values, not a production secret store.** `SITOLO_SECRET__...` is read only by the development provider. Production still rejects that provider and has no managed adapter, so production startup fails closed rather than reading these values.
 7. **No production readiness, certification, or complete validation is claimed.** The evidence proves the listed checks at the listed heads and nothing more.
@@ -231,4 +241,4 @@ No data migration is required. Every change is CI, policy, map, test, connection
 
 PR #49 is `OPEN` and `BLOCKED` on `REVIEW_REQUIRED`; its code head is `e49de42` and its environment/docs head is `144a284`. This delivery record is a later documentation-only commit.
 
-Stage 09 completion does not authorize merge. The blocking items are human review, the three stage 08 release blockers above (the relay destination/contract, authenticated API authority, and production composition), and the absence of a stage 06 re-audit for this increment. The release-artifact database gap is closed, and branch dispatch 39703940077 passed both jobs. No P0 static-audit finding remains open: F-01 and F-02 remain closed, and the four follow-up P1 findings are closed. Merge remains a human decision.
+Stage 09 completion does not authorize merge. The blocking items are human review, the three stage 08 release blockers above (the relay destination/contract, authenticated API authority, and production composition), and the need for human review of the follow-up audit. The release-artifact database gap is closed, and branch dispatch 39703940077 passed both jobs. No P0 static-audit finding remains open: F-01 and F-02 remain closed, and the four follow-up P1 findings are closed. Merge remains a human decision.
