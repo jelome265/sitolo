@@ -241,6 +241,84 @@ impl TenancyService {
         Ok(membership)
     }
 
+    async fn invite_member_with_evidence(
+        &self,
+        membership_id: MembershipId,
+        organization_id: OrganizationId,
+        user_id: TenantUserId,
+        actor: ActorRef,
+    ) -> Result<Membership, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let membership =
+            Membership::invite(membership_id.clone(), organization_id.clone(), user_id);
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_invite_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "membership_invite_tenant_context",
+                sqlstate: None,
+            })?;
+        query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, $3, 'INVITED', 1)")
+            .bind(membership_id.as_str())
+            .bind(organization_id.as_str())
+            .bind(membership.user_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| {
+                let sqlstate = match &error {
+                    SqlxError::Database(database_error) => {
+                        database_error.code().map(|code| code.into_owned())
+                    }
+                    _ => None,
+                };
+                if sqlstate.as_deref() == Some("23505") {
+                    TenancyError::Conflict
+                } else {
+                    TenancyError::EvidencePersistenceFailedAt {
+                        stage: "membership_invite_insert",
+                        sqlstate,
+                    }
+                }
+            })?;
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::MembershipInvited,
+            &organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "invite_member",
+            "membership",
+            membership_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "state": "INVITED",
+                "state_version": membership.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "membership_invite_commit",
+                sqlstate: None,
+            })?;
+        Ok(membership)
+    }
+
     pub fn new(db: Arc<TenancyDatabase>, abuse_rules: Vec<(AbuseClass, RateLimitRule)>) -> Self {
         TenancyService {
             db,
@@ -680,7 +758,11 @@ impl TenancyService {
         user_id: TenantUserId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
-        self.require_authoritative_mutation_path()?;
+        if self.evidence.is_some() {
+            return self
+                .invite_member_with_evidence(id, organization_id, user_id, actor)
+                .await;
+        }
         let membership = self
             .db
             .invite_membership(id.clone(), organization_id.clone(), user_id.clone())
@@ -1705,7 +1787,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_member_mutation_fails_before_reference_store_write() {
+    async fn unsupported_organization_mutation_fails_before_reference_store_write() {
         let pool = sqlx_postgres::PgPoolOptions::new()
             .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")
             .unwrap();
@@ -1719,14 +1801,8 @@ mod tests {
                 ),
             ));
         let organization_id = org_id("org-fail-closed");
-        let membership_id = MembershipId::new("member-fail-closed").unwrap();
         let result = service
-            .invite_member(
-                membership_id.clone(),
-                organization_id.clone(),
-                user("user-fail-closed"),
-                actor("operator"),
-            )
+            .activate_organization(&organization_id, actor("operator"))
             .await;
         assert!(matches!(
             result,
@@ -1735,11 +1811,7 @@ mod tests {
                 ..
             })
         ));
-        assert!(
-            db.membership_snapshot(&organization_id, &membership_id)
-                .await
-                .is_none()
-        );
+        assert!(db.organization_snapshot(&organization_id).await.is_none());
     }
 
     async fn provisioned(service: &TenancyService) -> ProvisionedOrganization {

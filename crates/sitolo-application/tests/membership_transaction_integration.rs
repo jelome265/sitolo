@@ -88,10 +88,69 @@ async fn seed_active_membership(
     Ok(())
 }
 
+async fn seed_organization(
+    db: &TestDb,
+    organization_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    query("INSERT INTO organizations (id, name, state, state_version) VALUES ($1, 'Org', 'ACTIVE', 2)")
+        .bind(organization_id)
+        .execute(&db.admin)
+        .await?;
+    Ok(())
+}
+
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     let outbox = Arc::new(PostgresOutboxRepository::new(db.runtime.clone()));
     TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
         .with_evidence(TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox))
+}
+
+#[tokio::test]
+async fn member_invitation_and_required_evidence_commit_together() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-member-invitation-atomicity").unwrap();
+    let membership = MembershipId::new("member-invitation-atomicity").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let created = tenancy
+        .invite_member(
+            membership.clone(),
+            org.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-invited").unwrap(),
+            ActorRef {
+                subject_ref: "user-operator".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        created.state,
+        sitolo_domain::tenancy::MembershipState::Invited
+    );
+    let persisted_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(persisted_state, "INVITED");
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.invited') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.invited')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 2);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
