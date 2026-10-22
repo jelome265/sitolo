@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@754b0685a2b0869b6c695ec7659d1d788b728c29
+source_revision: feat/phase4-pr009-audit-outbox@505da2fdc8e36b8871bcf19c85d7db5c846e47a5
 source: crates/sitolo-persistence/src/postgres.rs
 source_citation: crates/sitolo-persistence/src/postgres.rs:45-76
 ---
@@ -43,7 +43,7 @@ Business transaction semantics inside later repository/application operations.
 
 ## Verification
 
-Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier also checks forced tenant RLS and least-privilege grants for role assignments. This movement does not claim that the complete business mutation/outbox flow is production-wired.
+Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier checks forced tenant RLS and that role assignments permit only state and state-version updates, not table-wide or identity-column updates. Application role assignment and revocation couple PostgreSQL state with audit/outbox evidence in a transaction, with rollback and concurrency integration cases. Other IAM mutations remain incomplete; this process does not claim the complete business mutation/outbox flow is production-wired.
 
 ## See
 
