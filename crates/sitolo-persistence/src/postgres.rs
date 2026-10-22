@@ -394,11 +394,30 @@ pub async fn verify_part8_provisioning_rls_metadata(
         query_scalar("SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'")
             .fetch_one(admin_pool)
             .await?;
+    let outbox_owner_oid: i64 =
+        query_scalar("SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_outbox_owner'")
+            .fetch_one(admin_pool)
+            .await?;
 
-    for (table, policy_prefix, tenant_column) in [
-        ("organizations", "organizations", "id"),
-        ("organization_memberships", "memberships", "organization_id"),
-        ("branches", "branches", "organization_id"),
+    for (table, policy_prefix, tenant_column, owner_transition_policy) in [
+        (
+            "organizations",
+            "organizations",
+            "id",
+            Some("organizations_transition_update"),
+        ),
+        (
+            "organization_memberships",
+            "memberships",
+            "organization_id",
+            None,
+        ),
+        (
+            "branches",
+            "branches",
+            "organization_id",
+            Some("branches_transition_update"),
+        ),
     ] {
         let row = match query(
             "SELECT c.relrowsecurity, c.relforcerowsecurity
@@ -493,7 +512,7 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .fetch_all(admin_pool)
         .await?;
 
-        let expected_policy_count = if membership_table { 3 } else { 2 };
+        let expected_policy_count = 3;
         if policies.len() != expected_policy_count {
             violation!(
                 table,
@@ -507,6 +526,10 @@ pub async fn verify_part8_provisioning_rls_metadata(
         let expected_insert = format!("{policy_prefix}_provision_insert");
         let expected_read = format!("{policy_prefix}_provision_read");
         let expected_update = "memberships_transition_update";
+        let expected_owner_update = normalize_policy_expression(&format!(
+            "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
+             AND current_setting('app.organization_id', true) <> ''"
+        ));
         let expected_insert_predicate = normalize_policy_expression(&format!(
             "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
              AND current_setting('app.organization_id', true) <> ''"
@@ -522,10 +545,17 @@ pub async fn verify_part8_provisioning_rls_metadata(
             let qual: Option<String> = policy.get("qual_expr");
             let check: Option<String> = policy.get("check_expr");
 
-            if roles != vec![runtime_oid] {
+            let is_owner_transition =
+                owner_transition_policy.is_some_and(|expected| name == expected);
+            let expected_role = if is_owner_transition {
+                outbox_owner_oid
+            } else {
+                runtime_oid
+            };
+            if roles != vec![expected_role] {
                 violation!(
                     table,
-                    format!("policy {name} roles {roles:?} do not equal [{runtime_oid}]")
+                    format!("policy {name} roles {roles:?} do not equal [{expected_role}]")
                 );
             }
 
@@ -603,6 +633,26 @@ pub async fn verify_part8_provisioning_rls_metadata(
                     violation!(
                         table,
                         format!("UPDATE policy {name} does not enforce the tenant context")
+                    );
+                }
+            } else if is_owner_transition {
+                if command != b'w' as i8 {
+                    violation!(table, format!("UPDATE policy {name} command={command}"));
+                }
+                let qual = match qual {
+                    Some(value) => value,
+                    None => violation!(table, format!("UPDATE policy {name} has no USING")),
+                };
+                let check = match check {
+                    Some(value) => value,
+                    None => violation!(table, format!("UPDATE policy {name} has no WITH CHECK")),
+                };
+                if normalize_policy_expression(&qual) != expected_select_predicate
+                    || normalize_policy_expression(&check) != expected_owner_update
+                {
+                    violation!(
+                        table,
+                        format!("UPDATE policy {name} does not enforce the owner tenant context")
                     );
                 }
             } else {

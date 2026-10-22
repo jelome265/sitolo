@@ -1347,7 +1347,7 @@ impl TenancyService {
                 IamEventName::InvitationIssued,
                 &organization_id,
                 None,
-                TargetRef::Membership(membership_id.clone()),
+                TargetRef::Invitation(invitation_id.clone()),
                 actor,
                 "create_invitation",
                 "invitation",
@@ -1824,9 +1824,8 @@ impl TenancyService {
             .await
             .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
         let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
-            "UPDATE organizations SET state = $3, state_version = state_version + 1 WHERE id = $1 AND state = $2 RETURNING name, state_version",
+            "SELECT name, state_version FROM transition_organization_state($1, $2)",
         )
-        .bind(id.as_str())
         .bind(spec.from)
         .bind(spec.to)
         .fetch_optional(&mut *tx)
@@ -1887,9 +1886,8 @@ impl TenancyService {
             .await
             .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
         let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
-            "UPDATE branches SET state = $4, state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = $3 RETURNING name, state_version",
+            "SELECT name, state_version FROM transition_branch_state($1, $2, $3)",
         )
-        .bind(organization_id.as_str())
         .bind(id.as_str())
         .bind(spec.from)
         .bind(spec.to)

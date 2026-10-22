@@ -81,7 +81,7 @@ CREATE POLICY organizations_provision_read ON organizations
     FOR SELECT TO app_runtime
     USING (id = NULLIF(current_setting('app.organization_id', true), ''));
 CREATE POLICY organizations_transition_update ON organizations
-    FOR UPDATE TO app_runtime
+    FOR UPDATE TO app_outbox_owner
     USING (id = NULLIF(current_setting('app.organization_id', true), ''))
     WITH CHECK (
         id = NULLIF(current_setting('app.organization_id', true), '')
@@ -115,7 +115,7 @@ CREATE POLICY branches_provision_read ON branches
     FOR SELECT TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''));
 CREATE POLICY branches_transition_update ON branches
-    FOR UPDATE TO app_runtime
+    FOR UPDATE TO app_outbox_owner
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''))
     WITH CHECK (
         organization_id = NULLIF(current_setting('app.organization_id', true), '')
@@ -143,9 +143,69 @@ ALTER TABLE organization_memberships OWNER TO app_outbox_owner;
 ALTER TABLE branches OWNER TO app_outbox_owner;
 ALTER TABLE invitations OWNER TO app_outbox_owner;
 
+-- SECURITY DEFINER transition functions keep direct UPDATE unavailable to
+-- app_runtime. Their owner remains subject to forced RLS and can only update
+-- rows matching the transaction-local tenant context.
+CREATE FUNCTION transition_organization_state(p_from TEXT, p_to TEXT)
+RETURNS TABLE(name TEXT, state_version BIGINT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path FROM CURRENT
+AS $$
+BEGIN
+    IF NOT (
+        (p_from = 'PROVISIONING' AND p_to = 'ACTIVE') OR
+        (p_from = 'ACTIVE' AND p_to IN ('SUSPENDED', 'CLOSING')) OR
+        (p_from = 'SUSPENDED' AND p_to = 'ACTIVE') OR
+        (p_from = 'CLOSING' AND p_to = 'CLOSED')
+    ) THEN
+        RAISE EXCEPTION 'invalid organization transition';
+    END IF;
+
+    RETURN QUERY
+    UPDATE organizations AS organization
+    SET state = p_to, state_version = organization.state_version + 1
+    WHERE organization.id = NULLIF(current_setting('app.organization_id', true), '')
+      AND organization.state = p_from
+    RETURNING organization.name, organization.state_version;
+END;
+$$;
+
+CREATE FUNCTION transition_branch_state(p_branch_id TEXT, p_from TEXT, p_to TEXT)
+RETURNS TABLE(name TEXT, state_version BIGINT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path FROM CURRENT
+AS $$
+BEGIN
+    IF NOT (
+        (p_from = 'PROVISIONING' AND p_to = 'ACTIVE') OR
+        (p_from = 'ACTIVE' AND p_to IN ('SUSPENDED', 'CLOSING')) OR
+        (p_from = 'SUSPENDED' AND p_to = 'ACTIVE') OR
+        (p_from = 'CLOSING' AND p_to = 'CLOSED')
+    ) THEN
+        RAISE EXCEPTION 'invalid branch transition';
+    END IF;
+
+    RETURN QUERY
+    UPDATE branches AS branch
+    SET state = p_to, state_version = branch.state_version + 1
+    WHERE branch.organization_id = NULLIF(current_setting('app.organization_id', true), '')
+      AND branch.id = p_branch_id
+      AND branch.state = p_from
+    RETURNING branch.name, branch.state_version;
+END;
+$$;
+
+ALTER FUNCTION transition_organization_state(TEXT, TEXT) OWNER TO app_outbox_owner;
+ALTER FUNCTION transition_branch_state(TEXT, TEXT, TEXT) OWNER TO app_outbox_owner;
+REVOKE ALL ON FUNCTION transition_organization_state(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION transition_organization_state(TEXT, TEXT) TO app_runtime;
+GRANT EXECUTE ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) TO app_runtime;
+
 REVOKE ALL ON organizations, organization_memberships, branches, invitations FROM PUBLIC;
 GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
-GRANT UPDATE (state, state_version) ON organizations, branches TO app_runtime;
 GRANT SELECT, INSERT ON invitations TO app_runtime;
 GRANT UPDATE (state, state_version, contact_kind, contact_value, token_hash) ON invitations TO app_runtime;
 GRANT SELECT, INSERT ON organization_memberships TO app_runtime;

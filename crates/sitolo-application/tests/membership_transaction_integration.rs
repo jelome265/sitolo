@@ -113,6 +113,19 @@ async fn seed_active_branch(
     Ok(())
 }
 
+async fn seed_provisioning_branch(
+    db: &TestDb,
+    organization_id: &str,
+    branch_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, 'Main', 'PROVISIONING', 1)")
+        .bind(branch_id)
+        .bind(organization_id)
+        .execute(&db.admin)
+        .await?;
+    Ok(())
+}
+
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     let outbox = Arc::new(PostgresOutboxRepository::new(db.runtime.clone()));
     TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
@@ -124,8 +137,12 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-lifecycle-atomicity").unwrap();
     let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-atomicity").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
-    seed_active_branch(&db, org.as_str(), branch.as_str())
+    query("INSERT INTO organizations (id, name, state, state_version) VALUES ($1, 'Org', 'PROVISIONING', 1)")
+        .bind(org.as_str())
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    seed_provisioning_branch(&db, org.as_str(), branch.as_str())
         .await
         .unwrap();
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
@@ -136,11 +153,19 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     };
 
     tenancy
+        .activate_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+    tenancy
         .suspend_organization(&org, actor("org-operator"))
         .await
         .unwrap();
     tenancy
         .resume_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .activate_branch(&org, &branch, actor("branch-operator"))
         .await
         .unwrap();
     tenancy
@@ -184,7 +209,7 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     .fetch_one(&db.admin)
     .await
     .unwrap();
-    assert_eq!(evidence_count, 16);
+    assert_eq!(evidence_count, 20);
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
@@ -411,6 +436,17 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     assert!(persisted.1);
     assert_eq!(persisted.2.as_deref(), Some("invitee@example.test"));
     assert_eq!(persisted.3, 1);
+    let audit_target: (String, String) = sqlx_core::query_as::query_as(
+        "SELECT target_type, target_ref FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.invitation.issued'",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        audit_target,
+        ("Invitation".to_owned(), invitation.to_string())
+    );
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.invitation.issued') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.invitation.issued')",
     )
