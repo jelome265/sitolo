@@ -160,7 +160,7 @@ The temporary `rg` binary on this host had been purged between runs. Because the
 
 All stage 06 findings remain closed as recorded in `07-remediation-pr009-part8.md` and re-verified in `08-verification-pr009-part8.md`.
 
-**Scope gap, stated plainly:** the commits in this increment were produced after stage 08 verification and were **not** re-audited at stage 06. Stage 08's evidence is pinned to `862775c`; this handoff delivers `e49de42`. The increment is covered by exact-head CI and the post-hoc static reviews below, not by a stage 06 re-audit. A human may require one before merge; that is a human-controlled decision, not an automatic dependency. The follow-up packet now records a post-Stage-08 static review in [follow-up/audit.md](follow-up/audit.md). This is not human approval; the human review remains pending.
+**Audit history and current state:** this increment was produced after the original Stage 08 verification, whose evidence is pinned to `862775c`; the original Stage 06 pass did not cover these later changes. This packet now includes a follow-up audit against code head `e49de42` in [follow-up/audit.md](follow-up/audit.md), plus the [remediation plan](follow-up/remediation-plan.md) and [continuation guide](follow-up/guide.md). The follow-up report is a static engineering review, not human approval or production certification; human review remains pending.
 
 ### Static audits received after stage 08
 
