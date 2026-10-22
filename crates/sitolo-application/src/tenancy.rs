@@ -137,6 +137,110 @@ fn fallback_rule() -> RateLimitRule {
 }
 
 impl TenancyService {
+    /// Changes one membership state and writes its mandatory evidence using
+    /// the same PostgreSQL transaction. This is the authoritative path when
+    /// the evidence sink is configured; the in-memory store remains a test
+    /// reference implementation only.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the transition descriptor must keep the expected/next state and event provenance explicit"
+    )]
+    async fn transition_membership_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        expected_state: &'static str,
+        next_state: &'static str,
+        event_name: IamEventName,
+        actor: ActorRef,
+        action: &'static str,
+    ) -> Result<Membership, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_transition_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "membership_transition_tenant_context",
+                sqlstate: None,
+            })?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE organization_memberships SET state = $3, state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = $4 RETURNING user_id, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .bind(next_state)
+        .bind(expected_state)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "membership_transition_update",
+            sqlstate: None,
+        })?;
+        let Some((user_id, state_version)) = changed else {
+            return Err(TenancyError::InvalidTransition);
+        };
+        let membership = Membership {
+            id: membership_id.clone(),
+            organization_id: organization_id.clone(),
+            user_id: TenantUserId::new(user_id).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_transition_user_id",
+                    sqlstate: None,
+                }
+            })?,
+            state: match next_state {
+                "ACTIVE" => MembershipState::Active,
+                "SUSPENDED" => MembershipState::Suspended,
+                "REVOKED" => MembershipState::Revoked,
+                _ => return Err(TenancyError::InvalidTransition),
+            },
+            state_version: u64::try_from(state_version).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_transition_state_version",
+                    sqlstate: None,
+                }
+            })?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            event_name,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            action,
+            "membership",
+            membership_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "from_state": expected_state,
+                "to_state": next_state,
+                "state_version": membership.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "membership_transition_commit",
+                sqlstate: None,
+            })?;
+        Ok(membership)
+    }
+
     pub fn new(db: Arc<TenancyDatabase>, abuse_rules: Vec<(AbuseClass, RateLimitRule)>) -> Self {
         TenancyService {
             db,
@@ -459,6 +563,76 @@ impl TenancyService {
         name: &str,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let branch = Branch::provision(id.clone(), organization_id.clone(), name)?;
+            let branch = Branch {
+                state: sitolo_domain::tenancy::BranchState::Active,
+                state_version: 2,
+                ..branch
+            };
+            let mut tx =
+                sink.pool
+                    .begin()
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "branch_create_begin",
+                        sqlstate: None,
+                    })?;
+            query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "branch_create_tenant_context",
+                    sqlstate: None,
+                })?;
+            query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, $3, 'ACTIVE', 2)")
+                .bind(id.as_str())
+                .bind(organization_id.as_str())
+                .bind(&branch.name)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| {
+                    let sqlstate = match &error {
+                        SqlxError::Database(database_error) => {
+                            database_error.code().map(|code| code.into_owned())
+                        }
+                        _ => None,
+                    };
+                    if sqlstate.as_deref() == Some("23505") {
+                        TenancyError::Conflict
+                    } else {
+                        TenancyError::EvidencePersistenceFailedAt {
+                            stage: "branch_create_insert",
+                            sqlstate,
+                        }
+                    }
+                })?;
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::BranchCreated,
+                &organization_id,
+                Some(&id),
+                TargetRef::Branch(id.clone()),
+                actor,
+                "create_branch",
+                "branch",
+                id.to_string(),
+                serde_json::json!({
+                    "organization_id": organization_id.as_str(),
+                    "branch_id": id.as_str(),
+                    "branch_name": branch.name,
+                }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "branch_create_commit",
+                    sqlstate: None,
+                })?;
+            return Ok(branch);
+        }
         let branch = self
             .db
             .create_branch(id.clone(), organization_id.clone(), name)
@@ -603,6 +777,19 @@ impl TenancyService {
         id: &MembershipId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_membership_with_evidence(
+                    organization_id,
+                    id,
+                    "PENDING_ACCEPTANCE",
+                    "ACTIVE",
+                    IamEventName::MembershipActivated,
+                    actor,
+                    "accept_member",
+                )
+                .await;
+        }
         let membership = self.db.activate_membership(organization_id, id).await?;
         self.record_evidence(
             IamEventName::MembershipActivated,
@@ -629,6 +816,19 @@ impl TenancyService {
         id: &MembershipId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_membership_with_evidence(
+                    organization_id,
+                    id,
+                    "ACTIVE",
+                    "SUSPENDED",
+                    IamEventName::MembershipSuspended,
+                    actor,
+                    "suspend_member",
+                )
+                .await;
+        }
         let membership = self.db.suspend_membership(organization_id, id).await?;
         self.record_evidence(
             IamEventName::MembershipSuspended,
@@ -661,6 +861,19 @@ impl TenancyService {
         id: &MembershipId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_membership_with_evidence(
+                    organization_id,
+                    id,
+                    "SUSPENDED",
+                    "ACTIVE",
+                    IamEventName::MembershipActivated,
+                    actor,
+                    "resume_member",
+                )
+                .await;
+        }
         let membership = self.db.resume_membership(organization_id, id).await?;
         self.record_evidence(
             IamEventName::MembershipActivated,
@@ -689,6 +902,19 @@ impl TenancyService {
         id: &MembershipId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_membership_with_evidence(
+                    organization_id,
+                    id,
+                    "ACTIVE",
+                    "REVOKED",
+                    IamEventName::MembershipRevoked,
+                    actor,
+                    "revoke_member",
+                )
+                .await;
+        }
         let membership = self.db.revoke_membership(organization_id, id).await?;
         self.record_evidence(
             IamEventName::MembershipRevoked,
