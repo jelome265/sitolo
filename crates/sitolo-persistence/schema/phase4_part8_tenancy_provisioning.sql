@@ -80,6 +80,13 @@ CREATE POLICY organizations_provision_insert ON organizations
 CREATE POLICY organizations_provision_read ON organizations
     FOR SELECT TO app_runtime
     USING (id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY organizations_transition_update ON organizations
+    FOR UPDATE TO app_runtime
+    USING (id = NULLIF(current_setting('app.organization_id', true), ''))
+    WITH CHECK (
+        id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 
 CREATE POLICY memberships_provision_insert ON organization_memberships
     FOR INSERT TO app_runtime
@@ -107,6 +114,13 @@ CREATE POLICY branches_provision_insert ON branches
 CREATE POLICY branches_provision_read ON branches
     FOR SELECT TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY branches_transition_update ON branches
+    FOR UPDATE TO app_runtime
+    USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''))
+    WITH CHECK (
+        organization_id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 CREATE POLICY invitations_tenant_insert ON invitations
     FOR INSERT TO app_runtime
     WITH CHECK (
@@ -131,6 +145,7 @@ ALTER TABLE invitations OWNER TO app_outbox_owner;
 
 REVOKE ALL ON organizations, organization_memberships, branches, invitations FROM PUBLIC;
 GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
+GRANT UPDATE (state, state_version) ON organizations, branches TO app_runtime;
 GRANT SELECT, INSERT ON invitations TO app_runtime;
 GRANT UPDATE (state, state_version, contact_kind, contact_value, token_hash) ON invitations TO app_runtime;
 GRANT SELECT, INSERT ON organization_memberships TO app_runtime;

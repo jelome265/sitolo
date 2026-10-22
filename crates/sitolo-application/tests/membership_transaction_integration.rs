@@ -100,10 +100,223 @@ async fn seed_organization(
     Ok(())
 }
 
+async fn seed_active_branch(
+    db: &TestDb,
+    organization_id: &str,
+    branch_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, 'Main', 'ACTIVE', 2)")
+        .bind(branch_id)
+        .bind(organization_id)
+        .execute(&db.admin)
+        .await?;
+    Ok(())
+}
+
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     let outbox = Arc::new(PostgresOutboxRepository::new(db.runtime.clone()));
     TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
         .with_evidence(TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox))
+}
+
+#[tokio::test]
+async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-lifecycle-atomicity").unwrap();
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-atomicity").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_active_branch(&db, org.as_str(), branch.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let actor = |subject: &str| ActorRef {
+        subject_ref: subject.to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    tenancy
+        .suspend_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .resume_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .suspend_branch(&org, &branch, actor("branch-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .resume_branch(&org, &branch, actor("branch-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .begin_close_branch(&org, &branch, actor("branch-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .close_branch(&org, &branch, actor("branch-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .begin_close_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+    tenancy
+        .close_organization(&org, actor("org-operator"))
+        .await
+        .unwrap();
+
+    let persisted: (String, i64, String, i64) = sqlx_core::query_as::query_as(
+        "SELECT organizations.state, organizations.state_version, branches.state, branches.state_version FROM organizations JOIN branches ON branches.organization_id = organizations.id WHERE organizations.id = $1 AND branches.id = $2",
+    )
+    .bind(org.as_str())
+    .bind(branch.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(persisted, ("CLOSED".to_owned(), 6, "CLOSED".to_owned(), 6));
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 16);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-lifecycle-rollback").unwrap();
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_active_branch(&db, org.as_str(), branch.as_str())
+        .await
+        .unwrap();
+    let actor = || ActorRef {
+        subject_ref: "lifecycle-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter));
+    assert!(
+        audit_failure
+            .suspend_organization(&org, actor())
+            .await
+            .is_err()
+    );
+    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ));
+    assert!(
+        outbox_failure
+            .suspend_branch(&org, &branch, actor())
+            .await
+            .is_err()
+    );
+
+    let state: (String, i64, String, i64) = sqlx_core::query_as::query_as(
+        "SELECT organizations.state, organizations.state_version, branches.state, branches.state_version FROM organizations JOIN branches ON branches.organization_id = organizations.id WHERE organizations.id = $1 AND branches.id = $2",
+    )
+    .bind(org.as_str())
+    .bind(branch.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, ("ACTIVE".to_owned(), 2, "ACTIVE".to_owned(), 2));
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn competing_organization_transitions_and_cross_tenant_branch_update_are_denied() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-lifecycle-race").unwrap();
+    let other_org = OrganizationId::new("org-lifecycle-other").unwrap();
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-cross-tenant").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_organization(&db, other_org.as_str()).await.unwrap();
+    seed_active_branch(&db, org.as_str(), branch.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+
+    let (suspend, close) = tokio::join!(
+        tenancy.suspend_organization(
+            &org,
+            ActorRef {
+                subject_ref: "operator-a".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+        tenancy.begin_close_organization(
+            &org,
+            ActorRef {
+                subject_ref: "operator-b".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+    );
+    assert_ne!(suspend.is_ok(), close.is_ok());
+
+    assert!(
+        tenancy
+            .suspend_branch(
+                &other_org,
+                &branch,
+                ActorRef {
+                    subject_ref: "cross-tenant-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    let branch_state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM branches WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(branch.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(branch_state, ("ACTIVE".to_owned(), 2));
+    let event_counts: (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1), (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(event_counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

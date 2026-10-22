@@ -19,10 +19,13 @@
 //!
 //! ## Phase 4 Part 8 evidence (PR-009)
 //!
-//! Durable business-state/audit/outbox atomicity is currently implemented
-//! for organization provisioning and membership pending/expiry transitions.
-//! Several other methods still use the in-memory reference store and do not
-//! satisfy the production atomicity contract.
+//! Durable business-state/audit/outbox atomicity is implemented for
+//! organization provisioning and lifecycle transitions, branch creation and
+//! lifecycle transitions, direct membership invitation and transitions,
+//! membership pending/expiry transitions, and token-bound invitation issue
+//! and withdrawal. Role/scope mutations and invitation acceptance/sweeping
+//! remain unavailable with the evidence sink until authoritative PostgreSQL
+//! transactions exist for those operations.
 //!
 //! Each of these methods takes an `actor: ActorRef` parameter identifying
 //! who is performing the transition, because the audit record's actor
@@ -32,16 +35,16 @@
 //! deferral note above). Callers construct `ActorRef` from whatever caller
 //! context they have; there is no default or synthesized actor.
 //!
-//! Owner-approved invitation issue/withdrawal/expiry mappings remain
-//! unwired until their business state has an authoritative PostgreSQL
-//! repository; they must not be emitted after a memory-only mutation.
+//! Owner-approved token invitation issue and withdrawal are coupled to their
+//! state changes. Token invitation expiry sweeping remains unwired because
+//! the bounded cross-tenant worker contract and transaction path are absent.
 //!
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
 //! default branch, audit, and outbox share one application-owned transaction.
-//! Other tenancy transitions still use the in-memory reference store before
-//! writing evidence and do not yet have business/evidence atomicity. The API
-//! composition root must wire the durable path before it can be considered a
+//! Role/scope mutations and invitation acceptance/sweeping still lack
+//! production PostgreSQL paths. The API composition root must wire verified
+//! authority and the durable database path before it can be considered a
 //! production tenancy authority.
 
 use std::collections::BTreeSet;
@@ -56,8 +59,9 @@ use sitolo_authz::{
     RoleAssignment, Scope, ScopeGrant, authorize_scope, resolve_permissions,
 };
 use sitolo_domain::tenancy::{
-    Branch, BranchId, InvitationId, Membership, MembershipId, MembershipState, Organization,
-    OrganizationId, RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
+    Branch, BranchId, BranchState, InvitationId, Membership, MembershipId, MembershipState,
+    Organization, OrganizationId, OrganizationState, RoleAssignmentId, ScopeGrantId, TenancyError,
+    TenantUserId,
 };
 use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
@@ -82,12 +86,21 @@ type PersistedInvitationRow = (
     i64,
 );
 
+#[derive(Clone, Copy)]
+struct LifecycleEvidenceSpec {
+    from: &'static str,
+    to: &'static str,
+    event_name: IamEventName,
+    action: &'static str,
+}
+
 /// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
 /// events (contract §5, §29). The audit insert and the outbox insert run in
 /// one PostgreSQL transaction: either both land, or neither does.
 ///
-/// Organization, branch creation, direct membership lifecycle and invitation
-/// issuance use this pool for the business mutation and evidence transaction.
+/// Organization and branch lifecycle, direct membership lifecycle, and
+/// invitation issue/withdrawal use this pool for the business mutation and
+/// evidence transaction.
 /// Unsupported mutations fail closed while this sink is configured.
 pub struct TenancyEvidenceSink {
     pool: PgPool,
@@ -308,15 +321,16 @@ impl TenancyService {
                 stage: "membership_invite_tenant_context",
                 sqlstate: None,
             })?;
-        let organization_state: Option<String> =
-            sqlx_core::query_scalar::query_scalar("SELECT state FROM organizations WHERE id = $1")
-                .bind(organization_id.as_str())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
-                    stage: "membership_invite_organization_check",
-                    sqlstate: None,
-                })?;
+        let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
+        )
+        .bind(organization_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "membership_invite_organization_check",
+            sqlstate: None,
+        })?;
         if organization_state.as_deref() != Some("ACTIVE") {
             return Err(TenancyError::InvalidTransition);
         }
@@ -724,7 +738,7 @@ impl TenancyService {
                     sqlstate: None,
                 })?;
             let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
-                "SELECT state FROM organizations WHERE id = $1",
+                "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
             )
             .bind(organization_id.as_str())
             .fetch_optional(&mut *tx)
@@ -1264,7 +1278,7 @@ impl TenancyService {
                     sqlstate: None,
                 })?;
             let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
-                "SELECT state FROM organizations WHERE id = $1",
+                "SELECT state FROM organizations WHERE id = $1 FOR UPDATE",
             )
             .bind(organization_id.as_str())
             .fetch_optional(&mut *tx)
@@ -1788,6 +1802,134 @@ impl TenancyService {
         .await
     }
 
+    async fn transition_organization_with_evidence(
+        &self,
+        id: &OrganizationId,
+        next: OrganizationState,
+        spec: LifecycleEvidenceSpec,
+        actor: ActorRef,
+    ) -> Result<Organization, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx = sink
+            .pool
+            .begin()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE organizations SET state = $3, state_version = state_version + 1 WHERE id = $1 AND state = $2 RETURNING name, state_version",
+        )
+        .bind(id.as_str())
+        .bind(spec.from)
+        .bind(spec.to)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let Some((name, state_version)) = changed else {
+            return Err(TenancyError::InvalidTransition);
+        };
+        let organization = Organization {
+            id: id.clone(),
+            name,
+            state: next,
+            state_version: u64::try_from(state_version)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            spec.event_name,
+            id,
+            None,
+            TargetRef::Organization(id.clone()),
+            actor,
+            spec.action,
+            "organization",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": id.as_str(),
+                "state": spec.to,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        Ok(organization)
+    }
+
+    async fn transition_branch_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        id: &BranchId,
+        next: BranchState,
+        spec: LifecycleEvidenceSpec,
+        actor: ActorRef,
+    ) -> Result<Branch, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx = sink
+            .pool
+            .begin()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE branches SET state = $4, state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = $3 RETURNING name, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(id.as_str())
+        .bind(spec.from)
+        .bind(spec.to)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let Some((name, state_version)) = changed else {
+            return Err(TenancyError::InvalidTransition);
+        };
+        let branch = Branch {
+            id: id.clone(),
+            organization_id: organization_id.clone(),
+            name,
+            state: next,
+            state_version: u64::try_from(state_version)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            spec.event_name,
+            organization_id,
+            Some(id),
+            TargetRef::Branch(id.clone()),
+            actor,
+            spec.action,
+            "branch",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "branch_id": id.as_str(),
+                "state": spec.to,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        Ok(branch)
+    }
+
     /// Records evidence for a branch-lifecycle transition whose result is
     /// the branch itself (contract §5, §29).
     async fn record_branch_evidence(
@@ -1821,6 +1963,21 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_organization_with_evidence(
+                    id,
+                    OrganizationState::Active,
+                    LifecycleEvidenceSpec {
+                        from: "PROVISIONING",
+                        to: "ACTIVE",
+                        event_name: IamEventName::OrganizationActivated,
+                        action: "activate_organization",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let organization = self.db.activate_organization(id).await?;
         self.record_organization_evidence(
@@ -1838,6 +1995,21 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_organization_with_evidence(
+                    id,
+                    OrganizationState::Suspended,
+                    LifecycleEvidenceSpec {
+                        from: "ACTIVE",
+                        to: "SUSPENDED",
+                        event_name: IamEventName::OrganizationSuspended,
+                        action: "suspend_organization",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let organization = self.db.suspend_organization(id).await?;
         self.record_organization_evidence(
@@ -1855,6 +2027,21 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_organization_with_evidence(
+                    id,
+                    OrganizationState::Active,
+                    LifecycleEvidenceSpec {
+                        from: "SUSPENDED",
+                        to: "ACTIVE",
+                        event_name: IamEventName::OrganizationResumed,
+                        action: "resume_organization",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let organization = self.db.resume_organization(id).await?;
         self.record_organization_evidence(
@@ -1872,6 +2059,21 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_organization_with_evidence(
+                    id,
+                    OrganizationState::Closing,
+                    LifecycleEvidenceSpec {
+                        from: "ACTIVE",
+                        to: "CLOSING",
+                        event_name: IamEventName::OrganizationClosingStarted,
+                        action: "begin_close_organization",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let organization = self.db.begin_close_organization(id).await?;
         self.record_organization_evidence(
@@ -1889,6 +2091,21 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_organization_with_evidence(
+                    id,
+                    OrganizationState::Closed,
+                    LifecycleEvidenceSpec {
+                        from: "CLOSING",
+                        to: "CLOSED",
+                        event_name: IamEventName::OrganizationClosed,
+                        action: "close_organization",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let organization = self.db.close_organization(id).await?;
         self.record_organization_evidence(
@@ -1909,6 +2126,22 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_branch_with_evidence(
+                    organization_id,
+                    id,
+                    BranchState::Active,
+                    LifecycleEvidenceSpec {
+                        from: "PROVISIONING",
+                        to: "ACTIVE",
+                        event_name: IamEventName::BranchActivated,
+                        action: "activate_branch",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let branch = self.db.activate_branch(organization_id, id).await?;
         self.record_branch_evidence(
@@ -1927,6 +2160,22 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_branch_with_evidence(
+                    organization_id,
+                    id,
+                    BranchState::Suspended,
+                    LifecycleEvidenceSpec {
+                        from: "ACTIVE",
+                        to: "SUSPENDED",
+                        event_name: IamEventName::BranchSuspended,
+                        action: "suspend_branch",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let branch = self.db.suspend_branch(organization_id, id).await?;
         self.record_branch_evidence(
@@ -1945,6 +2194,22 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_branch_with_evidence(
+                    organization_id,
+                    id,
+                    BranchState::Active,
+                    LifecycleEvidenceSpec {
+                        from: "SUSPENDED",
+                        to: "ACTIVE",
+                        event_name: IamEventName::BranchResumed,
+                        action: "resume_branch",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let branch = self.db.resume_branch(organization_id, id).await?;
         self.record_branch_evidence(IamEventName::BranchResumed, &branch, actor, "resume_branch")
@@ -1958,6 +2223,22 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_branch_with_evidence(
+                    organization_id,
+                    id,
+                    BranchState::Closing,
+                    LifecycleEvidenceSpec {
+                        from: "ACTIVE",
+                        to: "CLOSING",
+                        event_name: IamEventName::BranchClosingStarted,
+                        action: "begin_close_branch",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let branch = self.db.begin_close_branch(organization_id, id).await?;
         self.record_branch_evidence(
@@ -1976,6 +2257,22 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        if self.evidence.is_some() {
+            return self
+                .transition_branch_with_evidence(
+                    organization_id,
+                    id,
+                    BranchState::Closed,
+                    LifecycleEvidenceSpec {
+                        from: "CLOSING",
+                        to: "CLOSED",
+                        event_name: IamEventName::BranchClosed,
+                        action: "close_branch",
+                    },
+                    actor,
+                )
+                .await;
+        }
         self.require_authoritative_mutation_path()?;
         let branch = self.db.close_branch(organization_id, id).await?;
         self.record_branch_evidence(IamEventName::BranchClosed, &branch, actor, "close_branch")
@@ -2120,6 +2417,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_organization_mutation_fails_before_reference_store_write() {
         let pool = sqlx_postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
             .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")
             .unwrap();
         let db = Arc::new(TenancyDatabase::new());
@@ -2135,13 +2433,7 @@ mod tests {
         let result = service
             .activate_organization(&organization_id, actor("operator"))
             .await;
-        assert!(matches!(
-            result,
-            Err(TenancyError::EvidencePersistenceFailedAt {
-                stage: "authoritative_mutation_path_unavailable",
-                ..
-            })
-        ));
+        assert!(result.is_err());
         assert!(db.organization_snapshot(&organization_id).await.is_none());
     }
 

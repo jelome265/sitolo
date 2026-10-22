@@ -50,7 +50,7 @@ The detailed tasks and acceptance criteria are in the [remediation plan](remedia
 
 The application reads its configuration from the process environment. Neither `.env.example` nor `.env.test.example` is automatically loaded. The canonical namespace and development-only secret provider are described in [the environment configuration reference](../../../../../docs/environment-configuration-reference.md).
 
-For a local shell, consult `.env.test.example` and supply real local values only after provisioning a disposable PostgreSQL 18 test database. The harness requires three distinct identities through `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`; the admin identity provisions test roles and schemas while the runtime/worker URLs must authenticate as the corresponding restricted roles. Do not point test harnesses at production or a shared database. Do not place real credentials in any example file or commit.
+Local PostgreSQL testing is deferred to the next phase. Do not install, start, or run a local database for this phase. GitHub Actions provides the approved PostgreSQL 18 service and three scoped identities (`ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`). Use its exact-head integration result for database evidence; do not count compilation or a skipped database test as a pass. Do not place real credentials in any example file or commit.
 
 Database-free targeted verification:
 
@@ -63,10 +63,7 @@ Database-free targeted verification:
     ./scripts/ci/check-icm-workspace
     python scripts/ci/check-doc-references
 
-With valid disposable PostgreSQL 18 test credentials exported in the current process environment, run the full locked test suite and persistence suite:
-
-    cargo test --workspace --all-targets --all-features --locked
-    cargo test -p sitolo-persistence --lib --all-features --locked
+For PostgreSQL-backed tests, push the candidate source SHA and use the repository's PostgreSQL-enabled [integration workflow](https://github.com/jelome265/sitolo/actions/workflows/integration.yml). Confirm its `headSha` exactly matches the candidate before recording a pass. Local execution of these suites belongs to the next phase.
 
 Do not report database tests as passed if they were only compiled or skipped. Use exact-head GitHub Actions logs for PostgreSQL evidence when the local host has no suitable disposable server.
 

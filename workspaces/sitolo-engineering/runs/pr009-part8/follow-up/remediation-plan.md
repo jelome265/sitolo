@@ -118,10 +118,11 @@ Run the database-free checks first:
     ./scripts/ci/check-icm-workspace
     python scripts/ci/check-doc-references
 
-PostgreSQL integration suites require a disposable PostgreSQL 18 database and all three scoped test DSNs. Configure those from the documented reference only after replacing placeholders with credentials and a local disposable test database; never point the harness at a production or shared database. Then run:
+**Local PostgreSQL is deferred to the next phase. Do not install, start, or run a local PostgreSQL instance for this phase.** Database-backed suites must run in the repository's PostgreSQL-enabled GitHub Actions workflow with its scoped test DSNs. A local `--no-run` compile is not database evidence. For this phase, obtain PostgreSQL proof from an Actions run whose `headSha` exactly matches the source under review, then record its run URL below:
 
-    cargo test --workspace --all-targets --all-features --locked
-    cargo test -p sitolo-persistence --lib --all-features --locked
+    https://github.com/jelome265/sitolo/actions/workflows/integration.yml
+
+Do not run `cargo test --workspace` locally when it would attempt database-backed integration tests. Run the database-free checks listed above and rely on exact-head CI for database execution.
 
 The CI release-artifact workflow must also be exercised on the candidate source SHA when its exact-source test step or artifact packaging changes.
 
