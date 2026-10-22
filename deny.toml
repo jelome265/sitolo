@@ -7,6 +7,8 @@ allow = [
     "Apache-2.0",
     "MIT",
     "BSD-3-Clause",
+    # Permissive ISC license required by `untrusted` in the AWS-LC/rustls tree.
+    "ISC",
     "Unicode-3.0",
     "Zlib",
 ]
