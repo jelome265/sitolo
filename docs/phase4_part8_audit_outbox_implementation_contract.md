@@ -516,6 +516,9 @@ states, expiry timestamp, and state version. No invitation token, token hash,
 contact address, or credential may be included. Invitation expiry is emitted
 once per committed invitation transition, with a separate membership-expiry
 event only when the linked membership actually transitions.
+The owner-approved v1 `iam.membership.expired` schema accepts
+`PENDING_ACCEPTANCE → EXPIRED` and `INVITED → EXPIRED`; all other source
+states remain invalid.
 
 ## 6.3 Version
 

@@ -25,6 +25,10 @@ The mapping decision is approved. The binding contract and source registry inclu
 
 **No mandatory-audit exclusion is proposed.** A batch-run summary, including a run that expires zero rows, belongs in operational telemetry; it does not replace the audit event for each committed business transition.
 
+### Owner-approved v1 payload extension — 2026-10-22
+
+The repository owner approved extending the `iam.membership.expired` v1 transition allowlist to accept both `PENDING_ACCEPTANCE → EXPIRED` (the direct enrollment expiry path) and `INVITED → EXPIRED` (when the invitation expiry sweep expires its linked membership). The payload fields, event name, schema version, and actor contract do not otherwise change. Other source states remain invalid.
+
 ## Proposed v1 payload fields
 
 The top-level outbox envelope retains its existing event ID/name/version, timestamp, organization/branch scope, aggregate identity/sequence and payload fields. Delivery bookkeeping (claim token, retry count, status, lock/publish fields) must not enter the published payload.

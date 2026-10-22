@@ -53,7 +53,7 @@ pub fn validate_iam_payload(
                 &[],
             )?;
             validate_membership_id(object)?;
-            validate_state_transition(object, "PENDING_ACCEPTANCE", "EXPIRED")?;
+            validate_state_transition_from(object, &["PENDING_ACCEPTANCE", "INVITED"], "EXPIRED")?;
             validate_state_version(object)?;
             validate_bounded_reason(object, "expiry_reason")
         }
@@ -176,8 +176,20 @@ fn validate_state_transition(
     expected_from: &str,
     expected_to: &str,
 ) -> Result<(), OutboxError> {
-    if object.get("from_state").and_then(Value::as_str) != Some(expected_from)
-        || object.get("to_state").and_then(Value::as_str) != Some(expected_to)
+    validate_state_transition_from(object, &[expected_from], expected_to)
+}
+
+fn validate_state_transition_from(
+    object: &serde_json::Map<String, Value>,
+    expected_from: &[&str],
+    expected_to: &str,
+) -> Result<(), OutboxError> {
+    if !expected_from.contains(
+        &object
+            .get("from_state")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    ) || object.get("to_state").and_then(Value::as_str) != Some(expected_to)
     {
         return Err(OutboxError::InvalidSchema);
     }
@@ -245,6 +257,10 @@ mod tests {
                 r#"{"membership_id":"member-1","from_state":"PENDING_ACCEPTANCE","to_state":"EXPIRED","state_version":3,"expiry_reason":"window_elapsed"}"#,
             ),
             (
+                "iam.membership.expired",
+                r#"{"membership_id":"member-1","from_state":"INVITED","to_state":"EXPIRED","state_version":2,"expiry_reason":"invitation_expired"}"#,
+            ),
+            (
                 "iam.invitation.issued",
                 r#"{"invitation_id":"invite-1","membership_id":"member-1","expires_at":"2026-10-23T00:00:00Z","state_version":1}"#,
             ),
@@ -271,6 +287,12 @@ mod tests {
             "iam.membership.pending_acceptance",
             1,
             r#"{"membership_id":"member-1","from_state":"ACTIVE","to_state":"PENDING_ACCEPTANCE","state_version":2}"#
+        )
+        .is_err());
+        assert!(validate_iam_payload(
+            "iam.membership.expired",
+            1,
+            r#"{"membership_id":"member-1","from_state":"ACTIVE","to_state":"EXPIRED","state_version":2,"expiry_reason":"invitation_expired"}"#
         )
         .is_err());
         assert!(validate_iam_payload(
