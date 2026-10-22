@@ -2,12 +2,12 @@
 
 **Date:** 2026-10-22  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
-**Reviewed base SHA:** `7326098b9b2da614bc6c99dd08ef2b9a46c01820`
+**Verified implementation SHA:** `441ca1fd7974bfbbac2042ac900c82cea1fd3c63`
 **Disposition:** Partial remediation. Re-audit is required for the changed event catalogue. AUD-01 through AUD-05 are not closed.
 
 ## Evidence-first baseline
 
-The branch was fetched and fast-forward checked before edits; it was already at `7326098b9b2da614bc6c99dd08ef2b9a46c01820`, the remote PR head. All 10 PR checks passed for that exact source SHA, including PostgreSQL integration in GitHub Actions. Local PostgreSQL execution is planned for the next engineering phase and is not claimed here. The new persistence-boundary regression test compiles locally; it requires the PostgreSQL-backed CI service for execution.
+The branch was fetched and fast-forward checked before edits; it was already at `7326098b9b2da614bc6c99dd08ef2b9a46c01820`, the remote PR head. The implementation changes were committed as `441ca1fd7974bfbbac2042ac900c82cea1fd3c63`. All 10 PR checks passed for that exact source SHA, including the new PostgreSQL integration regression. Local PostgreSQL execution is planned for the next engineering phase and is not claimed here.
 
 ## Finding disposition
 
@@ -51,7 +51,7 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 | Baseline `cargo metadata --locked --format-version 1` | **PASS** |
 | Baseline `cargo clippy --workspace --all-targets --locked -- -D warnings` | **PASS** |
 | Local `cargo test --workspace --locked` | **NOT RUN TO COMPLETION**: database-free tests passed, but PostgreSQL tests require local `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`; local execution is deferred to the next phase |
-| Exact-source PR CI at `7326098` | **PASS**, all 10 checks, including PostgreSQL integration: [Rust/toolchain](https://github.com/jelome265/sitolo/actions/runs/39714921134), [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39714921136), [security](https://github.com/jelome265/sitolo/actions/runs/39714921097), [policy](https://github.com/jelome265/sitolo/actions/runs/39714921020), [CodeQL](https://github.com/jelome265/sitolo/runs/119615720620) |
+| Exact-source PR CI at `441ca1f` | **PASS**, all 10 checks, including the mutated-event PostgreSQL enqueue regression: [Rust/toolchain and verification](https://github.com/jelome265/sitolo/actions/runs/39715813157), [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39715813182), [security](https://github.com/jelome265/sitolo/actions/runs/39715813194), [policy](https://github.com/jelome265/sitolo/actions/runs/39715813153), [CodeQL](https://github.com/jelome265/sitolo/runs/119618293552) |
 | Stage 06 re-audit | **NOT RUN**; required after implementation changes |
 
 ## Next required work
