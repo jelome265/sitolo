@@ -52,8 +52,8 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
-    Invitation, InvitationContact, InvitationError, Permission, Role, RoleAssignment, Scope,
-    ScopeGrant, authorize_scope, resolve_permissions,
+    Invitation, InvitationContact, InvitationError, InvitationState, Permission, Role,
+    RoleAssignment, Scope, ScopeGrant, authorize_scope, resolve_permissions,
 };
 use sitolo_domain::tenancy::{
     Branch, BranchId, InvitationId, Membership, MembershipId, MembershipState, Organization,
@@ -71,6 +71,16 @@ use sqlx_core::error::Error as SqlxError;
 use sqlx_core::query::query;
 use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgPool, Postgres};
+
+type PersistedInvitationRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    i64,
+);
 
 /// Durable audit/outbox evidence sink for Phase 4 Part 8 mandatory IAM
 /// events (contract §5, §29). The audit insert and the outbox insert run in
@@ -110,6 +120,24 @@ fn system_time_to_utc(value: SystemTime) -> Result<DateTime<Utc>, TenancyError> 
     let seconds = i64::try_from(duration.as_secs()).map_err(|_| TenancyError::InvalidInvitation)?;
     DateTime::from_timestamp(seconds, duration.subsec_nanos())
         .ok_or(TenancyError::InvalidInvitation)
+}
+
+fn utc_to_system_time(value: DateTime<Utc>) -> Result<SystemTime, TenancyError> {
+    let seconds = value.timestamp();
+    let nanos = value.timestamp_subsec_nanos();
+    if seconds >= 0 {
+        UNIX_EPOCH
+            .checked_add(Duration::new(
+                u64::try_from(seconds).map_err(|_| TenancyError::InvalidInvitation)?,
+                nanos,
+            ))
+            .ok_or(TenancyError::InvalidInvitation)
+    } else {
+        UNIX_EPOCH
+            .checked_sub(Duration::new(seconds.unsigned_abs(), 0))
+            .and_then(|time| time.checked_add(Duration::new(0, nanos)))
+            .ok_or(TenancyError::InvalidInvitation)
+    }
 }
 
 impl TenancyEvidenceSink {
@@ -1397,14 +1425,134 @@ impl TenancyService {
     /// Withdraws an issued invitation and releases the linked membership
     /// for re-enrollment.
     ///
-    /// Evidence emission remains blocked on authoritative PostgreSQL
-    /// invitation storage; the approved mapping must be coupled to both the
-    /// invitation and any linked membership transition.
+    /// The invitation terminal transition, linked membership release, audit
+    /// record, and outbox event share one PostgreSQL transaction.
     pub async fn revoke_invitation(
         &self,
         organization_id: &OrganizationId,
         invitation_id: &InvitationId,
+        actor: ActorRef,
     ) -> Result<Invitation, InvitationError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let mut tx = sink
+                .pool
+                .begin()
+                .await
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let row: Option<PersistedInvitationRow> = sqlx_core::query_as::query_as(
+                "SELECT state, membership_id, proposed_role, scope_kind, issued_at, expires_at, state_version FROM invitations WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+            )
+            .bind(organization_id.as_str())
+            .bind(invitation_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let Some((state, membership_id_raw, role_raw, scope_kind, issued_at, expires_at, _)) =
+                row
+            else {
+                return Err(InvitationError::Invalid);
+            };
+            match state.as_str() {
+                "ISSUED" => {}
+                "ACCEPTED" => return Err(InvitationError::AlreadyAccepted),
+                "EXPIRED" => return Err(InvitationError::Expired),
+                _ => return Err(InvitationError::Invalid),
+            }
+            let membership_id = MembershipId::new(membership_id_raw)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let role = Role::all()
+                .iter()
+                .copied()
+                .find(|role| Some(role.as_str()) == role_raw.as_deref())
+                .ok_or(InvitationError::EvidencePersistenceFailed)?;
+            let branch_id: Option<String> = sqlx_core::query_scalar::query_scalar(
+                "SELECT branch_id FROM invitations WHERE organization_id = $1 AND id = $2",
+            )
+            .bind(organization_id.as_str())
+            .bind(invitation_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?
+            .flatten();
+            let proposed_scope = match scope_kind.as_deref() {
+                None => None,
+                Some("ORGANIZATION") => Some(Scope::Organization {
+                    organization_id: organization_id.clone(),
+                }),
+                Some("BRANCH") => Some(Scope::Branch {
+                    organization_id: organization_id.clone(),
+                    branch_id: BranchId::new(
+                        branch_id.ok_or(InvitationError::EvidencePersistenceFailed)?,
+                    )
+                    .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+                }),
+                _ => return Err(InvitationError::EvidencePersistenceFailed),
+            };
+            let invitation: Option<(i64,)> = sqlx_core::query_as::query_as(
+                "UPDATE invitations SET state = 'WITHDRAWN', state_version = state_version + 1, contact_kind = NULL, contact_value = NULL, token_hash = NULL WHERE organization_id = $1 AND id = $2 AND state = 'ISSUED' RETURNING state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(invitation_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let Some((state_version,)) = invitation else {
+                return Err(InvitationError::Invalid);
+            };
+            query("UPDATE organization_memberships SET state = 'EXPIRED', state_version = state_version + 2 WHERE organization_id = $1 AND id = $2 AND state = 'INVITED'")
+                .bind(organization_id.as_str())
+                .bind(membership_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let version = u64::try_from(state_version)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let issued_at = utc_to_system_time(issued_at)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let expires_at = utc_to_system_time(expires_at)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::InvitationWithdrawn,
+                organization_id,
+                None,
+                TargetRef::Invitation(invitation_id.clone()),
+                actor,
+                "revoke_invitation",
+                "invitation",
+                invitation_id.to_string(),
+                serde_json::json!({
+                    "invitation_id": invitation_id.as_str(),
+                    "membership_id": membership_id.as_str(),
+                    "from_state": "ISSUED",
+                    "to_state": "WITHDRAWN",
+                    "state_version": version,
+                }),
+            )
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            tx.commit()
+                .await
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            return Ok(Invitation {
+                id: invitation_id.clone(),
+                organization_id: organization_id.clone(),
+                membership_id,
+                proposed_role: role,
+                proposed_scope,
+                contact: None,
+                token_hash: None,
+                issued_at,
+                expires_at,
+                state: InvitationState::Revoked,
+                state_version: version,
+            });
+        }
         self.require_authoritative_mutation_path()
             .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
         self.db
@@ -1415,8 +1563,8 @@ impl TenancyService {
     /// Sweeps lapsed issued invitations to expired, releasing their linked
     /// memberships. Returns the count transitioned.
     ///
-    /// Evidence emission remains blocked on authoritative PostgreSQL
-    /// invitation storage and concurrency-safe per-invitation claiming.
+    /// The current PostgreSQL sweep is fail-closed until a bounded
+    /// cross-tenant worker contract is available.
     pub async fn expire_invitations(&self) -> Result<u64, TenancyError> {
         self.require_authoritative_mutation_path()?;
         Ok(self.db.expire_invitations(SystemTime::now()).await)
@@ -2403,7 +2551,7 @@ mod tests {
 
         let created = invited(&service, org, INVITE_TOKEN).await;
         let withdrawn = service
-            .revoke_invitation(org, &created.invitation.id)
+            .revoke_invitation(org, &created.invitation.id, actor("test"))
             .await
             .unwrap();
         assert!(withdrawn.contact.is_none());

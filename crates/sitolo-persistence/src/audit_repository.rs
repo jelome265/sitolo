@@ -88,6 +88,7 @@ impl AuditWriter for PostgresAuditWriter {
         let (target_type, target_ref) = match &event.target {
             sitolo_audit::TargetRef::Organization(id) => ("Organization", id.to_string()),
             sitolo_audit::TargetRef::Branch(id) => ("Branch", id.to_string()),
+            sitolo_audit::TargetRef::Invitation(id) => ("Invitation", id.to_string()),
             sitolo_audit::TargetRef::Membership(id) => ("Membership", id.to_string()),
             sitolo_audit::TargetRef::Role(name) => ("Role", name.clone()),
             sitolo_audit::TargetRef::Scope(name) => ("Scope", name.clone()),

@@ -7,7 +7,7 @@
 use std::time::SystemTime;
 
 use sitolo_auth::AuditEventId;
-use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId};
+use sitolo_domain::tenancy::{BranchId, InvitationId, MembershipId, OrganizationId};
 
 /// Phase 4 IAM/security event names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +213,7 @@ pub struct ActorRef {
 pub enum TargetRef {
     Organization(OrganizationId),
     Branch(BranchId),
+    Invitation(InvitationId),
     Membership(MembershipId),
     Role(String),
     Scope(String),

@@ -325,6 +325,265 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
 }
 
 #[tokio::test]
+async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-withdrawal").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal").unwrap();
+    let membership = MembershipId::new("member-withdrawal").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    tenancy
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "withdrawal@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let withdrawn = tenancy
+        .revoke_invitation(
+            &org,
+            &invitation,
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.state, sitolo_authz::InvitationState::Revoked);
+    assert!(withdrawn.contact.is_none());
+    assert!(withdrawn.token_hash.is_none());
+    let stored: (String, bool, Option<String>, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, token_hash IS NOT NULL, contact_value, state_version FROM invitations WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(stored.0, "WITHDRAWN");
+    assert!(!stored.1);
+    assert!(stored.2.is_none());
+    assert_eq!(stored.3, 2);
+    let membership_state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, ("EXPIRED".to_owned(), 3));
+    let event_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 2);
+    let event_payloads: Vec<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT payload::text FROM outbox_events WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_all(&db.admin)
+    .await
+    .unwrap();
+    assert!(
+        event_payloads
+            .iter()
+            .all(|payload| !payload.contains("withdrawal@example.test")
+                && !payload.contains("0123456789abcdef0123456789abcdef"))
+    );
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-withdrawal-audit-rollback").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-audit").unwrap();
+    let membership = MembershipId::new("member-withdrawal-audit").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
+    create_service
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-audit").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "audit@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let revoke_service = service(&db, Arc::new(FailingAuditWriter));
+    assert!(
+        revoke_service
+            .revoke_invitation(
+                &org,
+                &invitation,
+                ActorRef {
+                    subject_ref: "user-issuer".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    let invitation_state: (String, bool, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT state, token_hash IS NOT NULL, contact_value FROM invitations WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(invitation_state.0, "ISSUED");
+    assert!(invitation_state.1);
+    assert_eq!(invitation_state.2.as_deref(), Some("audit@example.test"));
+    let membership_state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, ("INVITED".to_owned(), 1));
+    let event_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 1);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-withdrawal-outbox-rollback").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-outbox").unwrap();
+    let membership = MembershipId::new("member-withdrawal-outbox").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
+    create_service
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-outbox").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "outbox@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let revoke_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ));
+    assert!(
+        revoke_service
+            .revoke_invitation(
+                &org,
+                &invitation,
+                ActorRef {
+                    subject_ref: "user-issuer".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+
+    let invitation_state: (String, bool, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT state, token_hash IS NOT NULL, contact_value FROM invitations WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(invitation_state.0, "ISSUED");
+    assert!(invitation_state.1);
+    assert_eq!(invitation_state.2.as_deref(), Some("outbox@example.test"));
+    let membership_state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, ("INVITED".to_owned(), 1));
+    let event_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 1);
+    let audit_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn membership_transition_and_audit_outbox_commit_together() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-membership-atomicity").unwrap();
