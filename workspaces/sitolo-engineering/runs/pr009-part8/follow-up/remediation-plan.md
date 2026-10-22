@@ -18,7 +18,7 @@ Do not expand the scope by choosing a broker, transport, event name, consumer co
 ### R1 — Implement the owner-approved relay and consumer contract
 
 **Priority:** P1 / blocking  
-**Dependency:** explicit product/architecture owner decision.
+**Dependency:** repository-owner approval is recorded; implementation depends on R2/R3 authority and transaction boundaries, plus the actual AWS account and resource setup.
 
 Review [the relay and consumer contract proposal](decisions/relay-delivery-contract-proposal.md). If accepted, record it as the approved, versioned contract (or revise the proposal) covering:
 
@@ -64,7 +64,7 @@ Review [the relay and consumer contract proposal](decisions/relay-delivery-contr
 **Priority:** P1 for required events; do not add arbitrary vocabulary.  
 **Dependency:** audit/event contract owner.
 
-Review the [five-transition event mapping proposal](decisions/iam-lifecycle-event-mapping-proposal.md), then explicitly resolve the currently documented gaps: member pending acceptance, membership expiry, invitation creation, invitation withdrawal, and invitation-expiry sweep. A transition can be handled in one of three ways: use an already-approved semantically correct event; add an approved event name/schema to the binding contract and registry; or record an approved exclusion. Do not reuse a superficially similar name if it changes the meaning of the audit event.
+Implement the five approved mappings in [the decision record](decisions/iam-lifecycle-event-mapping-proposal.md): member pending acceptance, membership expiry, invitation issuance, invitation withdrawal, and per-invitation expiry during the sweep. Update the binding contract, source registry and schema validation before wiring the transitions. Do not reuse an existing event name if it changes the meaning of the audit event.
 
 **Acceptance:** the matrix has no unexplained missing transition; contract and registry agree; the payload is bounded and secret-free; tests prove the selected behavior and atomicity.
 
@@ -73,7 +73,7 @@ Review the [five-transition event mapping proposal](decisions/iam-lifecycle-even
 **Priority:** P1 / production blocker  
 **Dependencies:** R1 for worker destination settings; R2/R3 for safe API composition.
 
-1. Review the [identity, runtime and Secrets Manager proposal](decisions/identity-production-runtime-proposal.md). If AWS is accepted, implement the managed provider through the existing provider boundary. Keep `SITOLO_SECRET__...` reserved for the development provider and never permit production fallback to it.
+1. Implement the owner-approved [identity, runtime and Secrets Manager baseline](decisions/identity-production-runtime-proposal.md) through the existing provider boundary. Keep `SITOLO_SECRET__...` reserved for the development provider and never permit production fallback to it.
 2. Construct actual PostgreSQL pools during production composition; the API must not treat database runtime intent or its current in-memory store as a production connection.
 3. Authenticate the runtime pool as `app_runtime` and the worker pool as `app_worker`, each with separate restricted credentials. Reserve the administrative identity for provisioning and migrations.
 4. Keep readiness false until the required secret, database, schema/role identity, and other mandatory runtime dependencies have been validated.

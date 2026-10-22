@@ -78,12 +78,12 @@ That proof is path-specific. Other methods such as branch creation, membership c
 
 ### AUD-04 — Approved lifecycle event mappings not yet wired into the contract and code
 
-**Severity:** P1 until disposition is contract-approved  
+**Severity:** P1 — approved mappings need implementation and atomicity evidence  
 **Evidence:** comments and method bodies in `crates/sitolo-application/src/tenancy.rs`; event catalogue in `crates/sitolo-audit/src/iam_event.rs`; binding Part 8 contract.
 
-The service explicitly documents transitions not wired to evidence because the current `IamEventName` catalogue does not define distinct events for them. A proposed v1 matrix covers member pending acceptance, membership expiry, invitation issuance, invitation withdrawal and per-item invitation expiry during the sweep. These names and payloads are not yet approved in the binding contract or source catalogue. Reusing an existing event name for a materially different operation would misstate the audit record; adding variants locally before contract approval would bypass the contract vocabulary. See [event mapping proposal](decisions/iam-lifecycle-event-mapping-proposal.md).
+The service explicitly documents transitions not wired to evidence because the current `IamEventName` catalogue does not define distinct events for them. The repository owner approved the v1 matrix for member pending acceptance, membership expiry, invitation issuance, invitation withdrawal and per-item invitation expiry during the sweep. The approved names and payloads are recorded in [the event mapping decision](decisions/iam-lifecycle-event-mapping-proposal.md), but they are not yet in the binding contract or source catalogue. Reusing an existing event name for a materially different operation would misstate the audit record; implement the approved vocabulary before wiring these transitions.
 
-**Required closure:** produce a transition-to-event matrix against the binding contract. For each transition, the contract owner must either approve a canonical event name/schema or explicitly approve and document why the transition is out of mandatory audit scope. Implement only after that decision, then add positive and failure-path tests. The matrix must also show which transitions are transactionally coupled as required by AUD-03.
+**Required closure:** update the binding contract, event enum, catalogue validation and payload schemas to the approved transition-to-event matrix. Add positive, concurrency and failure-path tests. The matrix must also show which transitions are transactionally coupled as required by AUD-03.
 
 ### AUD-05 — Production runtime composition is incomplete and correctly fails closed
 
@@ -110,7 +110,7 @@ The bootstrap code has no managed production secret provider and rejects product
 
 The repository owner's instruction dated 2026-10-22 records approval of the decisions in the three linked decision documents. The decision-selection gate is closed at repository-owner level. AUD-01 through AUD-05 remain open because the approved contracts have not been fully implemented and verified. The relevant code paths must be re-audited at the resulting code head. Human PR review remains mandatory; this approval is not a merge approval and makes no claim of production certification.
 
-PR #49 remains open and unmerged. Before a merge decision, AUD-01 through AUD-05 need an approved closure or a separately recorded human disposition accepted under repository governance. The relevant code paths must then be re-audited at the resulting code head. Human review remains mandatory; this audit is not an approval and makes no claim of production certification.
+PR #49 remains open and unmerged. Before a merge decision, AUD-01 through AUD-05 need implementation closure or a separately recorded human disposition accepted under repository governance. The relevant code paths must then be re-audited at the resulting code head. Human review remains mandatory; repository-owner approval of the architectural choices is not merge approval and does not establish production certification.
 
 The implementation must preserve the binding contract's transaction boundary, least-privilege database identities, strict config/secret separation, RLS defaults, and fail-closed behavior. A green CI result alone does not close the uncovered paths.
 
