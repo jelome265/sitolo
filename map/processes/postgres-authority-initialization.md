@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@52c7392bca56b4fd6b1c90b52e57cec52b651cd3
+source_revision: feat/phase4-pr009-audit-outbox@e49de425b74c0095fee0737612ae40dbc50c770a
 source: crates/sitolo-persistence/src/postgres.rs
 source_citation: crates/sitolo-persistence/src/postgres.rs:45-76
 ---
