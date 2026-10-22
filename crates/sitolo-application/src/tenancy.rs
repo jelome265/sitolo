@@ -1581,6 +1581,158 @@ impl TenancyService {
         Ok(self.db.expire_invitations(SystemTime::now()).await)
     }
 
+    /// Expires one bounded batch of issued invitations for a single tenant.
+    ///
+    /// Callers enumerate organizations through their trusted scheduler and
+    /// invoke this method once per organization. Row locks with `SKIP LOCKED`
+    /// make overlapping sweepers safe. Invitation state, linked membership
+    /// state, audit, and outbox intent share one PostgreSQL transaction.
+    pub async fn expire_invitations_for_organization(
+        &self,
+        organization_id: &OrganizationId,
+    ) -> Result<u64, TenancyError> {
+        const BATCH_LIMIT: i64 = 100;
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "invitation_expiry_sweep_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "invitation_expiry_sweep_tenant_context",
+                sqlstate: None,
+            })?;
+
+        let candidates: Vec<(String, String, DateTime<Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT id, membership_id, expires_at FROM invitations \
+             WHERE organization_id = $1 AND state = 'ISSUED' AND expires_at <= now() \
+             ORDER BY expires_at, id LIMIT $2 FOR UPDATE SKIP LOCKED",
+        )
+        .bind(organization_id.as_str())
+        .bind(BATCH_LIMIT)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "invitation_expiry_sweep_select",
+            sqlstate: None,
+        })?;
+
+        let mut transitioned = 0_u64;
+        for (invitation_raw, membership_raw, expires_at) in candidates {
+            let invitation_id = InvitationId::new(invitation_raw)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let membership_id = MembershipId::new(membership_raw)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let invitation: Option<(i64,)> = sqlx_core::query_as::query_as(
+                "UPDATE invitations SET state = 'EXPIRED', state_version = state_version + 1, \
+                 contact_kind = NULL, contact_value = NULL, token_hash = NULL \
+                 WHERE organization_id = $1 AND id = $2 AND state = 'ISSUED' \
+                   AND expires_at <= now() RETURNING state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(invitation_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "invitation_expiry_sweep_update_invitation",
+                sqlstate: None,
+            })?;
+            let Some((invitation_version,)) = invitation else {
+                continue;
+            };
+            let invitation_version = u64::try_from(invitation_version)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+
+            let membership: Option<(i64,)> = sqlx_core::query_as::query_as(
+                "UPDATE organization_memberships SET state = 'EXPIRED', \
+                 state_version = state_version + 1 \
+                 WHERE organization_id = $1 AND id = $2 AND state = 'INVITED' \
+                 RETURNING state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(membership_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "invitation_expiry_sweep_update_membership",
+                sqlstate: None,
+            })?;
+            if let Some((membership_version,)) = membership {
+                let membership_version = u64::try_from(membership_version)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+                self.record_evidence_in_transaction(
+                    &mut tx,
+                    IamEventName::MembershipExpired,
+                    organization_id,
+                    None,
+                    TargetRef::Membership(membership_id.clone()),
+                    ActorRef {
+                        subject_ref: "system:invitation-expiry-sweeper".to_owned(),
+                        membership_ref: None,
+                        device_ref: None,
+                    },
+                    "expire_invitations",
+                    "membership",
+                    membership_id.to_string(),
+                    serde_json::json!({
+                        "membership_id": membership_id.as_str(),
+                        "from_state": "INVITED",
+                        "to_state": "EXPIRED",
+                        "state_version": membership_version,
+                        "expiry_reason": "invitation_expired",
+                    }),
+                )
+                .await?;
+            }
+
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::InvitationExpired,
+                organization_id,
+                None,
+                TargetRef::Invitation(invitation_id.clone()),
+                ActorRef {
+                    subject_ref: "system:invitation-expiry-sweeper".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+                "expire_invitations",
+                "invitation",
+                invitation_id.to_string(),
+                serde_json::json!({
+                    "invitation_id": invitation_id.as_str(),
+                    "membership_id": membership_id.as_str(),
+                    "from_state": "ISSUED",
+                    "to_state": "EXPIRED",
+                    "expires_at": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "state_version": invitation_version,
+                }),
+            )
+            .await?;
+            transitioned = transitioned
+                .checked_add(1)
+                .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "invitation_expiry_sweep_commit",
+                sqlstate: None,
+            })?;
+        Ok(transitioned)
+    }
+
     /// Grants an organization-wide role to a live membership. Who may grant
     /// which role is an actor-authority question answered by Phase 6 once
     /// issuer scope is available (sections 8.1.8, 8.1.9, 11.2); this method

@@ -132,6 +132,46 @@ fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
         .with_evidence(TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox))
 }
 
+async fn issue_invitation(
+    tenancy: &TenancyService,
+    organization_id: &OrganizationId,
+    invitation_id: &str,
+    membership_id: &str,
+) {
+    tenancy
+        .create_invitation(
+            organization_id.clone(),
+            sitolo_domain::tenancy::InvitationId::new(invitation_id).unwrap(),
+            MembershipId::new(membership_id).unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new(format!("user-{membership_id}")).unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "sweep@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+}
+
+async fn make_invitation_expired(db: &TestDb, organization_id: &str, invitation_id: &str) {
+    query(
+        "UPDATE invitations SET issued_at = now() - interval '2 minutes', \
+         expires_at = now() - interval '1 second' \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(organization_id)
+    .bind(invitation_id)
+    .execute(&db.admin)
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     let db = test_db().await.unwrap();
@@ -1068,6 +1108,184 @@ async fn membership_transition_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-expiry-sweep").unwrap();
+    let invitation = "inv-expiry-sweep";
+    let membership = "member-expiry-sweep";
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    issue_invitation(&tenancy, &org, invitation, membership).await;
+    make_invitation_expired(&db, org.as_str(), invitation).await;
+
+    let (first, second) = tokio::join!(
+        tenancy.expire_invitations_for_organization(&org),
+        tenancy.expire_invitations_for_organization(&org),
+    );
+    assert_eq!(first.unwrap() + second.unwrap(), 1);
+    assert_eq!(
+        tenancy
+            .expire_invitations_for_organization(&org)
+            .await
+            .unwrap(),
+        0
+    );
+
+    let invitation_row: (String, Option<String>, Option<String>, Option<Vec<u8>>, i64) =
+        sqlx_core::query_as::query_as(
+            "SELECT state, contact_kind, contact_value, token_hash, state_version \
+             FROM invitations WHERE organization_id = $1 AND id = $2",
+        )
+        .bind(org.as_str())
+        .bind(invitation)
+        .fetch_one(&db.admin)
+        .await
+        .unwrap();
+    assert_eq!(invitation_row, ("EXPIRED".to_owned(), None, None, None, 2));
+    let membership_state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, ("EXPIRED".to_owned(), 2));
+    let event_names: Vec<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT event_name FROM outbox_events WHERE organization_id = $1 ORDER BY event_name",
+    )
+    .bind(org.as_str())
+    .fetch_all(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        event_names,
+        vec![
+            "iam.invitation.expired".to_owned(),
+            "iam.invitation.issued".to_owned(),
+            "iam.membership.expired".to_owned(),
+        ]
+    );
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-expiry-audit-rollback").unwrap();
+    let invitation = "inv-expiry-audit-rollback";
+    let membership = "member-expiry-audit-rollback";
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let issuer = service(&db, Arc::new(PostgresAuditWriter::new()));
+    issue_invitation(&issuer, &org, invitation, membership).await;
+    make_invitation_expired(&db, org.as_str(), invitation).await;
+    let sweeper = service(&db, Arc::new(FailingAuditWriter));
+
+    assert!(
+        sweeper
+            .expire_invitations_for_organization(&org)
+            .await
+            .is_err()
+    );
+    let row: (String, Option<String>, Option<Vec<u8>>) = sqlx_core::query_as::query_as(
+        "SELECT state, contact_value, token_hash FROM invitations \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "ISSUED");
+    assert!(row.1.is_some() && row.2.is_some());
+    let membership_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, "INVITED");
+    let expiry_events: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM outbox_events WHERE organization_id = $1 \
+         AND event_name IN ('iam.invitation.expired', 'iam.membership.expired')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(expiry_events, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-expiry-outbox-rollback").unwrap();
+    let invitation = "inv-expiry-outbox-rollback";
+    let membership = "member-expiry-outbox-rollback";
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let issuer = service(&db, Arc::new(PostgresAuditWriter::new()));
+    issue_invitation(&issuer, &org, invitation, membership).await;
+    make_invitation_expired(&db, org.as_str(), invitation).await;
+    let sweeper = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ),
+    );
+
+    assert!(
+        sweeper
+            .expire_invitations_for_organization(&org)
+            .await
+            .is_err()
+    );
+    let row: (String, Option<String>, Option<Vec<u8>>) = sqlx_core::query_as::query_as(
+        "SELECT state, contact_value, token_hash FROM invitations \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "ISSUED");
+    assert!(row.1.is_some() && row.2.is_some());
+    let membership_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, "INVITED");
+    let expiry_audits: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE organization_id = $1 \
+         AND event_name IN ('iam.invitation.expired', 'iam.membership.expired')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(expiry_audits, 0);
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
