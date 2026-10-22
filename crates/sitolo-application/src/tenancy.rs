@@ -46,8 +46,9 @@
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
@@ -75,9 +76,9 @@ use sqlx_postgres::{PgPool, Postgres};
 /// events (contract §5, §29). The audit insert and the outbox insert run in
 /// one PostgreSQL transaction: either both land, or neither does.
 ///
-/// Organization provisioning uses this same pool for the business mutation
-/// and evidence transaction. Other tenancy operations currently use the
-/// in-memory reference store.
+/// Organization, branch creation, direct membership lifecycle and invitation
+/// issuance use this pool for the business mutation and evidence transaction.
+/// Unsupported mutations fail closed while this sink is configured.
 pub struct TenancyEvidenceSink {
     pool: PgPool,
     audit: Arc<dyn AuditWriter>,
@@ -100,6 +101,15 @@ fn outbox_sqlstate(error: &OutboxPersistenceError) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn system_time_to_utc(value: SystemTime) -> Result<DateTime<Utc>, TenancyError> {
+    let duration = value
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| TenancyError::InvalidInvitation)?;
+    let seconds = i64::try_from(duration.as_secs()).map_err(|_| TenancyError::InvalidInvitation)?;
+    DateTime::from_timestamp(seconds, duration.subsec_nanos())
+        .ok_or(TenancyError::InvalidInvitation)
 }
 
 impl TenancyEvidenceSink {
@@ -1144,9 +1154,9 @@ impl TenancyService {
     /// caller-minted high-entropy material — hashed on entry, never stored,
     /// never logged. Throttled per organization (section 38).
     ///
-    /// Evidence emission remains blocked on authoritative PostgreSQL
-    /// invitation storage; the approved event is distinct from direct member
-    /// invitation and must not be written after a memory-only mutation.
+    /// With the durable sink configured, membership, invitation, audit, and
+    /// outbox rows commit together. The token hash is stored only while the
+    /// invitation is issued; terminal transitions must erase it and contact.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_invitation(
         &self,
@@ -1159,8 +1169,8 @@ impl TenancyService {
         contact: InvitationContact,
         raw_token: &str,
         ttl: Duration,
+        actor: ActorRef,
     ) -> Result<CreatedInvitation, TenancyError> {
-        self.require_authoritative_mutation_path()?;
         if matches!(
             self.check_rate(AbuseClass::InvitationCreate, organization_id.as_str()),
             RateLimitDecision::Locked { .. }
@@ -1168,6 +1178,158 @@ impl TenancyService {
             return Err(TenancyError::RateLimited);
         }
         let now = SystemTime::now();
+        if now.checked_add(ttl).is_none() {
+            return Err(TenancyError::InvalidInvitation);
+        }
+        if let Some(sink) = self.evidence.as_ref() {
+            let membership = Membership::invite(
+                membership_id.clone(),
+                organization_id.clone(),
+                user_id.clone(),
+            );
+            let invitation = Invitation::issue(
+                invitation_id.clone(),
+                organization_id.clone(),
+                membership_id.clone(),
+                proposed_role,
+                proposed_scope.clone(),
+                contact.clone(),
+                raw_token,
+                now,
+                ttl,
+            )?;
+            let expires_at = now
+                .checked_add(ttl)
+                .ok_or(TenancyError::InvalidInvitation)?;
+            if proposed_scope
+                .as_ref()
+                .is_some_and(|scope| scope.organization_id() != &organization_id)
+            {
+                return Err(TenancyError::InvalidInvitation);
+            }
+            let (scope_kind, branch_id) = match proposed_scope.as_ref() {
+                None => (None, None),
+                Some(Scope::Organization { .. }) => (Some("ORGANIZATION"), None),
+                Some(Scope::Branch { branch_id, .. }) => (Some("BRANCH"), Some(branch_id.as_str())),
+            };
+            let contact_kind = match contact.kind {
+                sitolo_authz::ContactKind::Email => "EMAIL",
+                sitolo_authz::ContactKind::Phone => "PHONE",
+            };
+            let token_hash = invitation
+                .token_hash
+                .ok_or(TenancyError::InvalidInvitation)?;
+            let mut tx =
+                sink.pool
+                    .begin()
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "invitation_create_begin",
+                        sqlstate: None,
+                    })?;
+            query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "invitation_create_tenant_context",
+                    sqlstate: None,
+                })?;
+            let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
+                "SELECT state FROM organizations WHERE id = $1",
+            )
+            .bind(organization_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "invitation_create_organization_check",
+                sqlstate: None,
+            })?;
+            if organization_state.as_deref() != Some("ACTIVE") {
+                return Err(TenancyError::InvalidTransition);
+            }
+            query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, $3, 'INVITED', 1)")
+                .bind(membership_id.as_str())
+                .bind(organization_id.as_str())
+                .bind(user_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| {
+                    let sqlstate = match &error {
+                        SqlxError::Database(database_error) => {
+                            database_error.code().map(|code| code.into_owned())
+                        }
+                        _ => None,
+                    };
+                    if sqlstate.as_deref() == Some("23505") {
+                        TenancyError::Conflict
+                    } else {
+                        TenancyError::EvidencePersistenceFailedAt {
+                            stage: "invitation_create_membership_insert",
+                            sqlstate,
+                        }
+                    }
+                })?;
+            query("INSERT INTO invitations (id, organization_id, membership_id, proposed_role, scope_kind, branch_id, contact_kind, contact_value, token_hash, state, issued_at, expires_at, state_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ISSUED', $10, $11, 1)")
+                .bind(invitation_id.as_str())
+                .bind(organization_id.as_str())
+                .bind(membership_id.as_str())
+                .bind(proposed_role.as_str())
+                .bind(scope_kind)
+                .bind(branch_id)
+                .bind(contact_kind)
+                .bind(&contact.value)
+                .bind(token_hash.to_vec())
+                .bind(system_time_to_utc(now)?)
+                .bind(system_time_to_utc(expires_at)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| {
+                    let sqlstate = match &error {
+                        SqlxError::Database(database_error) => {
+                            database_error.code().map(|code| code.into_owned())
+                        }
+                        _ => None,
+                    };
+                    if sqlstate.as_deref() == Some("23505") {
+                        TenancyError::Conflict
+                    } else {
+                        TenancyError::EvidencePersistenceFailedAt {
+                            stage: "invitation_create_insert",
+                            sqlstate,
+                        }
+                    }
+                })?;
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::InvitationIssued,
+                &organization_id,
+                None,
+                TargetRef::Membership(membership_id.clone()),
+                actor,
+                "create_invitation",
+                "invitation",
+                invitation_id.to_string(),
+                serde_json::json!({
+                    "invitation_id": invitation_id.as_str(),
+                    "membership_id": membership_id.as_str(),
+                    "expires_at": system_time_to_utc(expires_at)?.to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "state_version": invitation.state_version,
+                }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "invitation_create_commit",
+                    sqlstate: None,
+                })?;
+            return Ok(CreatedInvitation {
+                membership,
+                invitation,
+            });
+        }
+        self.require_authoritative_mutation_path()?;
         self.db
             .create_invitation(CreateInvitationInput {
                 organization_id,
@@ -2077,6 +2239,7 @@ mod tests {
                 mailto("invitee@example.com"),
                 token,
                 Duration::from_secs(3_600),
+                actor("test"),
             )
             .await
             .unwrap()
@@ -2180,6 +2343,7 @@ mod tests {
                 mailto("scoped@example.com"),
                 INVITE_TOKEN_2,
                 Duration::from_secs(3_600),
+                actor("test"),
             )
             .await
             .unwrap();
@@ -2274,6 +2438,7 @@ mod tests {
                 mailto("invitee@example.com"),
                 INVITE_TOKEN_2,
                 Duration::from_secs(3_600),
+                actor("test"),
             )
             .await
             .unwrap();
@@ -2296,6 +2461,7 @@ mod tests {
                 mailto("a@example.com"),
                 INVITE_TOKEN,
                 Duration::from_secs(3_600),
+                actor("test"),
             )
             .await
             .unwrap();
@@ -2312,6 +2478,7 @@ mod tests {
                     mailto("b@example.com"),
                     INVITE_TOKEN_2,
                     Duration::from_secs(3_600),
+                    actor("test"),
                 )
                 .await,
             Err(TenancyError::RateLimited)

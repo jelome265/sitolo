@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_audit::ActorRef;
+use sitolo_authz::{ContactKind, InvitationContact, Role};
 use sitolo_domain::tenancy::{MembershipId, OrganizationId};
 use sitolo_events::{OutboxError, OutboxEvent};
 use sitolo_persistence::TenancyDatabase;
@@ -147,6 +148,176 @@ async fn member_invitation_and_required_evidence_commit_together() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 2);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-token-invitation").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-token-invitation").unwrap();
+    let membership = MembershipId::new("member-token-invitation").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let created = tenancy
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-token-invitation").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "invitee@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-operator".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        created.membership.state,
+        sitolo_domain::tenancy::MembershipState::Invited
+    );
+    let persisted: (String, bool, Option<String>, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, token_hash IS NOT NULL, contact_value, state_version FROM invitations WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, "ISSUED");
+    assert!(persisted.1);
+    assert_eq!(persisted.2.as_deref(), Some("invitee@example.test"));
+    assert_eq!(persisted.3, 1);
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.invitation.issued') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.invitation.issued')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 2);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+async fn assert_invitation_rows_absent(
+    db: &TestDb,
+    organization_id: &OrganizationId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let persisted_rows: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM organization_memberships WHERE organization_id = $1) + (SELECT count(*) FROM invitations WHERE organization_id = $1)",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(persisted_rows, 0);
+    Ok(())
+}
+
+fn token_invitation_arguments(
+    org: OrganizationId,
+    invitation_id: &str,
+    membership_id: &str,
+) -> (
+    OrganizationId,
+    sitolo_domain::tenancy::InvitationId,
+    MembershipId,
+    sitolo_domain::tenancy::TenantUserId,
+    InvitationContact,
+) {
+    (
+        org,
+        sitolo_domain::tenancy::InvitationId::new(invitation_id).unwrap(),
+        MembershipId::new(membership_id).unwrap(),
+        sitolo_domain::tenancy::TenantUserId::new("user-invitation-failure").unwrap(),
+        InvitationContact::new(ContactKind::Email, "invitee@example.test").unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn token_invitation_issue_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-audit-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = service(&db, Arc::new(FailingAuditWriter));
+    let (org, invitation, membership, user, contact) =
+        token_invitation_arguments(org.clone(), "inv-audit-rollback", "member-audit-rollback");
+    assert!(
+        tenancy
+            .create_invitation(
+                org.clone(),
+                invitation,
+                membership,
+                user,
+                Role::Cashier,
+                None,
+                contact,
+                "0123456789abcdef0123456789abcdef",
+                std::time::Duration::from_secs(3_600),
+                ActorRef {
+                    subject_ref: "user-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert_invitation_rows_absent(&db, &org).await.unwrap();
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-outbox-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ),
+    );
+    let (org, invitation, membership, user, contact) =
+        token_invitation_arguments(org.clone(), "inv-outbox-rollback", "member-outbox-rollback");
+    assert!(
+        tenancy
+            .create_invitation(
+                org.clone(),
+                invitation,
+                membership,
+                user,
+                Role::Cashier,
+                None,
+                contact,
+                "0123456789abcdef0123456789abcdef",
+                std::time::Duration::from_secs(3_600),
+                ActorRef {
+                    subject_ref: "user-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert_invitation_rows_absent(&db, &org).await.unwrap();
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
