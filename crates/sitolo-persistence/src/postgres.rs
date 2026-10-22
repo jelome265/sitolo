@@ -370,6 +370,10 @@ impl PgAuthorityPools {
 /// `*_provision_insert` (INSERT, `WITH CHECK` only) and `*_provision_read`
 /// (SELECT, `USING` only) — both restricted to `app_runtime`. No policy is
 /// expected for `tenant_resources`; that table belongs to the Part 7 fixture.
+///
+/// The DDL names the membership policies `memberships_provision_*` rather than
+/// `organization_memberships_provision_*`, so the verifier carries an explicit
+/// table-to-prefix map instead of assuming a naming convention.
 pub async fn verify_part8_provisioning_rls_metadata(
     admin_pool: &PgPool,
     schema_name: &str,
@@ -386,7 +390,11 @@ pub async fn verify_part8_provisioning_rls_metadata(
             .fetch_one(admin_pool)
             .await?;
 
-    for table in ["organizations", "organization_memberships", "branches"] {
+    for (table, policy_prefix) in [
+        ("organizations", "organizations"),
+        ("organization_memberships", "memberships"),
+        ("branches", "branches"),
+    ] {
         let row = match query(
             "SELECT c.relrowsecurity, c.relforcerowsecurity
              FROM pg_class c
@@ -460,8 +468,8 @@ pub async fn verify_part8_provisioning_rls_metadata(
             );
         }
 
-        let expected_insert = format!("{table}_provision_insert");
-        let expected_read = format!("{table}_provision_read");
+        let expected_insert = format!("{policy_prefix}_provision_insert");
+        let expected_read = format!("{policy_prefix}_provision_read");
 
         for policy in policies {
             let name: String = policy.get("polname");
