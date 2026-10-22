@@ -24,6 +24,28 @@ CREATE UNIQUE INDEX uq_membership_org_user_nonterminal
     ON organization_memberships (organization_id, user_id)
     WHERE state NOT IN ('REVOKED', 'EXPIRED');
 
+CREATE TABLE role_assignments (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+    membership_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN (
+        'OWNER', 'ORG_ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'INVENTORY_CLERK',
+        'PROCUREMENT_CLERK', 'ACCOUNTING_USER', 'VIEWER', 'AUDITOR'
+    )),
+    state TEXT NOT NULL CHECK (state IN (
+        'REQUESTED', 'VALIDATING', 'REJECTED', 'APPROVAL_REQUIRED',
+        'APPROVED', 'EFFECTIVE', 'REVOKED'
+    )),
+    state_version BIGINT NOT NULL CHECK (state_version > 0),
+    UNIQUE (organization_id, id),
+    FOREIGN KEY (organization_id, membership_id)
+        REFERENCES organization_memberships(organization_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX uq_role_assignment_effective
+    ON role_assignments (organization_id, membership_id, role)
+    WHERE state = 'EFFECTIVE';
+
 CREATE TABLE branches (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
@@ -70,6 +92,8 @@ ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE branches FORCE ROW LEVEL SECURITY;
 ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invitations FORCE ROW LEVEL SECURITY;
+ALTER TABLE role_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE role_assignments FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY organizations_provision_insert ON organizations
     FOR INSERT TO app_runtime
@@ -149,11 +173,21 @@ CREATE POLICY invitations_terminal_update ON invitations
         organization_id = NULLIF(current_setting('app.organization_id', true), '')
         AND current_setting('app.organization_id', true) <> ''
     );
+CREATE POLICY role_assignments_tenant_all ON role_assignments
+    FOR ALL TO app_runtime
+    USING (
+        organization_id = NULLIF(current_setting('app.organization_id', true), '')
+    )
+    WITH CHECK (
+        organization_id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 
 ALTER TABLE organizations OWNER TO app_outbox_owner;
 ALTER TABLE organization_memberships OWNER TO app_outbox_owner;
 ALTER TABLE branches OWNER TO app_outbox_owner;
 ALTER TABLE invitations OWNER TO app_outbox_owner;
+ALTER TABLE role_assignments OWNER TO app_outbox_owner;
 
 -- SECURITY DEFINER transition functions keep direct UPDATE unavailable to
 -- app_runtime. Their owner remains subject to forced RLS and can only update
@@ -256,9 +290,10 @@ GRANT EXECUTE ON FUNCTION lock_organization_mutations(TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_organization_state(TEXT, TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) TO app_runtime;
 
-REVOKE ALL ON organizations, organization_memberships, branches, invitations FROM PUBLIC;
+REVOKE ALL ON organizations, organization_memberships, branches, invitations, role_assignments FROM PUBLIC;
 GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
 GRANT SELECT, INSERT ON invitations TO app_runtime;
 GRANT UPDATE (state, state_version, contact_kind, contact_value, token_hash) ON invitations TO app_runtime;
+GRANT SELECT, INSERT ON role_assignments TO app_runtime;
 GRANT SELECT, INSERT ON organization_memberships TO app_runtime;
 GRANT UPDATE (state, state_version) ON organization_memberships TO app_runtime;

@@ -22,10 +22,10 @@
 //! Durable business-state/audit/outbox atomicity is implemented for
 //! organization provisioning and lifecycle transitions, branch creation and
 //! lifecycle transitions, direct membership invitation and transitions,
-//! membership pending/expiry transitions, and token-bound invitation issue
-//! and withdrawal. Role/scope mutations and invitation acceptance/sweeping
-//! remain unavailable with the evidence sink until authoritative PostgreSQL
-//! transactions exist for those operations.
+//! membership pending/expiry transitions, role assignment, token-bound
+//! invitation issue/withdrawal, and invitation expiry sweeping. Role
+//! revocation, scope mutations, and invitation acceptance remain unavailable
+//! with the evidence sink until authoritative PostgreSQL transactions exist.
 //!
 //! Each of these methods takes an `actor: ActorRef` parameter identifying
 //! who is performing the transition, because the audit record's actor
@@ -35,17 +35,17 @@
 //! deferral note above). Callers construct `ActorRef` from whatever caller
 //! context they have; there is no default or synthesized actor.
 //!
-//! Owner-approved token invitation issue and withdrawal are coupled to their
-//! state changes. Token invitation expiry sweeping remains unwired because
-//! the bounded cross-tenant worker contract and transaction path are absent.
+//! Owner-approved invitation issue, withdrawal, and expiry sweeping are
+//! coupled to their state changes; expiry sweeping is tenant-scoped and
+//! bounded per organization.
 //!
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
 //! default branch, audit, and outbox share one application-owned transaction.
-//! Role/scope mutations and invitation acceptance/sweeping still lack
-//! production PostgreSQL paths. The API composition root must wire verified
-//! authority and the durable database path before it can be considered a
-//! production tenancy authority.
+//! Role assignment is now PostgreSQL-backed, but role revocation, scope
+//! mutations, and invitation acceptance still lack durable PostgreSQL paths.
+//! The API composition root must wire verified authority and the durable
+//! database path before it can be considered a production tenancy authority.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -56,7 +56,7 @@ use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, InvitationState, Permission, Role,
-    RoleAssignment, Scope, ScopeGrant, authorize_scope, resolve_permissions,
+    RoleAssignment, RoleAssignmentState, Scope, ScopeGrant, authorize_scope, resolve_permissions,
 };
 use sitolo_domain::tenancy::{
     Branch, BranchId, BranchState, InvitationId, Membership, MembershipId, MembershipState,
@@ -290,6 +290,167 @@ impl TenancyService {
                 sqlstate: None,
             })?;
         Ok(membership)
+    }
+
+    async fn assign_role_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        assignment_id: &RoleAssignmentId,
+        role: Role,
+        actor: ActorRef,
+    ) -> Result<RoleAssignment, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "role_assignment_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_assignment_tenant_context",
+                sqlstate: None,
+            })?;
+        query("SELECT lock_organization_mutations($1)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_assignment_organization_lock",
+                sqlstate: None,
+            })?;
+
+        let membership_state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT state FROM organization_memberships \
+             WHERE organization_id = $1 AND id = $2",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "role_assignment_membership_read",
+            sqlstate: None,
+        })?;
+        let Some(membership_state) = membership_state else {
+            return Err(TenancyError::NotFound);
+        };
+        if matches!(membership_state.as_str(), "EXPIRED" | "REVOKED") {
+            return Err(TenancyError::InvalidTransition);
+        }
+
+        let existing: Option<(String, String, String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT organization_id, membership_id, role, state_version \
+                 FROM role_assignments WHERE id = $1",
+        )
+        .bind(assignment_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "role_assignment_idempotency_read",
+            sqlstate: None,
+        })?;
+        if let Some((existing_org, existing_membership, existing_role, state_version)) = existing {
+            if existing_org != organization_id.as_str()
+                || existing_membership != membership_id.as_str()
+                || existing_role != role.as_str()
+            {
+                return Err(TenancyError::Conflict);
+            }
+            let state_version = u64::try_from(state_version).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "role_assignment_state_version",
+                    sqlstate: None,
+                }
+            })?;
+            return Ok(RoleAssignment {
+                id: assignment_id.clone(),
+                organization_id: organization_id.clone(),
+                membership_id: membership_id.clone(),
+                role,
+                state: RoleAssignmentState::Effective,
+                state_version,
+            });
+        }
+
+        let state_version: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO role_assignments \
+             (id, organization_id, membership_id, role, state, state_version) \
+             VALUES ($1, $2, $3, $4, 'EFFECTIVE', 3) \
+             RETURNING state_version",
+        )
+        .bind(assignment_id.as_str())
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .bind(role.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| {
+            let sqlstate = match &error {
+                SqlxError::Database(database_error) => {
+                    database_error.code().map(|code| code.into_owned())
+                }
+                _ => None,
+            };
+            if sqlstate.as_deref() == Some("23505") {
+                TenancyError::Conflict
+            } else {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "role_assignment_insert",
+                    sqlstate,
+                }
+            }
+        })?;
+        let state_version = u64::try_from(state_version).map_err(|_| {
+            TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_assignment_state_version",
+                sqlstate: None,
+            }
+        })?;
+        let assignment = RoleAssignment {
+            id: assignment_id.clone(),
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            role,
+            state: RoleAssignmentState::Effective,
+            state_version,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::RoleAssigned,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "assign_role",
+            "role_assignment",
+            assignment_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "assignment_id": assignment_id.as_str(),
+                "role": role.as_str(),
+                "state": "EFFECTIVE",
+                "state_version": assignment.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_assignment_commit",
+                sqlstate: None,
+            })?;
+        Ok(assignment)
     }
 
     async fn invite_member_with_evidence(
@@ -1745,7 +1906,17 @@ impl TenancyService {
         role: Role,
         actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
-        self.require_authoritative_mutation_path()?;
+        if self.evidence.is_some() {
+            return self
+                .assign_role_with_evidence(
+                    &organization_id,
+                    &membership_id,
+                    &assignment_id,
+                    role,
+                    actor,
+                )
+                .await;
+        }
         let assignment = self
             .db
             .assign_role(

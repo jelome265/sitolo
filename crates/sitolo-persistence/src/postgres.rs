@@ -687,6 +687,97 @@ pub async fn verify_part8_provisioning_rls_metadata(
         }
     }
 
+    let role_table = match query(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'role_assignments'",
+    )
+    .bind(schema_name)
+    .fetch_optional(admin_pool)
+    .await?
+    {
+        Some(row) => row,
+        None => violation!("role_assignments", "table not found"),
+    };
+    let role_rls: bool = role_table.get("relrowsecurity");
+    let role_force_rls: bool = role_table.get("relforcerowsecurity");
+    if !role_rls || !role_force_rls {
+        violation!(
+            "role_assignments",
+            format!("RLS enabled={role_rls} forced={role_force_rls}")
+        );
+    }
+    let role_privileges = query(
+        "SELECT has_table_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'SELECT') AS can_select,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'INSERT') AS can_insert,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'UPDATE') AS can_update,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'DELETE') AS can_delete,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'state', 'UPDATE') AS can_update_state,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'state_version', 'UPDATE') AS can_update_version,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'role_assignments'), 'id', 'UPDATE') AS can_update_id",
+    )
+    .bind(schema_name)
+    .fetch_one(admin_pool)
+    .await?;
+    let can_select: bool = role_privileges.get("can_select");
+    let can_insert: bool = role_privileges.get("can_insert");
+    let can_update: bool = role_privileges.get("can_update");
+    let can_delete: bool = role_privileges.get("can_delete");
+    let can_update_state: bool = role_privileges.get("can_update_state");
+    let can_update_version: bool = role_privileges.get("can_update_version");
+    let can_update_id: bool = role_privileges.get("can_update_id");
+    if !can_select
+        || !can_insert
+        || can_update
+        || can_delete
+        || can_update_state
+        || can_update_version
+        || can_update_id
+    {
+        violation!("role_assignments", "unexpected app_runtime privileges");
+    }
+    let role_policy = query(
+        "SELECT p.polname, p.polcmd, p.polroles::bigint[] AS polroles,
+                pg_get_expr(p.polqual, p.polrelid) AS qual_expr,
+                pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr
+         FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'role_assignments'",
+    )
+    .bind(schema_name)
+    .fetch_all(admin_pool)
+    .await?;
+    if role_policy.len() != 1 {
+        violation!(
+            "role_assignments",
+            format!("expected one tenant policy, found {}", role_policy.len())
+        );
+    }
+    let policy = &role_policy[0];
+    let policy_name: String = policy.get("polname");
+    let policy_command: i8 = policy.get("polcmd");
+    let policy_roles: Vec<i64> = policy.get("polroles");
+    let policy_qual: Option<String> = policy.get("qual_expr");
+    let policy_check: Option<String> = policy.get("check_expr");
+    let tenant_predicate = normalize_policy_expression(
+        "organization_id = NULLIF(current_setting('app.organization_id', true), '')",
+    );
+    let tenant_check = normalize_policy_expression(
+        "organization_id = NULLIF(current_setting('app.organization_id', true), '') AND current_setting('app.organization_id', true) <> ''",
+    );
+    if policy_name != "role_assignments_tenant_all"
+        || policy_command != b'*' as i8
+        || policy_roles != vec![runtime_oid]
+        || policy_qual
+            .as_deref()
+            .is_none_or(|expr| normalize_policy_expression(expr) != tenant_predicate)
+        || policy_check
+            .as_deref()
+            .is_none_or(|expr| normalize_policy_expression(expr) != tenant_check)
+    {
+        violation!("role_assignments", "tenant policy differs from contract");
+    }
+
     Ok(())
 }
 

@@ -893,3 +893,23 @@ async fn part8_verifier_rejects_broad_membership_update_grant() {
         "verifier accepted a table-wide membership UPDATE grant"
     );
 }
+
+#[tokio::test]
+async fn part8_verifier_rejects_role_assignment_policy_without_tenant_context() {
+    let ctx = setup().await;
+    raw_sql(
+        "DROP POLICY role_assignments_tenant_all ON role_assignments; \
+         CREATE POLICY role_assignments_tenant_all ON role_assignments \
+         FOR ALL TO app_runtime USING (organization_id IS NOT NULL) \
+         WITH CHECK (organization_id IS NOT NULL)",
+    )
+    .execute(&ctx.admin_pool)
+    .await
+    .expect("replace the role assignment policy with a tenant-blind expression");
+    let verified = verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+    teardown(&ctx).await;
+    assert!(
+        verified.is_err(),
+        "verifier accepted a role assignment policy without tenant context"
+    );
+}

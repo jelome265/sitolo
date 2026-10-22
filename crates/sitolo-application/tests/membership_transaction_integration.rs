@@ -18,6 +18,7 @@ use sqlx_core::query::query;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, Postgres};
+use tokio::sync::Barrier;
 use uuid::Uuid;
 
 struct TestDb {
@@ -1376,6 +1377,258 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(expiry_audits, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() {
+    use sitolo_authz::RoleAssignmentState;
+
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-assignment-atomicity").unwrap();
+    let membership = MembershipId::new("member-role-assignment-atomicity").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let assignment_id =
+        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-atomicity").unwrap();
+    let actor = ActorRef {
+        subject_ref: "user-role-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    let assignment = tenancy
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            assignment_id.clone(),
+            sitolo_authz::Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(assignment.state, RoleAssignmentState::Effective);
+    let persisted: (String, String, String, i64) = sqlx_core::query_as::query_as(
+        "SELECT organization_id, membership_id, role, state_version \
+         FROM role_assignments WHERE id = $1",
+    )
+    .bind(assignment_id.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        persisted,
+        (
+            org.to_string(),
+            membership.to_string(),
+            "CASHIER".to_owned(),
+            3,
+        )
+    );
+
+    let retry = tenancy
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            assignment_id.clone(),
+            sitolo_authz::Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry, assignment);
+    assert!(
+        tenancy
+            .assign_role(
+                org.clone(),
+                membership.clone(),
+                assignment_id,
+                sitolo_authz::Role::Viewer,
+                actor.clone(),
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        tenancy
+            .assign_role(
+                org.clone(),
+                membership.clone(),
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-duplicate-role").unwrap(),
+                sitolo_authz::Role::Cashier,
+                actor,
+            )
+            .await
+            .is_err()
+    );
+
+    let counts: (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.role.assigned'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.role.assigned')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_role_assignment_retries_emit_one_semantic_event() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-assignment-concurrent").unwrap();
+    let membership = MembershipId::new("member-role-assignment-concurrent").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
+    let barrier = Arc::new(Barrier::new(2));
+    let assignment_id =
+        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-concurrent").unwrap();
+    let run = |tenancy: Arc<TenancyService>, barrier: Arc<Barrier>| {
+        let org = org.clone();
+        let membership = membership.clone();
+        let assignment_id = assignment_id.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            tenancy
+                .assign_role(
+                    org,
+                    membership,
+                    assignment_id,
+                    sitolo_authz::Role::Cashier,
+                    ActorRef {
+                        subject_ref: "user-role-operator".to_owned(),
+                        membership_ref: None,
+                        device_ref: None,
+                    },
+                )
+                .await
+        })
+    };
+    let first = run(Arc::clone(&tenancy), Arc::clone(&barrier));
+    let second = run(Arc::clone(&tenancy), barrier);
+    let first = first.await.unwrap().unwrap();
+    let second = second.await.unwrap().unwrap();
+    assert_eq!(first, second);
+    let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.role.assigned'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.role.assigned')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn role_assignment_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-assignment-audit-failure").unwrap();
+    let membership = MembershipId::new("member-role-assignment-audit-failure").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(FailingAuditWriter));
+    assert!(
+        tenancy
+            .assign_role(
+                org.clone(),
+                membership,
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-audit-failure").unwrap(),
+                sitolo_authz::Role::Cashier,
+                ActorRef {
+                    subject_ref: "user-role-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    let role_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM role_assignments WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(role_count, 0);
+    let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(evidence_count, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn role_assignment_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-assignment-outbox-failure").unwrap();
+    let membership = MembershipId::new("member-role-assignment-outbox-failure").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ),
+    );
+    assert!(
+        tenancy
+            .assign_role(
+                org.clone(),
+                membership,
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-outbox-failure").unwrap(),
+                sitolo_authz::Role::Cashier,
+                ActorRef {
+                    subject_ref: "user-role-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0));
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
