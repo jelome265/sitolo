@@ -162,11 +162,10 @@ DECLARE
     v_device_state TEXT;
     v_device_version BIGINT;
 BEGIN
-    SELECT s, u.security_version, d.state, d.security_version
-      INTO v_session, v_user_version, v_device_state, v_device_version
+    SELECT s.*
+      INTO v_session
       FROM __SCHEMA__.identity_sessions AS s
       JOIN __SCHEMA__.identity_users AS u ON u.id = s.user_id
-      LEFT JOIN __SCHEMA__.identity_devices AS d ON d.id = s.device_id AND d.user_id = s.user_id
      WHERE s.id = p_session_id
        AND s.user_id = p_expected_user_id
        AND u.suspended = FALSE
@@ -174,9 +173,19 @@ BEGIN
        AND s.security_version = u.security_version
        AND s.idle_expires_at > p_now
        AND s.absolute_expires_at > p_now
-       AND (s.device_id IS NULL OR d.state = 'active')
      FOR UPDATE OF s, u;
 
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT u.security_version
+      INTO v_user_version
+      FROM __SCHEMA__.identity_users AS u
+     WHERE u.id = v_session.user_id
+       AND u.suspended = FALSE
+       AND u.security_version = v_session.security_version
+     FOR UPDATE;
     IF NOT FOUND THEN
         RETURN;
     END IF;
