@@ -416,6 +416,71 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
 }
 
 #[tokio::test]
+async fn concurrent_token_invitation_withdrawals_emit_one_transition() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-withdrawal-concurrent").unwrap();
+    let invitation =
+        sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-concurrent").unwrap();
+    let membership = MembershipId::new("member-withdrawal-concurrent").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    tenancy
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership,
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-concurrent").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "concurrent@example.test").unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let (first, second) = tokio::join!(
+        tenancy.revoke_invitation(
+            &org,
+            &invitation,
+            ActorRef {
+                subject_ref: "user-issuer-a".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+        tenancy.revoke_invitation(
+            &org,
+            &invitation,
+            ActorRef {
+                subject_ref: "user-issuer-b".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+
+    let event_counts: (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.invitation.withdrawn'), (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.invitation.withdrawn')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(event_counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-withdrawal-audit-rollback").unwrap();
