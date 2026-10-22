@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT"
+
+workflow=".github/workflows/artifact.yml"
+if [[ ! -f "$workflow" ]]; then
+  echo "RELEASE WORKFLOW VIOLATION: missing $workflow"
+  exit 1
+fi
+
+# Extract the build_release_artifact job block: it starts at the two-space job
+# key and ends at the next two-space job key.
+job="$(awk '
+  /^  [A-Za-z0-9_-]+:/ {
+    if ($0 ~ /^  build_release_artifact:/) { inside = 1; print; next }
+    if (inside) { exit }
+  }
+  inside { print }
+' "$workflow")"
+
+if [[ -z "$job" ]]; then
+  echo "RELEASE WORKFLOW VIOLATION: build_release_artifact job not found"
+  exit 1
+fi
+
+verify_job="$(awk '
+  /^  [A-Za-z0-9_-]+:/ {
+    if ($0 ~ /^  verify:/) { inside = 1; print; next }
+    if (inside) { exit }
+  }
+  inside { print }
+' "$workflow")"
+
+if [[ -z "$verify_job" ]]; then
+  echo "RELEASE WORKFLOW VIOLATION: verify job not found"
+  exit 1
+fi
+
+fail=0
+require() {
+  if ! grep -qF -- "$1" <<<"$job"; then
+    echo "RELEASE WORKFLOW VIOLATION: build_release_artifact is missing: $1"
+    fail=1
+  fi
+}
+
+require_in_verify() {
+  if ! grep -qF -- "$1" <<<"$verify_job"; then
+    echo "RELEASE WORKFLOW VIOLATION: verify is missing: $1"
+    fail=1
+  fi
+}
+
+# The release verify job runs the canonical verifier, which executes the
+# mandatory policy and dependency tools. It must install them rather than
+# assuming the runner image provides them.
+require_in_verify "ripgrep"
+require_in_verify "cargo install cargo-deny --locked"
+require_in_verify "cargo install cargo-audit --locked"
+
+# GitHub Actions jobs do not share service containers or step environments.
+# The exact-source test step must therefore have its own PostgreSQL service and
+# all three scoped database URLs in the job environment.
+require "needs: [verify]"
+require "services:"
+require "postgres:"
+require "image: postgres:18-alpine"
+require "POSTGRES_USER: postgres"
+require "POSTGRES_HOST_AUTH_METHOD: trust"
+require "POSTGRES_DB: sitolo_test"
+require "--health-cmd pg_isready"
+require "ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test"
+require "RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test"
+require "WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test"
+require "cargo test --workspace --all-targets --all-features --locked"
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "Release workflow check FAILED"
+  exit 1
+fi
+
+echo "Release workflow check PASSED: verify installs its tools; build_release_artifact has PostgreSQL and scoped DSNs"

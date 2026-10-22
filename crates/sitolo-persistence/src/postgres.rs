@@ -371,6 +371,11 @@ impl PgAuthorityPools {
 /// (SELECT, `USING` only) — both restricted to `app_runtime`. No policy is
 /// expected for `tenant_resources`; that table belongs to the Part 7 fixture.
 ///
+/// Each deparsed expression is compared against its operation-specific
+/// canonical tenant predicate after renderer-only normalization. This is an
+/// exact token comparison, not a substring check: an expression that drops the
+/// `current_setting('app.organization_id', true)` comparison cannot satisfy it.
+///
 /// The DDL names the membership policies `memberships_provision_*` rather than
 /// `organization_memberships_provision_*`, so the verifier carries an explicit
 /// table-to-prefix map instead of assuming a naming convention.
@@ -390,10 +395,10 @@ pub async fn verify_part8_provisioning_rls_metadata(
             .fetch_one(admin_pool)
             .await?;
 
-    for (table, policy_prefix) in [
-        ("organizations", "organizations"),
-        ("organization_memberships", "memberships"),
-        ("branches", "branches"),
+    for (table, policy_prefix, tenant_column) in [
+        ("organizations", "organizations", "id"),
+        ("organization_memberships", "memberships", "organization_id"),
+        ("branches", "branches", "organization_id"),
     ] {
         let row = match query(
             "SELECT c.relrowsecurity, c.relforcerowsecurity
@@ -470,6 +475,13 @@ pub async fn verify_part8_provisioning_rls_metadata(
 
         let expected_insert = format!("{policy_prefix}_provision_insert");
         let expected_read = format!("{policy_prefix}_provision_read");
+        let expected_insert_predicate = normalize_policy_expression(&format!(
+            "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
+             AND current_setting('app.organization_id', true) <> ''"
+        ));
+        let expected_select_predicate = normalize_policy_expression(&format!(
+            "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '')"
+        ));
 
         for policy in policies {
             let name: String = policy.get("polname");
@@ -500,16 +512,15 @@ pub async fn verify_part8_provisioning_rls_metadata(
                     Some(value) => value,
                     None => violation!(table, format!("INSERT policy {name} has no WITH CHECK")),
                 };
-                if !references_tenant_column(&check, table) {
+                let actual = normalize_policy_expression(&check);
+                if actual != expected_insert_predicate {
                     violation!(
                         table,
-                        format!("INSERT check does not reference the tenant column: {check}")
-                    );
-                }
-                if !check.contains("<>") || !check.contains("''") {
-                    violation!(
-                        table,
-                        format!("INSERT check lacks the non-empty guard: {check}")
+                        format!(
+                            "INSERT WITH CHECK differs from the canonical tenant predicate; \
+                             expected normalized `{expected_insert_predicate}`, got `{actual}` \
+                             (raw: {check})"
+                        )
                     );
                 }
             } else if name == expected_read {
@@ -527,10 +538,15 @@ pub async fn verify_part8_provisioning_rls_metadata(
                     Some(value) => value,
                     None => violation!(table, format!("SELECT policy {name} has no USING")),
                 };
-                if !references_tenant_column(&qual, table) {
+                let actual = normalize_policy_expression(&qual);
+                if actual != expected_select_predicate {
                     violation!(
                         table,
-                        format!("SELECT USING does not reference the tenant column: {qual}")
+                        format!(
+                            "SELECT USING differs from the canonical tenant predicate; \
+                             expected normalized `{expected_select_predicate}`, got `{actual}` \
+                             (raw: {qual})"
+                        )
                     );
                 }
             } else {
@@ -542,22 +558,34 @@ pub async fn verify_part8_provisioning_rls_metadata(
     Ok(())
 }
 
-/// Checks that a policy expression compares the table's tenant column against
-/// the `app.organization_id` transaction context. Whitespace, quotes,
-/// parentheses, and case are ignored so the check is independent of
-/// `pg_get_expr` rendering.
-fn references_tenant_column(expression: &str, table: &str) -> bool {
-    let normalized: String = expression
+/// Normalizes a deparsed policy expression for exact comparison.
+///
+/// The normalization accepts only the renderer-level differences that do not
+/// change the fixed predicate shapes verified here: whitespace, double quotes,
+/// parentheses, `::text` casts, and the `!=`/`<>` spelling. Case is normalized
+/// outside single-quoted literals only, so a changed setting name such as
+/// `'APP.ORGANIZATION_ID'` cannot compare equal to the canonical key. It never
+/// removes a column, operator, literal, or `current_setting` reference, so a
+/// tenant-blind expression cannot compare equal to the canonical form.
+fn normalize_policy_expression(expression: &str) -> String {
+    let mut normalized = String::with_capacity(expression.len());
+    let mut in_literal = false;
+    for c in expression.chars() {
+        match c {
+            '\'' => {
+                in_literal = !in_literal;
+                normalized.push(c);
+            }
+            _ if in_literal => normalized.push(c),
+            _ => normalized.extend(c.to_lowercase()),
+        }
+    }
+    normalized
+        .replace("::text", "")
+        .replace("!=", "<>")
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '"' && *c != '(' && *c != ')')
-        .collect::<String>()
-        .to_lowercase();
-    let without_context = normalized.replace("app.organization_id", "");
-    if table == "organizations" {
-        without_context.contains("id")
-    } else {
-        without_context.contains("organization_id")
-    }
+        .collect()
 }
 
 /// Sets transaction-local tenant context (`app.organization_id` and `app.branch_id`)
@@ -583,4 +611,43 @@ pub async fn set_transaction_tenant_context(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod policy_expression_tests {
+    use super::normalize_policy_expression;
+
+    #[test]
+    fn renderer_equivalent_predicates_normalize_equal() {
+        let canonical = normalize_policy_expression(
+            "id = NULLIF(current_setting('app.organization_id', true), '')",
+        );
+        let rendered = normalize_policy_expression(
+            "((id)::text = NULLIF(current_setting('app.organization_id'::text, true), ''::text))",
+        );
+        assert_eq!(canonical, rendered);
+    }
+
+    #[test]
+    fn tenant_blind_predicates_do_not_normalize_to_the_canonical_form() {
+        let canonical = normalize_policy_expression(
+            "id = NULLIF(current_setting('app.organization_id', true), '')",
+        );
+        assert_ne!(normalize_policy_expression("id IS NOT NULL"), canonical);
+        assert_ne!(normalize_policy_expression("id <> ''"), canonical);
+        assert_ne!(
+            normalize_policy_expression(
+                "id = NULLIF(current_setting('APP.ORGANIZATION_ID', true), '')"
+            ),
+            canonical
+        );
+    }
+
+    #[test]
+    fn alternate_inequality_spelling_normalizes_equal() {
+        assert_eq!(
+            normalize_policy_expression("id != ''"),
+            normalize_policy_expression("id <> ''")
+        );
+    }
 }

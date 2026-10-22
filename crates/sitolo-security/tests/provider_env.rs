@@ -11,7 +11,8 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use sitolo_security::{EnvSecretProvider, SecretClass, SecretError, SecretProvider, SecretRef};
 
-const VAR: &str = "SITOLO__DATABASE__PASSWORD";
+const VAR: &str = "SITOLO_SECRET__DATABASE__PASSWORD";
+const CONFIG_VAR: &str = "SITOLO__DATABASE__PASSWORD";
 const SENTINEL: &str = "TEST_ONLY_PROVIDER_SECRET_001";
 
 /// Minimal single-poll executor. Provider futures complete without yielding,
@@ -90,6 +91,25 @@ fn development_resolves_configured_value() {
     assert_eq!(
         value.expect("development resolution").into_string(),
         SENTINEL
+    );
+}
+
+#[test]
+fn configuration_namespace_is_not_a_secret_value_source() {
+    // The provider must read only the dedicated `SITOLO_SECRET__` namespace.
+    // A value under the former `SITOLO__` configuration name is ignored rather
+    // than treated as a secret, so a leftover variable cannot silently become
+    // the credential.
+    let _guard = lock_env();
+    unsafe {
+        std::env::remove_var(VAR);
+        std::env::set_var(CONFIG_VAR, SENTINEL);
+    }
+    let value = block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")));
+    unsafe { std::env::remove_var(CONFIG_VAR) };
+    assert!(
+        matches!(&value, Err(SecretError::Missing { .. })),
+        "configuration namespace must not satisfy a secret read, got: {value:?}"
     );
 }
 

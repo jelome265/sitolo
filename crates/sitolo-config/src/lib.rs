@@ -37,7 +37,10 @@ pub use parse::{EnvLoader, UnknownKey};
 pub use sitolo_security::{SecretClass, SecretRef};
 pub use validate::{ConfigProblem, ConfigValidationError, ValidationLayer, validate};
 
-/// Canonical environment variable namespace prefix.
+/// Canonical environment variable namespace prefix for configuration.
+///
+/// Development secret *values* use the disjoint `SITOLO_SECRET__` namespace
+/// (`sitolo_security::SECRET_ENV_PREFIX`) and are never parsed here.
 pub const ENV_PREFIX: &str = "SITOLO__";
 
 /// Separator between configuration sections in environment variable names.
@@ -99,6 +102,45 @@ mod contract_tests {
             EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")]).unwrap();
         assert_eq!(production.environment, Environment::Production);
         assert!(EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "qa")]).is_err());
+    }
+
+    #[test]
+    fn secret_value_namespace_is_outside_configuration_parsing() {
+        // The development provider owns `SITOLO_SECRET__`; a value there must
+        // coexist with ordinary `SITOLO__` configuration instead of being
+        // rejected as an unknown configuration key.
+        let builder = EnvLoader::from_pairs([
+            pair("RUNTIME__ENVIRONMENT", "development"),
+            (
+                "SITOLO_SECRET__DATABASE__PASSWORD".to_string(),
+                "TEST_ONLY_SECRET_001".to_string(),
+            ),
+        ])
+        .expect("the development secret namespace must not fail configuration parsing");
+        assert_eq!(builder.environment, Environment::Development);
+        assert_eq!(builder.db_host, "localhost");
+    }
+
+    #[test]
+    fn former_password_key_is_unknown_configuration() {
+        let error = EnvLoader::from_pairs([pair("DATABASE__PASSWORD", "TEST_ONLY_SECRET_001")])
+            .err()
+            .expect("the former password key must fail closed");
+        assert_eq!(error.0, "DATABASE__PASSWORD");
+    }
+
+    #[test]
+    fn secret_value_namespace_does_not_mask_unknown_configuration() {
+        let error = EnvLoader::from_pairs([
+            (
+                "SITOLO_SECRET__DATABASE__PASSWORD".to_string(),
+                "TEST_ONLY_SECRET_001".to_string(),
+            ),
+            pair("DATABASE__PASSWORD", "TEST_ONLY_SECRET_001"),
+        ])
+        .err()
+        .expect("an unknown configuration key must still fail closed");
+        assert_eq!(error.0, "DATABASE__PASSWORD");
     }
 
     #[test]

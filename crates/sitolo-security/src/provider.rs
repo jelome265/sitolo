@@ -15,6 +15,17 @@ use thiserror::Error;
 use crate::value::SecretValue;
 use crate::{SecretClass, SecretRef};
 
+/// Environment-variable namespace for development secret *values*.
+///
+/// This namespace is deliberately disjoint from the canonical configuration
+/// namespace (`SITOLO__`). The configuration loader treats every `SITOLO__`
+/// key as configuration and rejects unknown keys; a secret value placed there
+/// would fail startup before the provider could resolve it. The single
+/// underscore after `SITOLO` means `SITOLO_SECRET__...` never matches the
+/// `SITOLO__` prefix, so configuration parsing and secret ingestion can share
+/// one process environment without colliding.
+pub const SECRET_ENV_PREFIX: &str = "SITOLO_SECRET__";
+
 /// Errors produced by a [`SecretProvider`].
 ///
 /// Secrets fail closed: a missing, invalid, or expired secret is never replaced
@@ -85,17 +96,20 @@ impl EnvSecretProvider {
 }
 
 /// Default environment variable names for each secret class.
+///
+/// Every name uses [`SECRET_ENV_PREFIX`], never the ordinary `SITOLO__`
+/// configuration namespace.
 fn default_env_name(class: SecretClass) -> &'static str {
     match class {
-        SecretClass::Database => "SITOLO__DATABASE__PASSWORD",
-        SecretClass::Identity => "SITOLO__IDENTITY__CLIENT_SECRET",
-        SecretClass::Payment => "SITOLO__PAYMENT__CREDENTIAL",
-        SecretClass::Webhook => "SITOLO__WEBHOOK__VERIFICATION_SECRET",
-        SecretClass::MraTerminal => "SITOLO__MRA__TERMINAL_SECRET",
-        SecretClass::Telemetry => "SITOLO__TELEMETRY__EXPORTER_CREDENTIAL",
-        SecretClass::SigningKey => "SITOLO__SIGNING_KEY",
-        SecretClass::ObjectStorage => "SITOLO__OBJECT_STORAGE__CREDENTIAL",
-        SecretClass::Service => "SITOLO__SERVICE__CREDENTIAL",
+        SecretClass::Database => "SITOLO_SECRET__DATABASE__PASSWORD",
+        SecretClass::Identity => "SITOLO_SECRET__IDENTITY__CLIENT_SECRET",
+        SecretClass::Payment => "SITOLO_SECRET__PAYMENT__CREDENTIAL",
+        SecretClass::Webhook => "SITOLO_SECRET__WEBHOOK__VERIFICATION_SECRET",
+        SecretClass::MraTerminal => "SITOLO_SECRET__MRA__TERMINAL_SECRET",
+        SecretClass::Telemetry => "SITOLO_SECRET__TELEMETRY__EXPORTER_CREDENTIAL",
+        SecretClass::SigningKey => "SITOLO_SECRET__SIGNING_KEY",
+        SecretClass::ObjectStorage => "SITOLO_SECRET__OBJECT_STORAGE__CREDENTIAL",
+        SecretClass::Service => "SITOLO_SECRET__SERVICE__CREDENTIAL",
     }
 }
 
@@ -121,6 +135,36 @@ mod tests {
     use super::*;
 
     const SENTINEL: &str = "TEST_ONLY_PROVIDER_SECRET_001";
+
+    #[test]
+    fn default_secret_names_use_the_dedicated_secret_namespace() {
+        let classes = [
+            SecretClass::Database,
+            SecretClass::Identity,
+            SecretClass::Payment,
+            SecretClass::Webhook,
+            SecretClass::MraTerminal,
+            SecretClass::Telemetry,
+            SecretClass::SigningKey,
+            SecretClass::ObjectStorage,
+            SecretClass::Service,
+        ];
+        for class in classes {
+            let name = default_env_name(class);
+            assert!(
+                name.starts_with(SECRET_ENV_PREFIX),
+                "{class:?} maps to {name}, outside {SECRET_ENV_PREFIX}"
+            );
+            assert!(
+                !name.starts_with("SITOLO__"),
+                "{class:?} maps into the configuration namespace: {name}"
+            );
+        }
+        assert_eq!(
+            default_env_name(SecretClass::Database),
+            "SITOLO_SECRET__DATABASE__PASSWORD"
+        );
+    }
 
     #[test]
     fn missing_secret_error_carries_no_path_or_value() {

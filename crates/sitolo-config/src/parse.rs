@@ -6,7 +6,12 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownKey(pub String);
 
-/// Loads only the canonical `SITOLO__` namespace and rejects unknown keys.
+/// Loads only the canonical `SITOLO__` configuration namespace and rejects
+/// unknown keys.
+///
+/// The disjoint `SITOLO_SECRET__` namespace belongs to the development secret
+/// provider and is deliberately not parsed here. It cannot match the
+/// `SITOLO__` prefix because the character after `SITOLO_` differs.
 pub struct EnvLoader;
 impl EnvLoader {
     pub fn load() -> Result<defaults::Builder, UnknownKey> {

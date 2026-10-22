@@ -17,6 +17,8 @@ on:
       - "scripts/ci/check-security-icm-policy"
       - "scripts/ci/check-system-map-processes"
       - "scripts/ci/check-doc-references"
+      - "scripts/ci/check-release-workflow"
+      - "scripts/ci/check-workflow-policy"
       - "scripts/ci/verify"
       - "scripts/ci/verify.ps1"
       - "scripts/agentic/**"

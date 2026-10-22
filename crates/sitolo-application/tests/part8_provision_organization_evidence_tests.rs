@@ -426,3 +426,85 @@ async fn provision_organization_audit_failure_rolls_back_business_state() {
     assert_eq!(membership_count, 0);
     assert_eq!(branch_count, 0);
 }
+
+/// Negative regression for the Part 8 verifier: a SELECT policy that keeps the
+/// table, role, and command but removes the tenant-context comparison must
+/// fail. `id IS NOT NULL` / `organization_id IS NOT NULL` satisfied the old
+/// substring helper, so these cases exercise the exact-predicate replacement.
+#[tokio::test]
+async fn part8_verifier_rejects_select_policies_without_tenant_context() {
+    for (table, policy, expression) in [
+        (
+            "organizations",
+            "organizations_provision_read",
+            "id IS NOT NULL",
+        ),
+        (
+            "organization_memberships",
+            "memberships_provision_read",
+            "organization_id IS NOT NULL",
+        ),
+        (
+            "branches",
+            "branches_provision_read",
+            "organization_id IS NOT NULL",
+        ),
+    ] {
+        let ctx = setup().await;
+        raw_sql(&format!(
+            "DROP POLICY {policy} ON {table}; \
+             CREATE POLICY {policy} ON {table} FOR SELECT TO app_runtime USING ({expression})"
+        ))
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("replace the SELECT policy with a tenant-blind expression");
+        let verified =
+            verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+        teardown(&ctx).await;
+        assert!(
+            verified.is_err(),
+            "verifier accepted a SELECT policy without tenant context on {table}"
+        );
+    }
+}
+
+/// Negative regression for INSERT: the old helper accepted `id <> ''` because
+/// it contained the tenant column and the non-empty guard. The canonical
+/// predicate must reject it because it never compares against
+/// `current_setting('app.organization_id', true)`.
+#[tokio::test]
+async fn part8_verifier_rejects_insert_policies_without_tenant_context() {
+    for (table, policy, expression) in [
+        (
+            "organizations",
+            "organizations_provision_insert",
+            "id <> ''",
+        ),
+        (
+            "organization_memberships",
+            "memberships_provision_insert",
+            "organization_id <> ''",
+        ),
+        (
+            "branches",
+            "branches_provision_insert",
+            "organization_id <> ''",
+        ),
+    ] {
+        let ctx = setup().await;
+        raw_sql(&format!(
+            "DROP POLICY {policy} ON {table}; \
+             CREATE POLICY {policy} ON {table} FOR INSERT TO app_runtime WITH CHECK ({expression})"
+        ))
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("replace the INSERT policy with a tenant-blind expression");
+        let verified =
+            verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+        teardown(&ctx).await;
+        assert!(
+            verified.is_err(),
+            "verifier accepted an INSERT policy without tenant context on {table}"
+        );
+    }
+}
