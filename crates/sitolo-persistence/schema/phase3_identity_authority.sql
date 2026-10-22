@@ -14,7 +14,24 @@ EXCEPTION WHEN duplicate_object THEN
 END
 $$;
 
-ALTER ROLE app_identity_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_roles AS role
+         WHERE role.rolname = 'app_identity_owner'
+           AND role.rolcanlogin = FALSE
+           AND role.rolinherit = FALSE
+           AND role.rolsuper = FALSE
+           AND role.rolcreatedb = FALSE
+           AND role.rolcreaterole = FALSE
+           AND role.rolreplication = FALSE
+           AND role.rolbypassrls = FALSE
+    ) THEN
+        RAISE EXCEPTION 'app_identity_owner must retain its restricted role attributes';
+    END IF;
+END
+$$;
 
 DO $$
 BEGIN
