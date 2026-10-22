@@ -228,8 +228,9 @@ pub fn map_tenancy_error(err: &TenancyError) -> AppError {
         // Business mutation already succeeded; the mandatory Part 8
         // audit/outbox evidence write failed (contract §5, §10). This is a
         // downstream persistence outage, not a problem with the request.
-        TenancyError::EvidencePersistenceFailed
-        | TenancyError::EvidencePersistenceFailedAt(_) => AppError::DependencyUnavailable,
+        TenancyError::EvidencePersistenceFailed | TenancyError::EvidencePersistenceFailedAt(_) => {
+            AppError::DependencyUnavailable
+        }
     }
 }
 
