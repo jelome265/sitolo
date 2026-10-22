@@ -778,6 +778,82 @@ pub async fn verify_part8_provisioning_rls_metadata(
         violation!("role_assignments", "tenant policy differs from contract");
     }
 
+    let scope_metadata = match query(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'SELECT') AS can_select,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'INSERT') AS can_insert,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'UPDATE') AS can_update,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'DELETE') AS can_delete,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'state', 'UPDATE') AS can_update_state,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'state_version', 'UPDATE') AS can_update_version,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'scope_grants'), 'id', 'UPDATE') AS can_update_id
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'scope_grants'",
+    )
+    .bind(schema_name)
+    .fetch_optional(admin_pool)
+    .await?
+    {
+        Some(row) => row,
+        None => violation!("scope_grants", "table not found"),
+    };
+    let scope_rls: bool = scope_metadata.get("relrowsecurity");
+    let scope_force_rls: bool = scope_metadata.get("relforcerowsecurity");
+    let scope_select: bool = scope_metadata.get("can_select");
+    let scope_insert: bool = scope_metadata.get("can_insert");
+    let scope_update: bool = scope_metadata.get("can_update");
+    let scope_delete: bool = scope_metadata.get("can_delete");
+    let scope_update_state: bool = scope_metadata.get("can_update_state");
+    let scope_update_version: bool = scope_metadata.get("can_update_version");
+    let scope_update_id: bool = scope_metadata.get("can_update_id");
+    if !scope_rls
+        || !scope_force_rls
+        || !scope_select
+        || !scope_insert
+        || scope_update
+        || scope_delete
+        || !scope_update_state
+        || !scope_update_version
+        || scope_update_id
+    {
+        violation!(
+            "scope_grants",
+            "RLS or app_runtime privileges differ from contract"
+        );
+    }
+    let scope_policy = query(
+        "SELECT p.polname, p.polcmd, p.polroles::bigint[] AS polroles,
+                pg_get_expr(p.polqual, p.polrelid) AS qual_expr,
+                pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr
+         FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'scope_grants'",
+    )
+    .bind(schema_name)
+    .fetch_all(admin_pool)
+    .await?;
+    if scope_policy.len() != 1 {
+        violation!("scope_grants", "expected one tenant policy");
+    }
+    let policy = &scope_policy[0];
+    let policy_name: String = policy.get("polname");
+    let policy_command: i8 = policy.get("polcmd");
+    let policy_roles: Vec<i64> = policy.get("polroles");
+    let policy_qual: Option<String> = policy.get("qual_expr");
+    let policy_check: Option<String> = policy.get("check_expr");
+    if policy_name != "scope_grants_tenant_all"
+        || policy_command != b'*' as i8
+        || policy_roles != vec![runtime_oid]
+        || policy_qual
+            .as_deref()
+            .is_none_or(|expr| normalize_policy_expression(expr) != tenant_predicate)
+        || policy_check
+            .as_deref()
+            .is_none_or(|expr| normalize_policy_expression(expr) != tenant_check)
+    {
+        violation!("scope_grants", "tenant policy differs from contract");
+    }
+
     Ok(())
 }
 

@@ -928,3 +928,18 @@ async fn part8_verifier_rejects_table_wide_role_assignment_update_grant() {
         "verifier accepted a table-wide role-assignment UPDATE grant"
     );
 }
+
+#[tokio::test]
+async fn part8_verifier_rejects_table_wide_scope_grant_update_privilege() {
+    let ctx = setup().await;
+    raw_sql("GRANT UPDATE ON scope_grants TO app_runtime")
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("widen the runtime scope-grant UPDATE grant");
+    let verified = verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+    teardown(&ctx).await;
+    assert!(
+        verified.is_err(),
+        "verifier accepted a table-wide scope-grant UPDATE grant"
+    );
+}

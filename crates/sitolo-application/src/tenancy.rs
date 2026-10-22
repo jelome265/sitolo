@@ -22,11 +22,10 @@
 //! Durable business-state/audit/outbox atomicity is implemented for
 //! organization provisioning and lifecycle transitions, branch creation and
 //! lifecycle transitions, direct membership invitation and transitions,
-//! membership pending/expiry transitions, role assignment, token-bound
-//! invitation issue/withdrawal, invitation expiry sweeping, and role
-//! assignment/revocation. Scope mutations and invitation acceptance remain
-//! unavailable with the evidence sink until authoritative PostgreSQL
-//! transactions exist.
+//! membership pending/expiry transitions, role assignment/revocation, scope
+//! grant/revocation, token-bound invitation issue/withdrawal, and invitation
+//! expiry sweeping. Invitation acceptance remains unavailable with the
+//! evidence sink until an authoritative PostgreSQL transaction exists.
 //!
 //! Each of these methods takes an `actor: ActorRef` parameter identifying
 //! who is performing the transition, because the audit record's actor
@@ -43,8 +42,8 @@
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
 //! default branch, audit, and outbox share one application-owned transaction.
-//! Role assignment/revocation is now PostgreSQL-backed, but scope mutations
-//! and invitation acceptance still lack durable PostgreSQL paths. The API
+//! Role and scope grant/revocation are PostgreSQL-backed, but invitation
+//! acceptance still lacks a durable PostgreSQL path. The API
 //! composition root must wire verified authority and the durable database
 //! path before it can be considered a production tenancy authority.
 
@@ -57,7 +56,8 @@ use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, InvitationState, Permission, Role,
-    RoleAssignment, RoleAssignmentState, Scope, ScopeGrant, authorize_scope, resolve_permissions,
+    RoleAssignment, RoleAssignmentState, Scope, ScopeGrant, ScopeGrantState, authorize_scope,
+    resolve_permissions,
 };
 use sitolo_domain::tenancy::{
     Branch, BranchId, BranchState, InvitationId, Membership, MembershipId, MembershipState,
@@ -582,6 +582,202 @@ impl TenancyService {
                 sqlstate: None,
             })?;
         Ok(assignment)
+    }
+
+    async fn grant_scope_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        grant_id: &ScopeGrantId,
+        scope: Scope,
+        actor: ActorRef,
+    ) -> Result<ScopeGrant, TenancyError> {
+        if scope.organization_id() != organization_id {
+            return Err(TenancyError::InvalidTransition);
+        }
+        let (scope_kind, branch_id) = match &scope {
+            Scope::Organization { .. } => ("ORGANIZATION", None),
+            Scope::Branch { branch_id, .. } => ("BRANCH", Some(branch_id.as_str().to_owned())),
+        };
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "scope_grant_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_grant_tenant_context",
+                sqlstate: None,
+            })?;
+        query("SELECT lock_organization_mutations($1)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_grant_organization_lock",
+                sqlstate: None,
+            })?;
+        let membership_state: Option<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "scope_grant_membership_read",
+            sqlstate: None,
+        })?;
+        let Some(membership_state) = membership_state else {
+            return Err(TenancyError::NotFound);
+        };
+        if matches!(membership_state.as_str(), "EXPIRED" | "REVOKED") {
+            return Err(TenancyError::InvalidTransition);
+        }
+
+        let existing: Option<(String, String, String, Option<String>, String, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT organization_id, membership_id, scope_kind, branch_id, state, state_version FROM scope_grants WHERE id = $1",
+            ).bind(grant_id.as_str()).fetch_optional(&mut *tx).await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt { stage: "scope_grant_idempotency_read", sqlstate: None })?;
+        if let Some((org, member, kind, branch, state, version)) = existing {
+            if org != organization_id.as_str()
+                || member != membership_id.as_str()
+                || kind != scope_kind
+                || branch != branch_id
+            {
+                return Err(TenancyError::Conflict);
+            }
+            let state = match state.as_str() {
+                "ACTIVE" => ScopeGrantState::Active,
+                "REVOKED" => ScopeGrantState::Revoked,
+                _ => return Err(TenancyError::EvidencePersistenceFailed),
+            };
+            return Ok(ScopeGrant {
+                id: grant_id.clone(),
+                organization_id: organization_id.clone(),
+                membership_id: membership_id.clone(),
+                scope,
+                state,
+                state_version: u64::try_from(version)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+            });
+        }
+        let version: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', 1) RETURNING state_version",
+        ).bind(grant_id.as_str()).bind(organization_id.as_str()).bind(membership_id.as_str()).bind(scope_kind).bind(branch_id.as_deref())
+            .fetch_one(&mut *tx).await.map_err(|error| {
+                let sqlstate = match &error { SqlxError::Database(db_error) => db_error.code().map(|code| code.into_owned()), _ => None };
+                if sqlstate.as_deref() == Some("23505") { TenancyError::Conflict } else { TenancyError::EvidencePersistenceFailedAt { stage: "scope_grant_insert", sqlstate } }
+            })?;
+        let grant = ScopeGrant {
+            id: grant_id.clone(),
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            scope,
+            state: ScopeGrantState::Active,
+            state_version: u64::try_from(version)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(&mut tx, IamEventName::ScopeGranted, organization_id, None,
+            TargetRef::Membership(membership_id.clone()), actor, "grant_scope", "scope_grant", grant_id.to_string(),
+            serde_json::json!({ "organization_id": organization_id.as_str(), "membership_id": membership_id.as_str(), "grant_id": grant_id.as_str(), "scope_kind": scope_kind, "branch_id": branch_id, "state": "ACTIVE", "state_version": grant.state_version })).await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_grant_commit",
+                sqlstate: None,
+            })?;
+        Ok(grant)
+    }
+
+    async fn revoke_scope_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        grant_id: &ScopeGrantId,
+        actor: ActorRef,
+    ) -> Result<ScopeGrant, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "scope_revoke_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_revoke_tenant_context",
+                sqlstate: None,
+            })?;
+        query("SELECT lock_organization_mutations($1)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_revoke_organization_lock",
+                sqlstate: None,
+            })?;
+        let row: Option<(String, String, Option<String>, String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE scope_grants SET state = 'REVOKED', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'ACTIVE' RETURNING membership_id, scope_kind, branch_id, state, state_version",
+        ).bind(organization_id.as_str()).bind(grant_id.as_str()).fetch_optional(&mut *tx).await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt { stage: "scope_revoke_update", sqlstate: None })?;
+        let Some((membership_raw, kind, branch, state, version)) = row else {
+            return Err(TenancyError::NotFound);
+        };
+        let membership_id = MembershipId::new(membership_raw)
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+        let scope = match (kind.as_str(), branch) {
+            ("ORGANIZATION", None) => Scope::Organization {
+                organization_id: organization_id.clone(),
+            },
+            ("BRANCH", Some(branch_id)) => Scope::Branch {
+                organization_id: organization_id.clone(),
+                branch_id: BranchId::new(branch_id)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+            },
+            _ => return Err(TenancyError::EvidencePersistenceFailed),
+        };
+        let grant = ScopeGrant {
+            id: grant_id.clone(),
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            scope,
+            state: if state == "REVOKED" {
+                ScopeGrantState::Revoked
+            } else {
+                return Err(TenancyError::EvidencePersistenceFailed);
+            },
+            state_version: u64::try_from(version)
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(&mut tx, IamEventName::ScopeRevoked, organization_id, None,
+            TargetRef::Membership(membership_id.clone()), actor, "revoke_scope_grant", "scope_grant", grant_id.to_string(),
+            serde_json::json!({ "organization_id": organization_id.as_str(), "membership_id": membership_id.as_str(), "grant_id": grant_id.as_str(), "state": "REVOKED", "state_version": grant.state_version })).await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "scope_revoke_commit",
+                sqlstate: None,
+            })?;
+        Ok(grant)
     }
 
     async fn invite_member_with_evidence(
@@ -2136,7 +2332,17 @@ impl TenancyService {
         scope: Scope,
         actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
-        self.require_authoritative_mutation_path()?;
+        if self.evidence.is_some() {
+            return self
+                .grant_scope_with_evidence(
+                    &organization_id,
+                    &membership_id,
+                    &grant_id,
+                    scope,
+                    actor,
+                )
+                .await;
+        }
         let grant = self
             .db
             .grant_scope(
@@ -2172,7 +2378,11 @@ impl TenancyService {
         grant_id: &ScopeGrantId,
         actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
-        self.require_authoritative_mutation_path()?;
+        if self.evidence.is_some() {
+            return self
+                .revoke_scope_with_evidence(organization_id, grant_id, actor)
+                .await;
+        }
         let grant = self
             .db
             .revoke_scope_grant(organization_id, grant_id)

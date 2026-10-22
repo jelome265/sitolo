@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_audit::ActorRef;
-use sitolo_authz::{ContactKind, InvitationContact, Role};
-use sitolo_domain::tenancy::{MembershipId, OrganizationId};
+use sitolo_authz::{ContactKind, InvitationContact, Role, Scope};
+use sitolo_domain::tenancy::{MembershipId, OrganizationId, ScopeGrantId};
 use sitolo_events::{OutboxError, OutboxEvent};
 use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::{
@@ -1898,6 +1898,157 @@ async fn concurrent_role_revocations_emit_one_semantic_event() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
+    use sitolo_authz::ScopeGrantState;
+
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-scope-persist").unwrap();
+    let membership = MembershipId::new("member-scope-persist").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let grant_id = ScopeGrantId::new("grant-scope-persist").unwrap();
+    let scope = Scope::Organization {
+        organization_id: org.clone(),
+    };
+    let actor = ActorRef {
+        subject_ref: "user-scope-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    let grant = tenancy
+        .grant_scope(
+            org.clone(),
+            membership.clone(),
+            grant_id.clone(),
+            scope.clone(),
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grant.state, ScopeGrantState::Active);
+    assert_eq!(grant.state_version, 1);
+    assert_eq!(
+        tenancy
+            .grant_scope(
+                org.clone(),
+                membership.clone(),
+                grant_id.clone(),
+                scope,
+                actor.clone(),
+            )
+            .await
+            .unwrap(),
+        grant
+    );
+    let revoked = tenancy
+        .revoke_scope_grant(&org, &grant_id, actor)
+        .await
+        .unwrap();
+    assert_eq!(revoked.state, ScopeGrantState::Revoked);
+    assert_eq!(revoked.state_version, 2);
+    assert!(
+        tenancy
+            .revoke_scope_grant(
+                &org,
+                &grant_id,
+                ActorRef {
+                    subject_ref: "user-scope-operator".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                }
+            )
+            .await
+            .is_err()
+    );
+    let counts: (i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM scope_grants WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted'), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.scope.revoked')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1, 1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-scope-rollback").unwrap();
+    let membership = MembershipId::new("member-scope-rollback").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let scope = Scope::Organization {
+        organization_id: org.clone(),
+    };
+    let actor = || ActorRef {
+        subject_ref: "user-scope-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    let input = |grant_id: &str| {
+        (
+            org.clone(),
+            membership.clone(),
+            ScopeGrantId::new(grant_id).unwrap(),
+            scope.clone(),
+            actor(),
+        )
+    };
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter))
+        .grant_scope(
+            input("grant-scope-audit-failure").0,
+            input("grant-scope-audit-failure").1,
+            input("grant-scope-audit-failure").2,
+            input("grant-scope-audit-failure").3,
+            input("grant-scope-audit-failure").4,
+        )
+        .await;
+    assert!(audit_failure.is_err());
+    let failing_outbox = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ));
+    let outbox_input = input("grant-scope-outbox-failure");
+    assert!(
+        failing_outbox
+            .grant_scope(
+                outbox_input.0,
+                outbox_input.1,
+                outbox_input.2,
+                outbox_input.3,
+                outbox_input.4
+            )
+            .await
+            .is_err()
+    );
+    let remaining: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM scope_grants WHERE organization_id = $1",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0);
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
