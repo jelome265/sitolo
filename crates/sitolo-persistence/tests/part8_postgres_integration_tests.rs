@@ -19,13 +19,14 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
-use sitolo_auth::AuditEventId;
+use sitolo_auth::{AuditEventId, SessionId, UserId};
 use sitolo_domain::tenancy::OrganizationId;
 use sitolo_events::{MAX_ATTEMPTS, OutboxClaimPolicy, OutboxError, OutboxErrorClass, OutboxEvent};
 use sitolo_persistence::audit_repository::{AuditWriter, PostgresAuditWriter};
 use sitolo_persistence::outbox_repository::{
     OutboxPersistenceError, OutboxReader, OutboxWriter, PostgresOutboxRepository,
 };
+use sitolo_persistence::{PgRequestIdentityAuthority, RequestIdentityAuthority};
 use sqlx_core::error::Error;
 use sqlx_core::from_row::FromRow;
 use sqlx_core::query::query;
@@ -127,6 +128,9 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
     raw_sql(&schema_sql).execute(&admin_pool).await?;
+    let identity_sql = include_str!("../schema/phase3_identity_authority.sql")
+        .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
+    raw_sql(&identity_sql).execute(&admin_pool).await?;
 
     let runtime_opts =
         PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema_name.as_str())]);
@@ -180,6 +184,100 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         worker_pool,
         schema_name,
     })
+}
+
+#[tokio::test]
+async fn postgres_identity_mapping_and_session_authority_fail_closed() {
+    let ctx = setup_test_context().await.unwrap();
+    let result = async {
+        let now = chrono::Utc::now();
+        query("INSERT INTO identity_users (id, security_version, suspended) VALUES ($1, 1, FALSE), ($2, 1, FALSE)")
+            .bind("user-auth-1")
+            .bind("user-auth-2")
+            .execute(&ctx.admin_pool)
+            .await?;
+        query("INSERT INTO external_identities (issuer, subject, user_id) VALUES ($1, $2, $3)")
+            .bind("https://issuer.example/tenant")
+            .bind("subject-auth-1")
+            .bind("user-auth-1")
+            .execute(&ctx.admin_pool)
+            .await?;
+        query(
+            "INSERT INTO identity_sessions (
+                 id, user_id, session_class, state, created_at, authenticated_at,
+                 last_seen_at, idle_expires_at, absolute_expires_at, idle_timeout_seconds,
+                 assurance, authentication_method, security_version
+             ) VALUES (
+                 $1, $2, 'merchant', 'active', $3, $3, $3,
+                 $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
+                 'a1', 'oidc', 1
+             ), (
+                 $4, $5, 'merchant', 'active', $3, $3, $3,
+                 $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
+                 'a1', 'oidc', 1
+             )",
+        )
+        .bind("session-auth-1")
+        .bind("user-auth-1")
+        .bind(now)
+        .bind("session-auth-2")
+        .bind("user-auth-2")
+        .execute(&ctx.admin_pool)
+        .await?;
+
+        let authority = PgRequestIdentityAuthority::new(
+            ctx.runtime_pool.clone(),
+            ctx.schema_name.clone(),
+        )?;
+        let direct_read = query("SELECT id FROM identity_users")
+            .fetch_all(&ctx.runtime_pool)
+            .await
+            .unwrap_err();
+        assert_eq!(sqlstate(&direct_read), "42501");
+
+        let worker_mapping_call = query(&format!(
+            "SELECT \"{}\".resolve_external_identity($1, $2)",
+            ctx.schema_name
+        ))
+        .bind("https://issuer.example/tenant")
+        .bind("subject-auth-1")
+        .fetch_optional(&ctx.worker_pool)
+        .await
+        .unwrap_err();
+        assert_eq!(sqlstate(&worker_mapping_call), "42501");
+
+        let mapped = authority
+            .resolve_external_identity("https://issuer.example/tenant", "subject-auth-1")
+            .await?;
+        assert_eq!(mapped, Some(UserId::new("user-auth-1")?));
+        let unknown = authority
+            .resolve_external_identity("https://issuer.example/tenant", "unknown")
+            .await?;
+        assert_eq!(unknown, None);
+
+        let accepted = authority
+            .accept_session_for_user(
+                &SessionId::new("session-auth-1")?,
+                &UserId::new("user-auth-1")?,
+                std::time::SystemTime::now(),
+            )
+            .await?;
+        assert_eq!(accepted.session.user_id, UserId::new("user-auth-1")?);
+        assert!(accepted.session.last_seen_at >= std::time::SystemTime::now() - Duration::from_secs(10));
+
+        let cross_user = authority
+            .accept_session_for_user(
+                &SessionId::new("session-auth-2")?,
+                &UserId::new("user-auth-1")?,
+                std::time::SystemTime::now(),
+            )
+            .await;
+        assert!(matches!(cross_user, Err(sitolo_auth::AuthError::AuthenticationFailed)));
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    teardown_test_context(&ctx).await;
+    result.unwrap();
 }
 
 /// Builds the bounded claim policy used by the worker tests.
@@ -1427,6 +1525,45 @@ async fn test_security_definer_functions_are_hardened() {
             );
         }
 
+        let identity_rows: Vec<FunctionSecurityRow> = query_as(
+            "SELECT
+                 p.proname,
+                 r.rolname AS owner,
+                 p.prosecdef,
+                 p.proconfig,
+                 (p.proacl IS NOT NULL) AS acl_is_explicit,
+                 has_function_privilege('app_worker', p.oid, 'EXECUTE') AS worker_can_execute,
+                 has_function_privilege('app_runtime', p.oid, 'EXECUTE') AS runtime_can_execute,
+                 COALESCE((
+                     SELECT bool_or(acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')
+                     FROM aclexplode(p.proacl) AS acl
+                 ), false) AS public_can_execute
+             FROM pg_proc AS p
+             JOIN pg_namespace AS n ON n.oid = p.pronamespace
+             JOIN pg_roles AS r ON r.oid = p.proowner
+             WHERE n.nspname = $1
+               AND p.proname IN (
+                   'resolve_external_identity', 'accept_sitolo_session', 'load_identity_device'
+               )
+             ORDER BY p.proname",
+        )
+        .bind(&ctx.schema_name)
+        .fetch_all(&ctx.admin_pool)
+        .await?;
+        assert_eq!(identity_rows.len(), 3);
+        for row in &identity_rows {
+            assert_eq!(row.owner, "app_identity_owner");
+            assert!(row.prosecdef);
+            assert!(row.acl_is_explicit);
+            assert!(!row.worker_can_execute);
+            assert!(row.runtime_can_execute);
+            assert!(!row.public_can_execute);
+            assert_eq!(
+                row.proconfig.as_deref(),
+                Some(&["search_path=pg_catalog".to_owned()][..])
+            );
+        }
+
         let roles: Vec<(String, bool, bool, bool, bool, bool)> = query_as(
             "SELECT rolname, rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolreplication
              FROM pg_roles
@@ -1455,6 +1592,15 @@ async fn test_security_definer_functions_are_hardened() {
                 .fetch_one(&ctx.admin_pool)
                 .await?;
         assert!(!owner_can_login, "app_outbox_owner must be NOLOGIN");
+
+        let identity_owner_can_login: bool =
+            query_scalar("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'app_identity_owner'")
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert!(
+            !identity_owner_can_login,
+            "app_identity_owner must be NOLOGIN"
+        );
 
         Ok::<(), Box<dyn std::error::Error>>(())
     }

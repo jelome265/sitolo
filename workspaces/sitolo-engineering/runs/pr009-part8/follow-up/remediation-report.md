@@ -1,5 +1,11 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## R2 authority implementation slice — 2026-10-22
+
+The latest follow-up adds an API authentication pipeline, exact issuer/subject mapping, a PostgreSQL identity/session lookup repository and schema, and denial regressions. The focused implementation evidence and limitations are recorded in [R2 authentication implementation report](r2-authentication-implementation-report.md). Formatting, workspace check, workspace Clippy and API unit tests pass locally; the PostgreSQL integration target compiles but has not executed against a database on this source revision. Exact-source PostgreSQL CI is required. Local PostgreSQL remains deferred to the next phase.
+
+**AUD-02 remains OPEN:** the authentication pipeline is not yet wired into live routing; the custom TCP boundary, production Cognito/database composition, session creation/revocation, and server-side membership/tenant/permission checks remain. Protected HTTP writes stay fail-closed. The PR remains open and unmerged; do not treat the previous exact-head CI results below as evidence for this source revision.
+
 ## Exact-head update — `39cb7ddb9b07400873466a3b8d2ec8aa4fa9500a` (2026-10-22)
 
 Added and executed `every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures` in the PostgreSQL-enabled CI workflow. The test injects audit and outbox write failures for all ten organization/branch lifecycle commands and verifies that business state/version and evidence rows remain unchanged. The membership transaction integration target reported 39 passing tests, including the new regression.

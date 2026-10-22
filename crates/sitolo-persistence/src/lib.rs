@@ -13,11 +13,12 @@ mod runtime;
 mod tenancy;
 pub mod tenancy_postgres;
 
+pub use identity_authority_postgres::PgRequestIdentityAuthority;
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
 };
-pub use ports::IdentityStores;
+pub use ports::{IdentityStores, RequestIdentityAuthority};
 pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
@@ -28,4 +29,5 @@ pub use tenancy::{
 };
 
 pub mod audit_repository;
+pub mod identity_authority_postgres;
 pub mod outbox_repository;

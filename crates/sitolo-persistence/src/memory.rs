@@ -107,6 +107,7 @@ pub struct IdentityDatabase {
 
 struct IdentityState {
     users: BTreeMap<UserId, UserRecord>,
+    external_identities: BTreeMap<(String, String), UserId>,
     sessions: BTreeMap<SessionId, Session>,
     devices: BTreeMap<DeviceId, Device>,
     refresh: RefreshLedger,
@@ -129,6 +130,7 @@ impl IdentityDatabase {
         IdentityDatabase {
             state: Mutex::new(IdentityState {
                 users: BTreeMap::new(),
+                external_identities: BTreeMap::new(),
                 sessions: BTreeMap::new(),
                 devices: BTreeMap::new(),
                 refresh: RefreshLedger::new(),
@@ -154,6 +156,52 @@ impl IdentityDatabase {
 
 #[async_trait]
 impl IdentityStores for IdentityDatabase {
+    async fn resolve_external_identity(&self, issuer: &str, subject: &str) -> Option<UserId> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state
+            .external_identities
+            .get(&(issuer.to_owned(), subject.to_owned()))
+            .cloned()
+    }
+
+    async fn bind_external_identity(
+        &self,
+        issuer: String,
+        subject: String,
+        user_id: &UserId,
+    ) -> Result<(), sitolo_auth::AuthError> {
+        if issuer.is_empty()
+            || issuer.len() > 2048
+            || subject.is_empty()
+            || subject.len() > 256
+            || issuer.chars().any(char::is_control)
+            || subject.chars().any(char::is_control)
+        {
+            return Err(sitolo_auth::AuthError::InvalidIdentifier);
+        }
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !state.users.contains_key(user_id) {
+            return Err(sitolo_auth::AuthError::AuthenticationFailed);
+        }
+        let key = (issuer, subject);
+        match state.external_identities.get(&key) {
+            Some(existing) if existing != user_id => {
+                Err(sitolo_auth::AuthError::AuthorizationDenied)
+            }
+            Some(_) => Ok(()),
+            None => {
+                state.external_identities.insert(key, user_id.clone());
+                Ok(())
+            }
+        }
+    }
+
     async fn create_user(
         &self,
         id: UserId,
@@ -378,6 +426,51 @@ impl IdentityStores for IdentityDatabase {
             .ok_or(sitolo_auth::AuthError::SessionInvalid)?;
         let lifetime = self.session_policy.for_class(session.class);
         session.accept(now, security_version, None)?;
+        session.slide_idle(lifetime, now);
+        Ok(SessionSnapshot {
+            session: session.clone(),
+            user_security_version: security_version,
+        })
+    }
+
+    async fn accept_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        now: SystemTime,
+    ) -> Result<SessionSnapshot, sitolo_auth::AuthError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let session_user_id = state
+            .sessions
+            .get(id)
+            .map(|session| session.user_id.clone())
+            .ok_or(sitolo_auth::AuthError::SessionInvalid)?;
+        if &session_user_id != expected_user_id {
+            return Err(sitolo_auth::AuthError::AuthenticationFailed);
+        }
+        let user = state
+            .users
+            .get(expected_user_id)
+            .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
+        if user.suspended {
+            return Err(sitolo_auth::AuthError::AuthenticationFailed);
+        }
+        let security_version = user.security_version;
+        let device_state = state
+            .sessions
+            .get(id)
+            .and_then(|session| session.device_id.as_ref())
+            .and_then(|device_id| state.devices.get(device_id))
+            .map(|device| device.state);
+        let session = state
+            .sessions
+            .get_mut(id)
+            .ok_or(sitolo_auth::AuthError::SessionInvalid)?;
+        let lifetime = self.session_policy.for_class(session.class);
+        session.accept(now, security_version, device_state)?;
         session.slide_idle(lifetime, now);
         Ok(SessionSnapshot {
             session: session.clone(),
@@ -795,6 +888,46 @@ impl IdentityStores for IdentityDatabase {
 
     async fn audit_trail(&self) -> Vec<AuthenticationEvent> {
         self.audit.events()
+    }
+}
+
+#[async_trait]
+impl crate::ports::RequestIdentityAuthority for IdentityDatabase {
+    async fn resolve_external_identity(
+        &self,
+        issuer: &str,
+        subject: &str,
+    ) -> Result<Option<UserId>, sitolo_auth::AuthError> {
+        Ok(<Self as IdentityStores>::resolve_external_identity(self, issuer, subject).await)
+    }
+
+    async fn accept_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        now: SystemTime,
+    ) -> Result<SessionSnapshot, sitolo_auth::AuthError> {
+        <Self as IdentityStores>::accept_session_for_user(self, id, expected_user_id, now).await
+    }
+
+    async fn device_snapshot(
+        &self,
+        id: &DeviceId,
+        expected_user_id: &UserId,
+    ) -> Result<Option<Device>, sitolo_auth::AuthError> {
+        let is_bound_to_user = {
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.sessions.values().any(|session| {
+                session.user_id == *expected_user_id && session.device_id.as_ref() == Some(id)
+            })
+        };
+        if !is_bound_to_user {
+            return Ok(None);
+        }
+        Ok(<Self as IdentityStores>::device_snapshot(self, id).await)
     }
 }
 

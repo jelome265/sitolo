@@ -18,9 +18,46 @@ use crate::memory::{
     PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
 };
 
+/// The minimum durable authority needed to turn a verified external identity
+/// plus a session selector into a Sitolo principal. Implementations must
+/// perform session ownership, suspension, security-version, device, and
+/// expiration checks against authoritative state.
+#[async_trait]
+pub trait RequestIdentityAuthority: Send + Sync {
+    async fn resolve_external_identity(
+        &self,
+        issuer: &str,
+        subject: &str,
+    ) -> Result<Option<UserId>, sitolo_auth::AuthError>;
+    async fn accept_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        now: std::time::SystemTime,
+    ) -> Result<SessionSnapshot, sitolo_auth::AuthError>;
+    async fn device_snapshot(
+        &self,
+        id: &DeviceId,
+        expected_user_id: &UserId,
+    ) -> Result<Option<Device>, sitolo_auth::AuthError>;
+}
+
 /// Bundled identity persistence port (§51).
 #[async_trait]
 pub trait IdentityStores: Send + Sync + AuditRecorder {
+    /// Resolves an exact, pre-linked external identity. This operation must
+    /// never create or link a user based on token claims such as email.
+    async fn resolve_external_identity(&self, issuer: &str, subject: &str) -> Option<UserId>;
+
+    /// Explicit administrative/onboarding binding. Implementations must
+    /// reject missing users and any attempt to reassign an existing pair.
+    async fn bind_external_identity(
+        &self,
+        issuer: String,
+        subject: String,
+        user_id: &UserId,
+    ) -> Result<(), sitolo_auth::AuthError>;
+
     // --- users ---
     async fn create_user(
         &self,
@@ -59,6 +96,15 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
     async fn accept_session(
         &self,
         id: &SessionId,
+        now: std::time::SystemTime,
+    ) -> Result<SessionSnapshot, sitolo_auth::AuthError>;
+    /// Accepts a session only when it belongs to the already-resolved user.
+    /// The ownership check and session-state update are one repository
+    /// operation; the caller must not trust a session ID as identity proof.
+    async fn accept_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
         now: std::time::SystemTime,
     ) -> Result<SessionSnapshot, sitolo_auth::AuthError>;
     async fn revoke_session(
