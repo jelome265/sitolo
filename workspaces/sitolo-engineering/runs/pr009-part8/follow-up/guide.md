@@ -4,6 +4,12 @@
 **Current PR:** [#49](https://github.com/jelome265/sitolo/pull/49) — open, unmerged, review required.  
 **Packet:** [Audit](audit.md) · [Remediation plan](remediation-plan.md) · [Stage 09 delivery record](../09-delivery-pr009-part8.md).
 
+### Current verification snapshot — 2026-10-22
+
+The current PR head is `bf6b7b04edc5de9fb5fe459d72d0d42d7755814b`. GitHub reports all **10/10** associated check runs completed successfully on this exact SHA: `verify`, `toolchain`, PostgreSQL integration, policy, dependency policy, advisories, secrets, CodeQL workflow, offensive regression, and the separate CodeQL check. The PR remains `OPEN`, with `REVIEW_REQUIRED` and merge state `BLOCKED`.
+
+This updates the earlier verification snapshot below; it does not update the code head reviewed by the static audit (`e49de42`) or close AUD-01 through AUD-05. The checks establish only their exercised paths. The relay contract and adapter, authenticated API authority, full IAM transaction coverage, event decisions, and managed production composition still require their stated closure evidence.
+
 ## 1. Read the current state correctly
 
 The requested defaults for relay, lifecycle events, and production identity/secrets are now documented in [Decision Proposals](decisions/README.md). They deliberately remain proposals until the accountable owners approve the provider/cloud choices and event contract. Do not treat prose alone as approval or enable production wiring against an unapproved provider.
