@@ -258,6 +258,19 @@ impl TenancyService {
         self
     }
 
+    /// Prevents unsupported in-memory mutations from being mistaken for
+    /// authoritative writes when durable evidence is configured.
+    fn require_authoritative_mutation_path(&self) -> Result<(), TenancyError> {
+        if self.evidence.is_some() {
+            Err(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authoritative_mutation_path_unavailable",
+                sqlstate: None,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     /// Records one mandatory Phase 4 IAM audit event and its paired outbox
     /// event atomically (contract §5, §29). No-op success when no evidence
     /// sink is configured (see the `evidence` field doc).
@@ -667,6 +680,7 @@ impl TenancyService {
         user_id: TenantUserId,
         actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let membership = self
             .db
             .invite_membership(id.clone(), organization_id.clone(), user_id.clone())
@@ -1043,6 +1057,7 @@ impl TenancyService {
         raw_token: &str,
         ttl: Duration,
     ) -> Result<CreatedInvitation, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         if matches!(
             self.check_rate(AbuseClass::InvitationCreate, organization_id.as_str()),
             RateLimitDecision::Locked { .. }
@@ -1079,6 +1094,8 @@ impl TenancyService {
         grant_id: Option<ScopeGrantId>,
         actor: ActorRef,
     ) -> Result<AcceptedInvitation, InvitationError> {
+        self.require_authoritative_mutation_path()
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
         Invitation::validate_raw_token(raw_token).map_err(|_| InvitationError::Invalid)?;
         let token_hash = Invitation::hash_token(raw_token);
         if matches!(
@@ -1123,6 +1140,8 @@ impl TenancyService {
         organization_id: &OrganizationId,
         invitation_id: &InvitationId,
     ) -> Result<Invitation, InvitationError> {
+        self.require_authoritative_mutation_path()
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
         self.db
             .revoke_invitation(organization_id, invitation_id)
             .await
@@ -1133,8 +1152,9 @@ impl TenancyService {
     ///
     /// Evidence emission remains blocked on authoritative PostgreSQL
     /// invitation storage and concurrency-safe per-invitation claiming.
-    pub async fn expire_invitations(&self) -> u64 {
-        self.db.expire_invitations(SystemTime::now()).await
+    pub async fn expire_invitations(&self) -> Result<u64, TenancyError> {
+        self.require_authoritative_mutation_path()?;
+        Ok(self.db.expire_invitations(SystemTime::now()).await)
     }
 
     /// Grants an organization-wide role to a live membership. Who may grant
@@ -1149,6 +1169,7 @@ impl TenancyService {
         role: Role,
         actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let assignment = self
             .db
             .assign_role(
@@ -1186,6 +1207,7 @@ impl TenancyService {
         role: Role,
         actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let assignment = self
             .db
             .revoke_role(organization_id, membership_id, role)
@@ -1232,6 +1254,7 @@ impl TenancyService {
         scope: Scope,
         actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let grant = self
             .db
             .grant_scope(
@@ -1267,6 +1290,7 @@ impl TenancyService {
         grant_id: &ScopeGrantId,
         actor: ActorRef,
     ) -> Result<ScopeGrant, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let grant = self
             .db
             .revoke_scope_grant(organization_id, grant_id)
@@ -1384,6 +1408,7 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let organization = self.db.activate_organization(id).await?;
         self.record_organization_evidence(
             IamEventName::OrganizationActivated,
@@ -1400,6 +1425,7 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let organization = self.db.suspend_organization(id).await?;
         self.record_organization_evidence(
             IamEventName::OrganizationSuspended,
@@ -1416,6 +1442,7 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let organization = self.db.resume_organization(id).await?;
         self.record_organization_evidence(
             IamEventName::OrganizationResumed,
@@ -1432,6 +1459,7 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let organization = self.db.begin_close_organization(id).await?;
         self.record_organization_evidence(
             IamEventName::OrganizationClosingStarted,
@@ -1448,6 +1476,7 @@ impl TenancyService {
         id: &OrganizationId,
         actor: ActorRef,
     ) -> Result<Organization, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let organization = self.db.close_organization(id).await?;
         self.record_organization_evidence(
             IamEventName::OrganizationClosed,
@@ -1467,6 +1496,7 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let branch = self.db.activate_branch(organization_id, id).await?;
         self.record_branch_evidence(
             IamEventName::BranchActivated,
@@ -1484,6 +1514,7 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let branch = self.db.suspend_branch(organization_id, id).await?;
         self.record_branch_evidence(
             IamEventName::BranchSuspended,
@@ -1501,6 +1532,7 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let branch = self.db.resume_branch(organization_id, id).await?;
         self.record_branch_evidence(IamEventName::BranchResumed, &branch, actor, "resume_branch")
             .await?;
@@ -1513,6 +1545,7 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let branch = self.db.begin_close_branch(organization_id, id).await?;
         self.record_branch_evidence(
             IamEventName::BranchClosingStarted,
@@ -1530,6 +1563,7 @@ impl TenancyService {
         id: &BranchId,
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
+        self.require_authoritative_mutation_path()?;
         let branch = self.db.close_branch(organization_id, id).await?;
         self.record_branch_evidence(IamEventName::BranchClosed, &branch, actor, "close_branch")
             .await?;
@@ -1668,6 +1702,44 @@ mod tests {
                 (AbuseClass::InvitationAccept, rule),
             ],
         )
+    }
+
+    #[tokio::test]
+    async fn unsupported_member_mutation_fails_before_reference_store_write() {
+        let pool = sqlx_postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")
+            .unwrap();
+        let db = Arc::new(TenancyDatabase::new());
+        let service =
+            TenancyService::new(db.clone(), Vec::new()).with_evidence(TenancyEvidenceSink::new(
+                pool.clone(),
+                Arc::new(sitolo_persistence::audit_repository::PostgresAuditWriter::new()),
+                Arc::new(
+                    sitolo_persistence::outbox_repository::PostgresOutboxRepository::new(pool),
+                ),
+            ));
+        let organization_id = org_id("org-fail-closed");
+        let membership_id = MembershipId::new("member-fail-closed").unwrap();
+        let result = service
+            .invite_member(
+                membership_id.clone(),
+                organization_id.clone(),
+                user("user-fail-closed"),
+                actor("operator"),
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authoritative_mutation_path_unavailable",
+                ..
+            })
+        ));
+        assert!(
+            db.membership_snapshot(&organization_id, &membership_id)
+                .await
+                .is_none()
+        );
     }
 
     async fn provisioned(service: &TenancyService) -> ProvisionedOrganization {
