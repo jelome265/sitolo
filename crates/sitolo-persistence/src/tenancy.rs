@@ -876,8 +876,8 @@ impl TenancyStores for TenancyDatabase {
                 && existing.membership_id == membership_id
                 && existing.proposed_role == proposed_role
                 && existing.proposed_scope == proposed_scope
-                && existing.contact == contact
-                && existing.token_hash == token_hash;
+                && existing.contact.as_ref() == Some(&contact)
+                && existing.token_hash == Some(token_hash);
             if same {
                 let membership = state
                     .memberships
@@ -981,6 +981,7 @@ impl TenancyStores for TenancyDatabase {
                     .ok_or(InvitationError::Invalid)?;
                 let _ = invitation.accept(now);
             }
+            state.by_token_hash.remove(&token_hash);
             if let Some(invitation) = state.invitations.get(&invitation_id).cloned() {
                 expire_linked_membership(&mut state, &invitation);
             }
@@ -1061,6 +1062,7 @@ impl TenancyStores for TenancyDatabase {
             .ok_or(InvitationError::Invalid)?;
         invitation.accept(now)?;
         let invitation = invitation.clone();
+        state.by_token_hash.remove(&token_hash);
         Ok(AcceptedInvitation {
             invitation,
             membership,
@@ -1081,12 +1083,19 @@ impl TenancyStores for TenancyDatabase {
             .filter(|invitation| invitation.organization_id == *organization_id)
             .map(|invitation| invitation.id.clone())
             .ok_or(InvitationError::Invalid)?;
+        let token_hash = state
+            .invitations
+            .get(&target)
+            .and_then(|invitation| invitation.token_hash);
         {
             let invitation = state
                 .invitations
                 .get_mut(&target)
                 .ok_or(InvitationError::Invalid)?;
             invitation.revoke()?;
+        }
+        if let Some(token_hash) = token_hash {
+            state.by_token_hash.remove(&token_hash);
         }
         // Withdrawing the invitation releases the linked membership for
         // re-enrollment: Invited -> Pending -> Expired.
@@ -1113,8 +1122,15 @@ impl TenancyStores for TenancyDatabase {
             .collect();
         let mut expired = 0u64;
         for id in lapsed {
+            let token_hash = state
+                .invitations
+                .get(&id)
+                .and_then(|invitation| invitation.token_hash);
             if let Some(invitation) = state.invitations.get_mut(&id) {
                 let _ = invitation.accept(now);
+            }
+            if let Some(token_hash) = token_hash {
+                state.by_token_hash.remove(&token_hash);
             }
             if let Some(invitation) = state.invitations.get(&id).cloned() {
                 expire_linked_membership(&mut state, &invitation);
@@ -1836,7 +1852,7 @@ mod tests {
         assert!(!created.membership.has_authority());
         assert_eq!(
             created.invitation.token_hash,
-            Invitation::hash_token(INVITE_TOKEN)
+            Some(Invitation::hash_token(INVITE_TOKEN))
         );
 
         // Raw-token reuse across invitations conflicts (replay safety).
@@ -1905,7 +1921,8 @@ mod tests {
         assert_eq!(accepted.assignment.role, Role::Cashier);
         assert_eq!(accepted.scope_grant, None);
 
-        // Replay reports prior acceptance; no duplicate grant exists.
+        // Terminalization deletes the token hash, so replay is indistinguishable
+        // from an unknown token; no duplicate grant exists.
         assert_eq!(
             db.accept_invitation(
                 Invitation::hash_token(INVITE_TOKEN),
@@ -1914,8 +1931,19 @@ mod tests {
                 at,
             )
             .await,
-            Err(InvitationError::AlreadyAccepted)
+            Err(InvitationError::Invalid)
         );
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN))
+            );
+            let terminal = state.invitations.get(&created.invitation.id).unwrap();
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
         assert_eq!(
             db.role_assignments_for(&org_id("o1"), &created.membership.id)
                 .await
@@ -1960,6 +1988,17 @@ mod tests {
             .await
             .unwrap();
         assert!(!membership.has_authority());
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN))
+            );
+            let terminal = state.invitations.get(&created.invitation.id).unwrap();
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
 
         // The sweeper collects lapsed invitations without acceptance attempts.
         let mut second = invite_input(INVITE_TOKEN_2);
@@ -1970,6 +2009,20 @@ mod tests {
         db.create_invitation(second).await.unwrap();
         assert_eq!(db.expire_invitations(late).await, 1);
         assert_eq!(db.expire_invitations(late).await, 0);
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN_2))
+            );
+            let terminal = state
+                .invitations
+                .get(&InvitationId::new("inv-2").unwrap())
+                .unwrap();
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
     }
 
     #[tokio::test]
@@ -2009,7 +2062,7 @@ mod tests {
         assert!(
             outcomes
                 .iter()
-                .all(|r| r.is_ok() || *r == Err(InvitationError::AlreadyAccepted))
+                .all(|r| r.is_ok() || *r == Err(InvitationError::Invalid))
         );
     }
 

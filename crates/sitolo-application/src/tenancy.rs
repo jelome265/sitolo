@@ -1718,9 +1718,11 @@ mod tests {
             accepted.invitation.state,
             sitolo_authz::InvitationState::Accepted
         );
+        assert!(accepted.invitation.contact.is_none());
+        assert!(accepted.invitation.token_hash.is_none());
 
-        // Replay of the consumed token reports prior acceptance, and no
-        // second membership activation or grant occurs.
+        // The persistence boundary deletes the consumed token hash, so replay
+        // is indistinguishable from an unknown token; no grant is duplicated.
         assert_eq!(
             service
                 .accept_invitation(
@@ -1730,7 +1732,7 @@ mod tests {
                     actor("test")
                 )
                 .await,
-            Err(InvitationError::AlreadyAccepted)
+            Err(InvitationError::Invalid)
         );
         assert_eq!(
             service
@@ -1845,10 +1847,12 @@ mod tests {
         let org = &bundle.organization.id;
 
         let created = invited(&service, org, INVITE_TOKEN).await;
-        service
+        let withdrawn = service
             .revoke_invitation(org, &created.invitation.id)
             .await
             .unwrap();
+        assert!(withdrawn.contact.is_none());
+        assert!(withdrawn.token_hash.is_none());
         // The withdrawn token is generically invalid.
         assert_eq!(
             service

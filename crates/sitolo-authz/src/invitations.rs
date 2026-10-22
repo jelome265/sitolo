@@ -174,8 +174,10 @@ pub struct Invitation {
     /// `None` means organization-wide; `Some` narrows to the named scope and
     /// is materialized as a scope grant on acceptance.
     pub proposed_scope: Option<Scope>,
-    pub contact: InvitationContact,
-    pub token_hash: [u8; 32],
+    /// Removed when the invitation reaches any terminal state.
+    pub contact: Option<InvitationContact>,
+    /// Removed when the invitation reaches any terminal state.
+    pub token_hash: Option<[u8; 32]>,
     pub issued_at: SystemTime,
     pub expires_at: SystemTime,
     pub state: InvitationState,
@@ -226,8 +228,8 @@ impl Invitation {
             membership_id,
             proposed_role,
             proposed_scope,
-            contact,
-            token_hash: Self::hash_token(raw_token),
+            contact: Some(contact),
+            token_hash: Some(Self::hash_token(raw_token)),
             issued_at: now,
             expires_at: now + ttl,
             state: InvitationState::Issued,
@@ -249,10 +251,12 @@ impl Invitation {
         if now >= self.expires_at {
             self.state = InvitationState::Expired;
             self.state_version = self.state_version.saturating_add(1);
+            self.erase_terminal_data();
             return Err(InvitationError::Expired);
         }
         self.state = InvitationState::Accepted;
         self.state_version = self.state_version.saturating_add(1);
+        self.erase_terminal_data();
         Ok(())
     }
 
@@ -263,12 +267,18 @@ impl Invitation {
             InvitationState::Issued => {
                 self.state = InvitationState::Revoked;
                 self.state_version = self.state_version.saturating_add(1);
+                self.erase_terminal_data();
                 Ok(())
             }
             InvitationState::Accepted => Err(InvitationError::AlreadyAccepted),
             InvitationState::Revoked => Err(InvitationError::Invalid),
             InvitationState::Expired => Err(InvitationError::Expired),
         }
+    }
+
+    fn erase_terminal_data(&mut self) {
+        self.contact = None;
+        self.token_hash = None;
     }
 }
 
@@ -301,7 +311,7 @@ mod tests {
     #[test]
     fn issue_stores_hash_never_raw() {
         let invitation = invitation();
-        assert_eq!(invitation.token_hash, Invitation::hash_token(TOKEN));
+        assert_eq!(invitation.token_hash, Some(Invitation::hash_token(TOKEN)));
         assert_eq!(invitation.state, InvitationState::Issued);
         // The record carries no raw-token field: debug output cannot leak it.
         let rendered = format!("{invitation:?}");
@@ -353,6 +363,8 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
         invitation.accept(now).unwrap();
         assert_eq!(invitation.state, InvitationState::Accepted);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
         assert_eq!(
             invitation.accept(now),
             Err(InvitationError::AlreadyAccepted)
@@ -365,7 +377,18 @@ mod tests {
         let late = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000);
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
         assert_eq!(invitation.state, InvitationState::Expired);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
+    }
+
+    #[test]
+    fn withdrawal_erases_contact_and_token_hash() {
+        let mut invitation = invitation();
+        invitation.revoke().unwrap();
+        assert_eq!(invitation.state, InvitationState::Revoked);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
     }
 
     #[test]

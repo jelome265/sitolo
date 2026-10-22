@@ -11,7 +11,7 @@
 
 Treat all five undocumented state-changing paths as mandatory durable audit evidence and paired outbox intent. Add distinct event names instead of reusing `MembershipInvited`, `MembershipActivated` or an event with different semantics. Each new event starts at schema version **1**.
 
-The mapping decision is approved. The binding contract and source registry are now updated to include the five names; transition wiring, transaction coupling, payload validation, and integration evidence remain outstanding. This registry update alone does not close AUD-03 or AUD-04.
+The mapping decision is approved. The binding contract and source registry include all five names, with strict payload validation. The `mark_member_pending` and membership-expiry paths are wired to update PostgreSQL state with audit and outbox in one transaction. Invitation issuance, withdrawal, and the invitation expiry sweep still lack authoritative PostgreSQL wiring. AUD-03 remains open and AUD-04 remains partial.
 
 ## Mapping matrix
 
@@ -46,6 +46,10 @@ The top-level organization scope is mandatory. Consumers must not treat an event
 - Background expiry uses a stable system subject (`system:invitation-expiry-sweeper`) and explicit operation/source metadata, never a fabricated human. If actor kind must be explicit in the durable schema, extend the schema intentionally under the binding contract.
 - `iam.invitation.issued` deliberately differs from `iam.membership.invited`: direct member invitation and token-bound invitation issuance are different transitions.
 
+## Owner-approved invitation data retention — 2026-10-22
+
+Invitation contact data and token-hash data must be deleted when an invitation reaches a terminal state: accepted, withdrawn, or expired. Terminal records retain lifecycle metadata needed for audit and support, but must not retain contact or token-hash fields. The raw token is never stored. Token lookup indexes must be removed with the terminal transition; a replay after terminalization is indistinguishable from an unknown token.
+
 ## Transaction and idempotency requirements
 
 1. Each state mutation, mandatory audit row and outbox row commit in the same authoritative PostgreSQL transaction.
@@ -56,4 +60,4 @@ The top-level organization scope is mandatory. Consumers must not treat an event
 6. Test concurrent sweeps, invitation accept/revoke/expiry races, duplicate commands, cross-tenant calls, audit failure and outbox failure.
 7. Register every accepted variant in `IamEventName::ALL`, `as_str()`, catalogue/schema checks and destination compatibility tests.
 
-**Implementation required:** update the binding contract, event enum, payload schema and tests to this approved mapping before wiring these transitions. If implementation exposes a genuine incompatibility, record a scoped decision amendment rather than silently changing names or meanings. AUD-03/AUD-04 remain open until implementation and proof pass. See [the audit](../audit.md).
+**Remaining implementation:** wire invitation issuance, withdrawal, and the invitation expiry sweep to authoritative PostgreSQL transactions; add mutation/rollback/race integration coverage for each. Keep the membership transitions covered by the same transaction and do not report AUD-03 closed while other mandatory IAM mutations remain memory-first. If implementation exposes a genuine incompatibility, record a scoped decision amendment rather than silently changing names or meanings. See [the audit](../audit.md).
