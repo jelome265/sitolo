@@ -434,6 +434,58 @@ async fn member_invitation_and_required_evidence_commit_together() {
 }
 
 #[tokio::test]
+async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-member-invitation-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let actor = || ActorRef {
+        subject_ref: "user-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter))
+        .invite_member(
+            MembershipId::new("member-invitation-audit-failure").unwrap(),
+            org.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-invitation-audit-failure").unwrap(),
+            actor(),
+        )
+        .await;
+    assert!(audit_failure.is_err());
+
+    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ))
+        .invite_member(
+            MembershipId::new("member-invitation-outbox-failure").unwrap(),
+            org.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-invitation-outbox-failure").unwrap(),
+            actor(),
+        )
+        .await;
+    assert!(outbox_failure.is_err());
+
+    let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM organization_memberships WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-token-invitation").unwrap();
