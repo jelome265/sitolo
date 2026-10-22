@@ -1,5 +1,28 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Current implementation addendum — 2026-10-22
+
+This addendum supersedes historical implementation and verification details below where they conflict. Current code head: `7752636695576ad49d57175eb0d9a114fd911539`. All 10 required CI checks passed on that exact SHA: PostgreSQL integration [run 39721887375](https://github.com/jelome265/sitolo/actions/runs/39721887375), Rust verification [run 39721886981](https://github.com/jelome265/sitolo/actions/runs/39721886981), policy [run 39721886982](https://github.com/jelome265/sitolo/actions/runs/39721886982), security [run 39721887010](https://github.com/jelome265/sitolo/actions/runs/39721887010), and CodeQL [check 119637951175](https://github.com/jelome265/sitolo/runs/119637951175). Earlier exact-head CI at `e04b4fcd5e7e43a151daa129b8d9c7b0e125c055` also passed all 10 checks; no results are carried forward between source heads.
+
+### Current changes
+
+- `mark_member_pending` and `expire_invitation` now update membership state/version and write their approved audit/outbox events in one tenant-scoped PostgreSQL transaction. Integration coverage exercises success, duplicate and concurrent transitions, and rollback when audit or outbox insertion fails.
+- PostgreSQL audit/outbox event-name constraints now accept the approved `pending_acceptance` event name. Exact-head CI confirmed the new path passes against PostgreSQL.
+- The approved retention rule is implemented in the in-memory invitation lifecycle: accepted, withdrawn and expired invitations erase contact/token-hash fields, and the token lookup index is removed. Replays after terminalization are reported as invalid/unknown.
+- Local PostgreSQL execution has not been performed, as intended for this phase. Database-backed verification is in CI.
+
+### Current finding disposition
+
+| Finding | Current status | Remaining work |
+|---|---|---|
+| AUD-01 relay | **OPEN** | Production SNS/SQS publisher, consumer inbox/idempotency, infrastructure and real delivery proof. |
+| AUD-02 authority | **OPEN** | Verified OIDC principal and server-derived API actor/owner/tenant authority at the live HTTP boundary. |
+| AUD-03 atomicity | **OPEN** | Only organization provisioning and the two membership transitions above have PostgreSQL transaction coupling. Other mandatory IAM mutations remain incomplete; invitation storage and all-path rollback/race coverage are outstanding. |
+| AUD-04 event mapping | **PARTIAL** | Five v1 names and strict payload schemas exist; membership pending and expiry are wired. Invitation issue, withdrawal and per-invitation expiry sweep still need authoritative PostgreSQL transitions and integration evidence. |
+| AUD-05 runtime | **OPEN** | Managed production secret provider and fully composed API/worker runtime remain incomplete; fail-closed guards stay. |
+
+The decision record documents the owner-approved terminal invitation retention rule. These changes do not close AUD-03/AUD-04 or make PR #49 merge-ready. Stage 06 re-audit and human review remain required.
+
 **Date:** 2026-10-22  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
 **Verified implementation SHA:** `441ca1fd7974bfbbac2042ac900c82cea1fd3c63`
