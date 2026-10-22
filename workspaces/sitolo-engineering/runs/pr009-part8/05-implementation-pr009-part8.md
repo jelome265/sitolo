@@ -109,3 +109,9 @@ Fixed two PostgreSQL invitation-acceptance integration fixtures to meet the doma
 Local checks passed: `cargo fmt --all`, `cargo check --workspace --all-targets --all-features --locked`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, integration target `--no-run`, and `git diff --check`. No local PostgreSQL was started. Exact-head PostgreSQL, Rust, policy, security, and CodeQL checks passed for `8eaaf18`; see the follow-up remediation report for run URLs. The race test passed in the PostgreSQL workflow.
 
 AUD-04 is implemented but remains partial pending Stage 06 re-audit. AUD-03 remains open pending confirmation that every mandatory IAM mutation has same-transaction state/audit/outbox coverage and server-derived actor/tenant authority. Protected live HTTP writes remain fail-closed. PR #49 remains open and unmerged.
+
+## PostgreSQL rollback coverage addendum — `96ca56b08804211895106612fb5b393e2d66e686`
+
+Added failure-injection tests for direct branch creation, direct member invitation, and scope-grant revocation. Each test runs against the PostgreSQL workflow, injects both audit and outbox failures, and checks database state/evidence rollback. The exact-head CI result is recorded in `follow-up/remediation-report.md`; all nine checks passed, with no local PostgreSQL execution.
+
+AUD-03 remains open pending full transaction/actor-authority re-audit and live API authority composition. AUD-04 remains partial pending Stage 06 re-audit. PR #49 remains open and unmerged.

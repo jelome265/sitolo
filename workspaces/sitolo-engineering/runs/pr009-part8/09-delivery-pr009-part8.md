@@ -291,3 +291,9 @@ AUD-04's five approved mappings are now wired with PostgreSQL integration eviden
 Current source head `8eaaf18530027a3fdbb854361a1aa4a0ba580e30` passed all nine required checks, including PostgreSQL integration [39737396713](https://github.com/jelome265/sitolo/actions/runs/39737396713), Rust verification [39737395716](https://github.com/jelome265/sitolo/actions/runs/39737395716), policy [39737395738](https://github.com/jelome265/sitolo/actions/runs/39737395738), and security/CodeQL [39737395727](https://github.com/jelome265/sitolo/actions/runs/39737395727). The PostgreSQL suite includes the new invitation accept/withdraw/expiry race regression. Local PostgreSQL was not used.
 
 AUD-04 is wired and integration-tested for the five approved mappings, including `INVITED → EXPIRED`, but remains pending independent re-audit. AUD-03 remains open pending re-audit of all transaction boundaries and actor/tenant provenance. AUD-02 remains open; protected HTTP mutations remain fail-closed. AUD-01 and AUD-05 remain open. PR #49 is open and unmerged.
+
+## PostgreSQL rollback coverage update — 2026-10-22
+
+Source `96ca56b08804211895106612fb5b393e2d66e686` adds PostgreSQL failure-injection coverage for direct branch creation, direct member invitation, and scope-grant revocation. All nine exact-head checks passed, including the PostgreSQL workflow [39738690198](https://github.com/jelome265/sitolo/actions/runs/39738690198), Rust verification [39738690312](https://github.com/jelome265/sitolo/actions/runs/39738690312), policy [39738690391](https://github.com/jelome265/sitolo/actions/runs/39738690391), and security/CodeQL [39738690317](https://github.com/jelome265/sitolo/actions/runs/39738690317). No local PostgreSQL was run.
+
+AUD-03 remains open; AUD-04 remains partial pending Stage 06 re-audit. AUD-02 is open, with protected HTTP writes still fail-closed. See the follow-up remediation report for exact disposition.

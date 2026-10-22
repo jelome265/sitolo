@@ -1,5 +1,13 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Latest exact-head update — `96ca56b08804211895106612fb5b393e2d66e686` (2026-10-22)
+
+This update supersedes earlier evidence statements below where they conflict. Added PostgreSQL integration regressions for branch creation rollback, direct member invitation rollback, and scope-grant revocation rollback. Each injects audit and outbox write failures and verifies the changed state/evidence is absent or unchanged. The latest PostgreSQL workflow reports 37 membership transaction integration tests passing, including these new cases.
+
+All nine checks passed on this exact source head: PostgreSQL integration [39738690198](https://github.com/jelome265/sitolo/actions/runs/39738690198), Rust verification [39738690312](https://github.com/jelome265/sitolo/actions/runs/39738690312), policy [39738690391](https://github.com/jelome265/sitolo/actions/runs/39738690391), and security [39738690317](https://github.com/jelome265/sitolo/actions/runs/39738690317), including CodeQL. No local PostgreSQL was started or used; database evidence is CI-only.
+
+**Disposition remains open:** AUD-03 has stronger rollback coverage but remains **OPEN** until the full required mutation matrix and server-derived actor/tenant authority are re-audited; the API still has no composed production OIDC verifier, session lookup, or permission resolver. AUD-04 remains **PARTIAL pending Stage 06 re-audit**. AUD-01, AUD-02, and AUD-05 remain open. PR #49 remains open and unmerged.
+
 ## Exact-head update — `8eaaf18530027a3fdbb854361a1aa4a0ba580e30` (2026-10-22)
 
 This update supersedes earlier remediation statements below when they conflict with the current source. The branch was fetched before work and remains `feat/phase4-pr009-audit-outbox`; PR #49 is open and unmerged.
