@@ -115,3 +115,11 @@ AUD-04 is implemented but remains partial pending Stage 06 re-audit. AUD-03 rema
 Added failure-injection tests for direct branch creation, direct member invitation, and scope-grant revocation. Each test runs against the PostgreSQL workflow, injects both audit and outbox failures, and checks database state/evidence rollback. The exact-head CI result is recorded in `follow-up/remediation-report.md`; all nine checks passed, with no local PostgreSQL execution.
 
 AUD-03 remains open pending full transaction/actor-authority re-audit and live API authority composition. AUD-04 remains partial pending Stage 06 re-audit. PR #49 remains open and unmerged.
+
+## PostgreSQL lifecycle fault-matrix addendum — pending CI
+
+Added `every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures` to the PostgreSQL transaction integration suite. It exercises all ten organization and branch lifecycle commands with audit-writer and outbox-writer failures, and checks the persisted state/version plus absence of partial audit/outbox rows. This extends the prior rollback test from one organization and one branch transition to every lifecycle command handled by the shared transaction paths.
+
+Local verification: `cargo fmt --all -- --check`, `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked`, `cargo clippy -p sitolo-application --test membership_transaction_integration --locked -- -D warnings`, and `git diff --check` passed. The PostgreSQL test was compiled but not executed locally; database execution is pending the repository's PostgreSQL-enabled GitHub Actions workflow. No local PostgreSQL was started or used.
+
+This adds fault-path coverage but does not independently close AUD-03. The exact source must pass PostgreSQL CI and receive Stage 06 re-audit; AUD-02's production OIDC/session/authorization composition also remains open, and protected live HTTP writes remain fail-closed. PR #49 remains open and unmerged.

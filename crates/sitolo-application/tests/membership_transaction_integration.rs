@@ -316,6 +316,245 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
 }
 
 #[tokio::test]
+async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures() {
+    #[derive(Clone, Copy)]
+    enum Transition {
+        ActivateOrganization,
+        SuspendOrganization,
+        ResumeOrganization,
+        BeginCloseOrganization,
+        CloseOrganization,
+        ActivateBranch,
+        SuspendBranch,
+        ResumeBranch,
+        BeginCloseBranch,
+        CloseBranch,
+    }
+
+    async fn execute(
+        tenancy: &TenancyService,
+        transition: Transition,
+        organization_id: &OrganizationId,
+        branch_id: &sitolo_domain::tenancy::BranchId,
+        actor: ActorRef,
+    ) -> Result<(), sitolo_domain::tenancy::TenancyError> {
+        match transition {
+            Transition::ActivateOrganization => {
+                tenancy
+                    .activate_organization(organization_id, actor)
+                    .await?;
+            }
+            Transition::SuspendOrganization => {
+                tenancy.suspend_organization(organization_id, actor).await?;
+            }
+            Transition::ResumeOrganization => {
+                tenancy.resume_organization(organization_id, actor).await?;
+            }
+            Transition::BeginCloseOrganization => {
+                tenancy
+                    .begin_close_organization(organization_id, actor)
+                    .await?;
+            }
+            Transition::CloseOrganization => {
+                tenancy.close_organization(organization_id, actor).await?;
+            }
+            Transition::ActivateBranch => {
+                tenancy
+                    .activate_branch(organization_id, branch_id, actor)
+                    .await?;
+            }
+            Transition::SuspendBranch => {
+                tenancy
+                    .suspend_branch(organization_id, branch_id, actor)
+                    .await?;
+            }
+            Transition::ResumeBranch => {
+                tenancy
+                    .resume_branch(organization_id, branch_id, actor)
+                    .await?;
+            }
+            Transition::BeginCloseBranch => {
+                tenancy
+                    .begin_close_branch(organization_id, branch_id, actor)
+                    .await?;
+            }
+            Transition::CloseBranch => {
+                tenancy
+                    .close_branch(organization_id, branch_id, actor)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    let cases = [
+        (
+            "activate-organization",
+            Transition::ActivateOrganization,
+            "PROVISIONING",
+            None,
+        ),
+        (
+            "suspend-organization",
+            Transition::SuspendOrganization,
+            "ACTIVE",
+            None,
+        ),
+        (
+            "resume-organization",
+            Transition::ResumeOrganization,
+            "SUSPENDED",
+            None,
+        ),
+        (
+            "begin-close-organization",
+            Transition::BeginCloseOrganization,
+            "ACTIVE",
+            None,
+        ),
+        (
+            "close-organization",
+            Transition::CloseOrganization,
+            "CLOSING",
+            None,
+        ),
+        (
+            "activate-branch",
+            Transition::ActivateBranch,
+            "ACTIVE",
+            Some("PROVISIONING"),
+        ),
+        (
+            "suspend-branch",
+            Transition::SuspendBranch,
+            "ACTIVE",
+            Some("ACTIVE"),
+        ),
+        (
+            "resume-branch",
+            Transition::ResumeBranch,
+            "ACTIVE",
+            Some("SUSPENDED"),
+        ),
+        (
+            "begin-close-branch",
+            Transition::BeginCloseBranch,
+            "ACTIVE",
+            Some("ACTIVE"),
+        ),
+        (
+            "close-branch",
+            Transition::CloseBranch,
+            "ACTIVE",
+            Some("CLOSING"),
+        ),
+    ];
+
+    let db = test_db().await.unwrap();
+    for (name, transition, organization_state, branch_state) in cases {
+        let audit_org = OrganizationId::new(format!("org-{name}-audit")).unwrap();
+        let outbox_org = OrganizationId::new(format!("org-{name}-outbox")).unwrap();
+        let audit_branch =
+            sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-audit")).unwrap();
+        let outbox_branch =
+            sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-outbox")).unwrap();
+        for (organization_id, branch_id) in
+            [(&audit_org, &audit_branch), (&outbox_org, &outbox_branch)]
+        {
+            query("INSERT INTO organizations (id, name, state, state_version) VALUES ($1, 'Org', $2, 3)")
+                .bind(organization_id.as_str())
+                .bind(organization_state)
+                .execute(&db.admin)
+                .await
+                .unwrap();
+            if let Some(branch_state) = branch_state {
+                query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, 'Main', $3, 4)")
+                    .bind(branch_id.as_str())
+                    .bind(organization_id.as_str())
+                    .bind(branch_state)
+                    .execute(&db.admin)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let audit_service = service(&db, Arc::new(FailingAuditWriter));
+        let outbox_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+            .with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
+        let actor = || ActorRef {
+            subject_ref: "lifecycle-operator".to_owned(),
+            membership_ref: None,
+            device_ref: None,
+        };
+
+        assert!(
+            execute(
+                &audit_service,
+                transition,
+                &audit_org,
+                &audit_branch,
+                actor()
+            )
+            .await
+            .is_err(),
+            "{name} must abort when audit insertion fails"
+        );
+        assert!(
+            execute(
+                &outbox_service,
+                transition,
+                &outbox_org,
+                &outbox_branch,
+                actor()
+            )
+            .await
+            .is_err(),
+            "{name} must abort when outbox insertion fails"
+        );
+
+        for organization_id in [&audit_org, &outbox_org] {
+            let persisted: (String, i64, Option<String>, Option<i64>) = sqlx_core::query_as::query_as(
+                "SELECT organizations.state, organizations.state_version, branches.state, branches.state_version \
+                 FROM organizations LEFT JOIN branches ON branches.organization_id = organizations.id \
+                 WHERE organizations.id = $1",
+            )
+            .bind(organization_id.as_str())
+            .fetch_one(&db.admin)
+            .await
+            .unwrap();
+            assert_eq!(
+                persisted,
+                (
+                    organization_state.to_owned(),
+                    3,
+                    branch_state.map(str::to_owned),
+                    branch_state.map(|_| 4),
+                ),
+                "{name} must preserve business state and version on failure for {}",
+                organization_id.as_str()
+            );
+            let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + \
+                        (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+            )
+            .bind(organization_id.as_str())
+            .fetch_one(&db.admin)
+            .await
+            .unwrap();
+            assert_eq!(evidence_count, 0, "{name} must not leave partial evidence");
+        }
+    }
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-branch-create-rollback").unwrap();
