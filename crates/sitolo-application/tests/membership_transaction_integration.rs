@@ -1291,3 +1291,93 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
         .await
         .unwrap();
 }
+
+async fn seed_pending_membership(db: &TestDb, organization_id: &str, membership_id: &str) {
+    seed_organization(db, organization_id).await.unwrap();
+    query(
+        "INSERT INTO organization_memberships \
+         (id, organization_id, user_id, state, state_version) \
+         VALUES ($1, $2, 'user-expiring', 'PENDING_ACCEPTANCE', 2)",
+    )
+    .bind(membership_id)
+    .bind(organization_id)
+    .execute(&db.admin)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn membership_expiry_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-membership-expiry-audit-rollback").unwrap();
+    let membership = MembershipId::new("member-expiry-audit-rollback").unwrap();
+    seed_pending_membership(&db, org.as_str(), membership.as_str()).await;
+    let tenancy = service(&db, Arc::new(FailingAuditWriter));
+
+    assert!(tenancy.expire_invitation(&org, &membership).await.is_err());
+    let state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, ("PENDING_ACCEPTANCE".to_owned(), 2));
+    let expiry_events: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.membership.expired') + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 \
+                 AND event_name = 'iam.membership.expired')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(expiry_events, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn membership_expiry_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-membership-expiry-outbox-rollback").unwrap();
+    let membership = MembershipId::new("member-expiry-outbox-rollback").unwrap();
+    seed_pending_membership(&db, org.as_str(), membership.as_str()).await;
+    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ),
+    );
+
+    assert!(tenancy.expire_invitation(&org, &membership).await.is_err());
+    let state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, ("PENDING_ACCEPTANCE".to_owned(), 2));
+    let expiry_audits: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE organization_id = $1 \
+         AND event_name = 'iam.membership.expired'",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(expiry_audits, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
