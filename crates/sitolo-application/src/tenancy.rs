@@ -86,6 +86,19 @@ type PersistedInvitationRow = (
     i64,
 );
 
+fn persisted_role_assignment_state(value: &str) -> Option<RoleAssignmentState> {
+    match value {
+        "REQUESTED" => Some(RoleAssignmentState::Requested),
+        "VALIDATING" => Some(RoleAssignmentState::Validating),
+        "REJECTED" => Some(RoleAssignmentState::Rejected),
+        "APPROVAL_REQUIRED" => Some(RoleAssignmentState::ApprovalRequired),
+        "APPROVED" => Some(RoleAssignmentState::Approved),
+        "EFFECTIVE" => Some(RoleAssignmentState::Effective),
+        "REVOKED" => Some(RoleAssignmentState::Revoked),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct LifecycleEvidenceSpec {
     from: &'static str,
@@ -348,18 +361,26 @@ impl TenancyService {
             return Err(TenancyError::InvalidTransition);
         }
 
-        let existing: Option<(String, String, String, i64)> = sqlx_core::query_as::query_as(
-            "SELECT organization_id, membership_id, role, state_version \
+        let existing: Option<(String, String, String, String, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT organization_id, membership_id, role, state, state_version \
                  FROM role_assignments WHERE id = $1",
-        )
-        .bind(assignment_id.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
-            stage: "role_assignment_idempotency_read",
-            sqlstate: None,
-        })?;
-        if let Some((existing_org, existing_membership, existing_role, state_version)) = existing {
+            )
+            .bind(assignment_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_assignment_idempotency_read",
+                sqlstate: None,
+            })?;
+        if let Some((
+            existing_org,
+            existing_membership,
+            existing_role,
+            existing_state,
+            state_version,
+        )) = existing
+        {
             if existing_org != organization_id.as_str()
                 || existing_membership != membership_id.as_str()
                 || existing_role != role.as_str()
@@ -372,12 +393,18 @@ impl TenancyService {
                     sqlstate: None,
                 }
             })?;
+            let state = persisted_role_assignment_state(&existing_state).ok_or(
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "role_assignment_idempotency_state",
+                    sqlstate: None,
+                },
+            )?;
             return Ok(RoleAssignment {
                 id: assignment_id.clone(),
                 organization_id: organization_id.clone(),
                 membership_id: membership_id.clone(),
                 role,
-                state: RoleAssignmentState::Effective,
+                state,
                 state_version,
             });
         }
@@ -2696,6 +2723,20 @@ mod tests {
 
     fn user(value: &str) -> TenantUserId {
         TenantUserId::new(value).unwrap()
+    }
+
+    #[test]
+    fn persisted_role_assignment_state_rejects_unknown_values() {
+        assert_eq!(
+            persisted_role_assignment_state("EFFECTIVE"),
+            Some(RoleAssignmentState::Effective)
+        );
+        assert_eq!(
+            persisted_role_assignment_state("REVOKED"),
+            Some(RoleAssignmentState::Revoked)
+        );
+        assert_eq!(persisted_role_assignment_state("effective"), None);
+        assert_eq!(persisted_role_assignment_state("UNKNOWN"), None);
     }
 
     /// Test-only actor identity. No evidence sink is wired in these unit
