@@ -295,5 +295,6 @@ GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
 GRANT SELECT, INSERT ON invitations TO app_runtime;
 GRANT UPDATE (state, state_version, contact_kind, contact_value, token_hash) ON invitations TO app_runtime;
 GRANT SELECT, INSERT ON role_assignments TO app_runtime;
+GRANT UPDATE (state, state_version) ON role_assignments TO app_runtime;
 GRANT SELECT, INSERT ON organization_memberships TO app_runtime;
 GRANT UPDATE (state, state_version) ON organization_memberships TO app_runtime;

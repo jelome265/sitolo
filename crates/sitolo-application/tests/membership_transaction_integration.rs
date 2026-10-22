@@ -1634,3 +1634,272 @@ async fn role_assignment_rolls_back_when_outbox_write_fails() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
+    use sitolo_authz::RoleAssignmentState;
+
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-revocation").unwrap();
+    let membership = MembershipId::new("member-role-revocation").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let assignment_id =
+        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-revocation").unwrap();
+    let actor = ActorRef {
+        subject_ref: "user-role-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    tenancy
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            assignment_id.clone(),
+            Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+
+    let revoked = tenancy
+        .revoke_role(&org, &membership, Role::Cashier, actor.clone())
+        .await
+        .unwrap();
+    assert_eq!(revoked.id, assignment_id);
+    assert_eq!(revoked.state, RoleAssignmentState::Revoked);
+    assert_eq!(revoked.state_version, 4);
+    assert!(
+        tenancy
+            .revoke_role(&org, &membership, Role::Cashier, actor.clone())
+            .await
+            .is_err()
+    );
+
+    let replay = tenancy
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            revoked.id.clone(),
+            Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, revoked);
+
+    let regrant = tenancy
+        .assign_role(
+            org.clone(),
+            membership,
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-regrant").unwrap(),
+            Role::Cashier,
+            actor,
+        )
+        .await
+        .unwrap();
+    assert_eq!(regrant.state, RoleAssignmentState::Effective);
+    let counts: (i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1), \
+                (SELECT count(*) FROM role_assignments WHERE organization_id = $1 AND state = 'REVOKED'), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.assigned'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.role.assigned'), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (2, 1, 2, 2, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn role_revocation_rolls_back_when_audit_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-revoke-audit-failure").unwrap();
+    let membership = MembershipId::new("member-role-revoke-audit-failure").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let actor = ActorRef {
+        subject_ref: "user-role-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    service(&db, Arc::new(PostgresAuditWriter::new()))
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-audit-failure")
+                .unwrap(),
+            Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        service(&db, Arc::new(FailingAuditWriter))
+            .revoke_role(&org, &membership, Role::Cashier, actor)
+            .await
+            .is_err()
+    );
+    let state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM role_assignments \
+         WHERE organization_id = $1 AND membership_id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, ("EFFECTIVE".to_owned(), 3));
+    let removal_events: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed') + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.role.removed')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(removal_events, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn role_revocation_rolls_back_when_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-revoke-outbox-failure").unwrap();
+    let membership = MembershipId::new("member-role-revoke-outbox-failure").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let actor = ActorRef {
+        subject_ref: "user-role-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    service(&db, Arc::new(PostgresAuditWriter::new()))
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-outbox-failure")
+                .unwrap(),
+            Role::Cashier,
+            actor.clone(),
+        )
+        .await
+        .unwrap();
+    let failing_outbox = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ));
+    assert!(
+        failing_outbox
+            .revoke_role(&org, &membership, Role::Cashier, actor)
+            .await
+            .is_err()
+    );
+    let state: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM role_assignments \
+         WHERE organization_id = $1 AND membership_id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, ("EFFECTIVE".to_owned(), 3));
+    let removal_events: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed') + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.role.removed')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(removal_events, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_role_revocations_emit_one_semantic_event() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-role-revoke-concurrent").unwrap();
+    let membership = MembershipId::new("member-role-revoke-concurrent").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    service(&db, Arc::new(PostgresAuditWriter::new()))
+        .assign_role(
+            org.clone(),
+            membership.clone(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-concurrent").unwrap(),
+            Role::Cashier,
+            ActorRef {
+                subject_ref: "user-role-operator".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
+    let barrier = Arc::new(Barrier::new(2));
+    let run = |tenancy: Arc<TenancyService>, barrier: Arc<Barrier>| {
+        let org = org.clone();
+        let membership = membership.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            tenancy
+                .revoke_role(
+                    &org,
+                    &membership,
+                    Role::Cashier,
+                    ActorRef {
+                        subject_ref: "user-role-operator".to_owned(),
+                        membership_ref: None,
+                        device_ref: None,
+                    },
+                )
+                .await
+        })
+    };
+    let first = run(Arc::clone(&tenancy), Arc::clone(&barrier));
+    let second = run(tenancy, barrier);
+    let first = first.await.unwrap();
+    let second = second.await.unwrap();
+    let successful = usize::from(first.is_ok()) + usize::from(second.is_ok());
+    assert_eq!(successful, 1);
+    assert_eq!(
+        first.err().or_else(|| second.err()),
+        Some(sitolo_domain::tenancy::TenancyError::NotFound)
+    );
+    let counts: (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.role.removed')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}

@@ -23,9 +23,10 @@
 //! organization provisioning and lifecycle transitions, branch creation and
 //! lifecycle transitions, direct membership invitation and transitions,
 //! membership pending/expiry transitions, role assignment, token-bound
-//! invitation issue/withdrawal, and invitation expiry sweeping. Role
-//! revocation, scope mutations, and invitation acceptance remain unavailable
-//! with the evidence sink until authoritative PostgreSQL transactions exist.
+//! invitation issue/withdrawal, invitation expiry sweeping, and role
+//! assignment/revocation. Scope mutations and invitation acceptance remain
+//! unavailable with the evidence sink until authoritative PostgreSQL
+//! transactions exist.
 //!
 //! Each of these methods takes an `actor: ActorRef` parameter identifying
 //! who is performing the transition, because the audit record's actor
@@ -42,10 +43,10 @@
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
 //! default branch, audit, and outbox share one application-owned transaction.
-//! Role assignment is now PostgreSQL-backed, but role revocation, scope
-//! mutations, and invitation acceptance still lack durable PostgreSQL paths.
-//! The API composition root must wire verified authority and the durable
-//! database path before it can be considered a production tenancy authority.
+//! Role assignment/revocation is now PostgreSQL-backed, but scope mutations
+//! and invitation acceptance still lack durable PostgreSQL paths. The API
+//! composition root must wire verified authority and the durable database
+//! path before it can be considered a production tenancy authority.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -475,6 +476,109 @@ impl TenancyService {
             .await
             .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
                 stage: "role_assignment_commit",
+                sqlstate: None,
+            })?;
+        Ok(assignment)
+    }
+
+    async fn revoke_role_with_evidence(
+        &self,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: Role,
+        actor: ActorRef,
+    ) -> Result<RoleAssignment, TenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(TenancyError::EvidencePersistenceFailed)?;
+        let mut tx =
+            sink.pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "role_revocation_begin",
+                    sqlstate: None,
+                })?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_revocation_tenant_context",
+                sqlstate: None,
+            })?;
+        query("SELECT lock_organization_mutations($1)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_revocation_organization_lock",
+                sqlstate: None,
+            })?;
+
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE role_assignments \
+             SET state = 'REVOKED', state_version = state_version + 1 \
+             WHERE organization_id = $1 AND membership_id = $2 \
+               AND role = $3 AND state = 'EFFECTIVE' \
+             RETURNING id, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .bind(role.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "role_revocation_update",
+            sqlstate: None,
+        })?;
+        let Some((assignment_id, version)) = changed else {
+            return Err(TenancyError::NotFound);
+        };
+        let assignment_id = RoleAssignmentId::new(assignment_id).map_err(|_| {
+            TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_revocation_assignment_id",
+                sqlstate: None,
+            }
+        })?;
+        let state_version =
+            u64::try_from(version).map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_revocation_state_version",
+                sqlstate: None,
+            })?;
+        let assignment = RoleAssignment {
+            id: assignment_id.clone(),
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            role,
+            state: RoleAssignmentState::Revoked,
+            state_version,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::RoleRemoved,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor,
+            "revoke_role",
+            "role_assignment",
+            assignment_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "assignment_id": assignment_id.as_str(),
+                "role": role.as_str(),
+                "state": "REVOKED",
+                "state_version": assignment.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "role_revocation_commit",
                 sqlstate: None,
             })?;
         Ok(assignment)
@@ -1981,7 +2085,11 @@ impl TenancyService {
         role: Role,
         actor: ActorRef,
     ) -> Result<RoleAssignment, TenancyError> {
-        self.require_authoritative_mutation_path()?;
+        if self.evidence.is_some() {
+            return self
+                .revoke_role_with_evidence(organization_id, membership_id, role, actor)
+                .await;
+        }
         let assignment = self
             .db
             .revoke_role(organization_id, membership_id, role)

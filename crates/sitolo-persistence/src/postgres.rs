@@ -730,8 +730,8 @@ pub async fn verify_part8_provisioning_rls_metadata(
         || !can_insert
         || can_update
         || can_delete
-        || can_update_state
-        || can_update_version
+        || !can_update_state
+        || !can_update_version
         || can_update_id
     {
         violation!("role_assignments", "unexpected app_runtime privileges");
