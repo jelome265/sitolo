@@ -316,6 +316,58 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
 }
 
 #[tokio::test]
+async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-branch-create-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let actor = || ActorRef {
+        subject_ref: "user-branch-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter))
+        .create_branch(
+            sitolo_domain::tenancy::BranchId::new("branch-create-audit-failure").unwrap(),
+            org.clone(),
+            "Audit Failure",
+            actor(),
+        )
+        .await;
+    assert!(audit_failure.is_err());
+
+    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ))
+        .create_branch(
+            sitolo_domain::tenancy::BranchId::new("branch-create-outbox-failure").unwrap(),
+            org.clone(),
+            "Outbox Failure",
+            actor(),
+        )
+        .await;
+    assert!(outbox_failure.is_err());
+
+    let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM branches WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn competing_organization_transitions_and_cross_tenant_branch_update_are_denied() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-lifecycle-race").unwrap();
@@ -2206,6 +2258,101 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(remaining, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-scope-revoke-rollback").unwrap();
+    let audit_membership = MembershipId::new("member-scope-revoke-audit").unwrap();
+    let outbox_membership = MembershipId::new("member-scope-revoke-outbox").unwrap();
+    seed_active_membership(&db, org.as_str(), audit_membership.as_str())
+        .await
+        .unwrap();
+    query(
+        "INSERT INTO organization_memberships \
+         (id, organization_id, user_id, state, state_version) \
+         VALUES ($1, $2, 'user-scope-revoke-outbox', 'ACTIVE', 3)",
+    )
+    .bind(outbox_membership.as_str())
+    .bind(org.as_str())
+    .execute(&db.admin)
+    .await
+    .unwrap();
+
+    let scope = Scope::Organization {
+        organization_id: org.clone(),
+    };
+    let actor = || ActorRef {
+        subject_ref: "user-scope-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    let audit_grant = ScopeGrantId::new("grant-scope-revoke-audit").unwrap();
+    let outbox_grant = ScopeGrantId::new("grant-scope-revoke-outbox").unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    tenancy
+        .grant_scope(
+            org.clone(),
+            audit_membership,
+            audit_grant.clone(),
+            scope.clone(),
+            actor(),
+        )
+        .await
+        .unwrap();
+    tenancy
+        .grant_scope(
+            org.clone(),
+            outbox_membership,
+            outbox_grant.clone(),
+            scope,
+            actor(),
+        )
+        .await
+        .unwrap();
+
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter))
+        .revoke_scope_grant(&org, &audit_grant, actor())
+        .await;
+    assert!(audit_failure.is_err());
+    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ))
+        .revoke_scope_grant(&org, &outbox_grant, actor())
+        .await;
+    assert!(outbox_failure.is_err());
+
+    let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+        "SELECT id, state FROM scope_grants WHERE organization_id = $1 ORDER BY id",
+    )
+    .bind(org.as_str())
+    .fetch_all(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (audit_grant.to_string(), "ACTIVE".to_owned()),
+            (outbox_grant.to_string(), "ACTIVE".to_owned()),
+        ]
+    );
+    let revoked_evidence: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.scope.revoked') + \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.scope.revoked')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(revoked_evidence, 0);
     raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
         .execute(&db.admin)
         .await
