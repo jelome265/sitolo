@@ -2,9 +2,9 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@ee6a51c64e98ec14460ef61ec116bd61f153c106
+source_revision: feat/phase4-pr009-audit-outbox@884c375239a1faa437e014f7a859a9bf04201bd8
 source: apps/api/src/serve.rs
-source_citation: apps/api/src/serve.rs:24-45,53-93,105-143
+source_citation: apps/api/src/serve.rs:59-109,133-200,245-299
 ---
 
 # HTTP Transport Processing
@@ -15,11 +15,11 @@ Accepted TCP connection and bounded application state.
 
 ## Movement
 
-1. Accept connections under the configured in-flight semaphore. (apps/api/src/serve.rs:28-45)
-2. Read request bytes under a five-second timeout into a 32 KiB bounded buffer. (apps/api/src/serve.rs:53-70)
-3. Extract the Authorization header and parse the first request line. The token is not validated by this transport. (apps/api/src/serve.rs:71-88)
-4. Dispatch liveness/readiness probes; protected organization POSTs fail closed with 401 because verified OIDC, session, membership, and permission composition is absent. Other paths return 404. (apps/api/src/serve.rs:105-143)
-5. Build the bounded HTTP response, write it, and close the connection. (apps/api/src/serve.rs:89-93)
+1. Axum accepts connections from the already-bound Tokio listener and serves the reviewed route inventory. (apps/api/src/serve.rs:133-200)
+2. Apply per-route and global request-body limits, request deadlines, a concurrency cap, and load shedding. (apps/api/src/serve.rs:139-176)
+3. Expose liveness; readiness remains 503 until the runtime is explicitly marked ready after dependency composition. (apps/api/src/serve.rs:245-263)
+4. Protected routes read the Bearer Authorization and `Session-ID` headers and call the composed identity/session authority. Missing or invalid identity is denied; a valid identity still receives dependency-unavailable while tenant authorization and command composition are absent. (apps/api/src/serve.rs:265-274; apps/api/src/state.rs)
+5. Drain Axum serving under the configured process deadline; process entry awaits and classifies the server result. (apps/api/src/serve.rs:184-200; apps/api/src/main.rs)
 
 ## Output
 
@@ -45,7 +45,7 @@ PostgreSQL transaction semantics when the request handler does not cross that bo
 
 ## Verification
 
-Verified against the pinned source revision. This describes transport behavior only. It does not imply authenticated business mutations are available or that every product mutation is wired end-to-end.
+Verified against the pinned source revision. Axum owns HTTP parsing; the prior hand-written single-read parser is removed. This does not claim an explicit HTTP header-read timeout, production provider composition, tenant authorization, or successful business mutation wiring. The protected path remains fail-closed.
 
 ## See
 
