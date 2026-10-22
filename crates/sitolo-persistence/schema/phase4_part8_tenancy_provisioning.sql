@@ -80,6 +80,12 @@ CREATE POLICY organizations_provision_insert ON organizations
 CREATE POLICY organizations_provision_read ON organizations
     FOR SELECT TO app_runtime
     USING (id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY organizations_transition_read ON organizations
+    FOR SELECT TO app_outbox_owner
+    USING (
+        id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 CREATE POLICY organizations_transition_update ON organizations
     FOR UPDATE TO app_outbox_owner
     USING (id = NULLIF(current_setting('app.organization_id', true), ''))
@@ -114,6 +120,12 @@ CREATE POLICY branches_provision_insert ON branches
 CREATE POLICY branches_provision_read ON branches
     FOR SELECT TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY branches_transition_read ON branches
+    FOR SELECT TO app_outbox_owner
+    USING (
+        organization_id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 CREATE POLICY branches_transition_update ON branches
     FOR UPDATE TO app_outbox_owner
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''))

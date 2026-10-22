@@ -512,7 +512,11 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .fetch_all(admin_pool)
         .await?;
 
-        let expected_policy_count = 3;
+        let expected_policy_count = if owner_transition_policy.is_some() {
+            4
+        } else {
+            3
+        };
         if policies.len() != expected_policy_count {
             violation!(
                 table,
@@ -525,6 +529,7 @@ pub async fn verify_part8_provisioning_rls_metadata(
 
         let expected_insert = format!("{policy_prefix}_provision_insert");
         let expected_read = format!("{policy_prefix}_provision_read");
+        let expected_owner_read = format!("{policy_prefix}_transition_read");
         let expected_update = "memberships_transition_update";
         let expected_owner_update = normalize_policy_expression(&format!(
             "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
@@ -547,7 +552,8 @@ pub async fn verify_part8_provisioning_rls_metadata(
 
             let is_owner_transition =
                 owner_transition_policy.is_some_and(|expected| name == expected);
-            let expected_role = if is_owner_transition {
+            let is_owner_read = owner_transition_policy.is_some() && name == expected_owner_read;
+            let expected_role = if is_owner_transition || is_owner_read {
                 outbox_owner_oid
             } else {
                 runtime_oid
@@ -609,6 +615,26 @@ pub async fn verify_part8_provisioning_rls_metadata(
                              expected normalized `{expected_select_predicate}`, got `{actual}` \
                              (raw: {qual})"
                         )
+                    );
+                }
+            } else if is_owner_read {
+                if command != b'r' as i8 || check.is_some() {
+                    violation!(
+                        table,
+                        format!(
+                            "owner SELECT policy {name} command={command} with_check={:?}",
+                            check.as_deref()
+                        )
+                    );
+                }
+                let qual = match qual {
+                    Some(value) => value,
+                    None => violation!(table, format!("owner SELECT policy {name} has no USING")),
+                };
+                if normalize_policy_expression(&qual) != expected_owner_update {
+                    violation!(
+                        table,
+                        format!("owner SELECT policy {name} does not enforce the tenant context")
                     );
                 }
             } else if membership_table && name == expected_update {
