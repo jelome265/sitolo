@@ -270,6 +270,18 @@ impl TenancyService {
                 stage: "membership_invite_tenant_context",
                 sqlstate: None,
             })?;
+        let organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT state FROM organizations WHERE id = $1")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_invite_organization_check",
+                    sqlstate: None,
+                })?;
+        if organization_state.as_deref() != Some("ACTIVE") {
+            return Err(TenancyError::InvalidTransition);
+        }
         query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, $3, 'INVITED', 1)")
             .bind(membership_id.as_str())
             .bind(organization_id.as_str())
@@ -655,12 +667,8 @@ impl TenancyService {
         actor: ActorRef,
     ) -> Result<Branch, TenancyError> {
         if let Some(sink) = self.evidence.as_ref() {
-            let branch = Branch::provision(id.clone(), organization_id.clone(), name)?;
-            let branch = Branch {
-                state: sitolo_domain::tenancy::BranchState::Active,
-                state_version: 2,
-                ..branch
-            };
+            let mut branch = Branch::provision(id.clone(), organization_id.clone(), name)?;
+            branch.activate()?;
             let mut tx =
                 sink.pool
                     .begin()
@@ -677,6 +685,19 @@ impl TenancyService {
                     stage: "branch_create_tenant_context",
                     sqlstate: None,
                 })?;
+            let organization_state: Option<String> = sqlx_core::query_scalar::query_scalar(
+                "SELECT state FROM organizations WHERE id = $1",
+            )
+            .bind(organization_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "branch_create_organization_check",
+                sqlstate: None,
+            })?;
+            if organization_state.as_deref() != Some("ACTIVE") {
+                return Err(TenancyError::InvalidTransition);
+            }
             query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, $3, 'ACTIVE', 2)")
                 .bind(id.as_str())
                 .bind(organization_id.as_str())
