@@ -79,7 +79,7 @@ CREATE TABLE __SCHEMA__.audit_events (
     assurance_level TEXT,
     source TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_audit_event_name CHECK (event_name ~ '^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$'),
+    CONSTRAINT chk_audit_event_name CHECK (event_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*(\.[a-z][a-z0-9]*(_[a-z0-9]+)*)*$'),
     CONSTRAINT chk_audit_result CHECK (result IN ('SUCCESS', 'FAILURE'))
 );
 
@@ -124,7 +124,7 @@ CREATE TABLE __SCHEMA__.outbox_events (
     claim_generation BIGINT NOT NULL DEFAULT 0 CHECK (claim_generation >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_outbox_status CHECK (status IN ('PENDING', 'CLAIMED', 'PUBLISHED', 'QUARANTINED')),
-    CONSTRAINT chk_outbox_event_name CHECK (event_name ~ '^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$'),
+    CONSTRAINT chk_outbox_event_name CHECK (event_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*(\.[a-z][a-z0-9]*(_[a-z0-9]+)*)*$'),
     CONSTRAINT chk_outbox_error_class CHECK (
         last_error_class IS NULL OR last_error_class ~ '^[a-z][a-z0-9_.-]{0,63}$'
     ),
