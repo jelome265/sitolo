@@ -1,5 +1,25 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Exact-head implementation update — 2026-10-22
+
+Verified code source head: `75ff3e4c1612a170aaaa88b1ba89932ee4d4efd4`. On this source head, all nine reported checks passed: PostgreSQL integration [39729489081](https://github.com/jelome265/sitolo/actions/runs/39729489081), Rust/workspace verification [39729489126](https://github.com/jelome265/sitolo/actions/runs/39729489126), policy [39729489089](https://github.com/jelome265/sitolo/actions/runs/39729489089), and security [39729489097](https://github.com/jelome265/sitolo/actions/runs/39729489097), including CodeQL. No result is carried forward from prior source heads.
+
+The latest persistence changes serialize organization-scoped mutation and lifecycle transactions through a tenant-checked transaction advisory lock. The organization and branch transition functions take the same lock. Their dedicated owner role now has a narrowly scoped tenant SELECT policy required by forced RLS for `UPDATE ... RETURNING`; `app_runtime` retains no direct organization or branch UPDATE grant. PostgreSQL integration and policy verification pass on the exact head.
+
+**AUD-03 remains OPEN.** This corrects organization/branch concurrency and RLS boundaries, but does not implement durable transactions for role/scope grants, invitation acceptance and expiry sweep, or prove every required mutation's rollback/race matrix. **AUD-04 remains PARTIAL.** The new event mappings are still not wired across every approved transition; invitation expiry sweeping and integration proof remain outstanding. AUD-01, AUD-02 and AUD-05 remain open. The protected HTTP mutation path remains fail-closed until verified identity and server-derived authority are composed.
+
+No local PostgreSQL was started or used. Database-backed proof above is from GitHub Actions only. PR #49 remains open and unmerged; exact-head re-audit and human review remain required.
+
+## Implementation addendum — source SHA `b2d0bb876886e636063c8d19c8fbb6c9ed9623c8`
+
+The current source adds PostgreSQL transactions coupling direct branch creation and member activation, suspension, resumption, and revocation with their audit and outbox writes. Existing transactional paths remain for organization provisioning, member pending acceptance, and membership expiry. PostgreSQL integration tests exercise member suspension success and rollback when either audit or outbox writing fails. Exact-head CI is in progress; at the time of this addendum the PostgreSQL application workflow [39724526083](https://github.com/jelome265/sitolo/actions/runs/39724526083), Rust verification [39724526062](https://github.com/jelome265/sitolo/actions/runs/39724526062), and policy workflow [39724526094](https://github.com/jelome265/sitolo/actions/runs/39724526094) passed; the security workflow remains in progress. Do not infer final checks from previous SHAs.
+
+Operations without a transaction-backed PostgreSQL path now fail before changing the reference store whenever the evidence sink is enabled. This prevents further split-brain state/evidence writes, but it is containment, not implementation of those operations.
+
+**AUD-03 remains OPEN.** Role/scope operations, invitations, organization lifecycle, branch lifecycle transitions and the broader fault/race matrix are not yet backed by PostgreSQL state/audit/outbox transactions. **AUD-04 remains PARTIAL.** The five names and schemas are registered; member pending and membership expiry are wired, while invitation issuance, withdrawal and per-invitation expiry remain unwired. **AUD-02 remains OPEN:** the live HTTP boundary still denies protected writes because verified identity/session/tenant authorization is not composed. AUD-01 and AUD-05 remain open as recorded below.
+
+No local PostgreSQL instance was used. It is deferred to the next phase; the repository's PostgreSQL-enabled GitHub Actions workflow is the database verification environment for this phase. The PR remains open and unmerged.
+
 ## Current implementation addendum — 2026-10-22
 
 This addendum supersedes historical implementation and verification details below where they conflict. Current code head: `7752636695576ad49d57175eb0d9a114fd911539`. All 10 required CI checks passed on that exact SHA: PostgreSQL integration [run 39721887375](https://github.com/jelome265/sitolo/actions/runs/39721887375), Rust verification [run 39721886981](https://github.com/jelome265/sitolo/actions/runs/39721886981), policy [run 39721886982](https://github.com/jelome265/sitolo/actions/runs/39721886982), security [run 39721887010](https://github.com/jelome265/sitolo/actions/runs/39721887010), and CodeQL [check 119637951175](https://github.com/jelome265/sitolo/runs/119637951175). Earlier exact-head CI at `e04b4fcd5e7e43a151daa129b8d9c7b0e125c055` also passed all 10 checks; no results are carried forward between source heads.
