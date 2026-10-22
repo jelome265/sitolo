@@ -1,5 +1,15 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Exact-head update — `8eaaf18530027a3fdbb854361a1aa4a0ba580e30` (2026-10-22)
+
+This update supersedes earlier remediation statements below when they conflict with the current source. The branch was fetched before work and remains `feat/phase4-pr009-audit-outbox`; PR #49 is open and unmerged.
+
+The invitation acceptance PostgreSQL tests now use token fixtures that meet the existing minimum token length. A new PostgreSQL integration regression races token acceptance, invitation withdrawal, and the expiry sweeper against an already-expired invitation. It verifies acceptance is rejected, exactly one terminal invitation transition wins, terminal contact/token-hash fields are deleted, and the corresponding invitation event is emitted once. The accepted v1 membership-expiry schema permits `INVITED → EXPIRED`, and the sweep emits `iam.membership.expired` only when it actually changes the linked membership.
+
+Exact-head GitHub Actions passed all nine reported checks: PostgreSQL integration [39737396713](https://github.com/jelome265/sitolo/actions/runs/39737396713), Rust verification [39737395716](https://github.com/jelome265/sitolo/actions/runs/39737395716), policy [39737395738](https://github.com/jelome265/sitolo/actions/runs/39737395738), security [39737395727](https://github.com/jelome265/sitolo/actions/runs/39737395727), and CodeQL in the security run. The PostgreSQL integration output includes the new race test passing and 34 membership transaction integration tests passing. Local PostgreSQL was not started or used; database evidence is from GitHub Actions only.
+
+**Current disposition:** AUD-04 has implementation and exact-head PostgreSQL evidence for the five approved lifecycle mappings, but remains **PARTIAL pending independent Stage 06 re-audit**. AUD-03 remains **OPEN** until the independent review confirms transaction and rollback coverage across every mandatory IAM mutation and actor/tenant provenance; the API route remains fail-closed because production OIDC validation, session lookup, and server-side membership/permission resolution are not composed. AUD-01, AUD-02, and AUD-05 remain open. No merge or production integration was performed.
+
 ## Exact-head implementation update — 2026-10-22
 
 Verified code source head: `75ff3e4c1612a170aaaa88b1ba89932ee4d4efd4`. On this source head, all nine reported checks passed: PostgreSQL integration [39729489081](https://github.com/jelome265/sitolo/actions/runs/39729489081), Rust/workspace verification [39729489126](https://github.com/jelome265/sitolo/actions/runs/39729489126), policy [39729489089](https://github.com/jelome265/sitolo/actions/runs/39729489089), and security [39729489097](https://github.com/jelome265/sitolo/actions/runs/39729489097), including CodeQL. No result is carried forward from prior source heads.

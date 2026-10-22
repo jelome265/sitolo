@@ -1,5 +1,7 @@
 # Follow-up Audit — PR #49 / Phase 4 Part 8
 
+> **Pinned audit snapshot:** this report reviewed `e49de425b74c0095fee0737612ae40dbc50c770a`; it is not an audit of later implementation commits. The current remediation and exact-head CI status is recorded in [remediation-report.md](remediation-report.md). AUD-03/AUD-04 must not be treated as closed until Stage 06 re-audits the current source.
+
 **Audit date:** 2026-10-22  
 **Repository:** jelome265/sitolo  
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)  

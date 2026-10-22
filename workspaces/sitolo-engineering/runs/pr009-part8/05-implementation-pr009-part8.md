@@ -101,3 +101,11 @@ Local verification after this change:
 | PostgreSQL integration and RLS execution | NOT RUN locally: no PostgreSQL server or database URLs are available. Compilation and prior CI evidence only. |
 
 The explicit `FromRow` mappings use the same field names as the derives, so column lookup behavior is unchanged. `deny.toml` remains `ignore = []`; no advisory suppression, `--locked` removal, or gate weakening was applied.
+
+## Follow-up implementation update — 2026-10-22 — source `8eaaf18530027a3fdbb854361a1aa4a0ba580e30`
+
+Fixed two PostgreSQL invitation-acceptance integration fixtures to meet the domain token-length invariant. Added `invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transition`, which runs acceptance, withdrawal, and the bounded expiry sweep concurrently on an expired invitation and asserts one terminal winner, rejection of acceptance, terminal PII deletion, and one matching invitation event. The owner-approved `INVITED → EXPIRED` membership event remains schema-validated and emitted only when the sweep changes the membership row.
+
+Local checks passed: `cargo fmt --all`, `cargo check --workspace --all-targets --all-features --locked`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, integration target `--no-run`, and `git diff --check`. No local PostgreSQL was started. Exact-head PostgreSQL, Rust, policy, security, and CodeQL checks passed for `8eaaf18`; see the follow-up remediation report for run URLs. The race test passed in the PostgreSQL workflow.
+
+AUD-04 is implemented but remains partial pending Stage 06 re-audit. AUD-03 remains open pending confirmation that every mandatory IAM mutation has same-transaction state/audit/outbox coverage and server-derived actor/tenant authority. Protected live HTTP writes remain fail-closed. PR #49 remains open and unmerged.

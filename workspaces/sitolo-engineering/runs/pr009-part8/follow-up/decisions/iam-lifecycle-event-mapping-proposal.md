@@ -11,7 +11,7 @@
 
 Treat all five undocumented state-changing paths as mandatory durable audit evidence and paired outbox intent. Add distinct event names instead of reusing `MembershipInvited`, `MembershipActivated` or an event with different semantics. Each new event starts at schema version **1**.
 
-The mapping decision is approved. The binding contract and source registry include all five names, with strict payload validation. The `mark_member_pending` and membership-expiry paths are wired to update PostgreSQL state with audit and outbox in one transaction. Invitation issuance, withdrawal, and the invitation expiry sweep still lack authoritative PostgreSQL wiring. AUD-03 remains open and AUD-04 remains partial.
+The mapping decision is approved. The binding contract and source registry include all five names, with strict payload validation. The `mark_member_pending`, membership-expiry, token invitation issuance, withdrawal, acceptance, and bounded invitation expiry sweep paths now use PostgreSQL transactions for state and audit/outbox writes. The exact-head implementation and CI evidence are recorded in [the remediation report](../remediation-report.md). AUD-04 remains partial pending independent Stage 06 re-audit; AUD-03 remains open pending full transaction/actor-provenance review across all mandatory IAM mutations.
 
 ## Mapping matrix
 
