@@ -1182,6 +1182,111 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
 }
 
 #[tokio::test]
+async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transition() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-invitation-terminal-race").unwrap();
+    let invitation = "inv-terminal-race";
+    let membership = "member-terminal-race";
+    let token = "0123456789abcdef0123456789abcdef";
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
+    tenancy
+        .create_invitation(
+            org.clone(),
+            sitolo_domain::tenancy::InvitationId::new(invitation).unwrap(),
+            MembershipId::new(membership).unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-terminal-race").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "terminal-race@example.test").unwrap(),
+            token,
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "user-issuer".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    make_invitation_expired(&db, org.as_str(), invitation).await;
+    let invitation_id = sitolo_domain::tenancy::InvitationId::new(invitation).unwrap();
+
+    let (accepted, withdrawn, expired) = tokio::join!(
+        tenancy.accept_invitation(
+            token,
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-terminal-race").unwrap(),
+            None,
+            ActorRef {
+                subject_ref: "caller-accept".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+        tenancy.revoke_invitation(
+            &org,
+            &invitation_id,
+            ActorRef {
+                subject_ref: "caller-withdraw".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        ),
+        tenancy.expire_invitations_for_organization(&org),
+    );
+
+    assert!(accepted.is_err());
+    let withdrawn = withdrawn.is_ok();
+    let expired = expired.unwrap() == 1;
+    assert_ne!(withdrawn, expired);
+
+    let invitation_row: (String, Option<String>, Option<Vec<u8>>) = sqlx_core::query_as::query_as(
+        "SELECT state, contact_value, token_hash FROM invitations \
+             WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert!(matches!(invitation_row.0.as_str(), "WITHDRAWN" | "EXPIRED"));
+    assert!(invitation_row.1.is_none() && invitation_row.2.is_none());
+
+    let terminal_events: Vec<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT event_name FROM outbox_events WHERE organization_id = $1 \
+         AND event_name IN ('iam.invitation.withdrawn', 'iam.invitation.expired')",
+    )
+    .bind(org.as_str())
+    .fetch_all(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(terminal_events.len(), 1);
+    assert_eq!(
+        terminal_events[0],
+        if expired {
+            "iam.invitation.expired"
+        } else {
+            "iam.invitation.withdrawn"
+        }
+    );
+
+    let membership_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(org.as_str())
+    .bind(membership)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(membership_state, "EXPIRED");
+
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-invitation-expiry-audit-rollback").unwrap();
