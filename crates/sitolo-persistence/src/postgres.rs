@@ -374,13 +374,20 @@ pub async fn verify_part8_provisioning_rls_metadata(
     admin_pool: &PgPool,
     schema_name: &str,
 ) -> Result<(), PgAuthorityError> {
+    macro_rules! violation {
+        ($table:expr, $reason:expr) => {{
+            eprintln!("Part 8 RLS contract violation on {}: {}", $table, $reason);
+            return Err(PgAuthorityError::SecurityViolation);
+        }};
+    }
+
     let runtime_oid: i64 =
         query_scalar("SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'")
             .fetch_one(admin_pool)
             .await?;
 
     for table in ["organizations", "organization_memberships", "branches"] {
-        let row = query(
+        let row = match query(
             "SELECT c.relrowsecurity, c.relforcerowsecurity
              FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -390,10 +397,18 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .bind(table)
         .fetch_optional(admin_pool)
         .await?
-        .ok_or(PgAuthorityError::SecurityViolation)?;
+        {
+            Some(row) => row,
+            None => violation!(table, "table not found"),
+        };
 
-        if !row.get::<bool, _>("relrowsecurity") || !row.get::<bool, _>("relforcerowsecurity") {
-            return Err(PgAuthorityError::SecurityViolation);
+        let rowsecurity: bool = row.get("relrowsecurity");
+        let forcerowsecurity: bool = row.get("relforcerowsecurity");
+        if !rowsecurity || !forcerowsecurity {
+            violation!(
+                table,
+                format!("RLS enabled={rowsecurity} forced={forcerowsecurity}")
+            );
         }
 
         // The grant decision is SELECT + INSERT only. Assert it here so the
@@ -409,12 +424,18 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .fetch_one(admin_pool)
         .await?;
 
-        if !privilege.get::<bool, _>("can_select")
-            || !privilege.get::<bool, _>("can_insert")
-            || privilege.get::<bool, _>("can_update")
-            || privilege.get::<bool, _>("can_delete")
-        {
-            return Err(PgAuthorityError::SecurityViolation);
+        let can_select: bool = privilege.get("can_select");
+        let can_insert: bool = privilege.get("can_insert");
+        let can_update: bool = privilege.get("can_update");
+        let can_delete: bool = privilege.get("can_delete");
+        if !can_select || !can_insert || can_update || can_delete {
+            violation!(
+                table,
+                format!(
+                    "expected SELECT+INSERT only, got SELECT={can_select} INSERT={can_insert} \
+                     UPDATE={can_update} DELETE={can_delete}"
+                )
+            );
         }
 
         let policies = query(
@@ -433,7 +454,10 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .await?;
 
         if policies.len() != 2 {
-            return Err(PgAuthorityError::SecurityViolation);
+            violation!(
+                table,
+                format!("expected 2 policies, found {}", policies.len())
+            );
         }
 
         let expected_insert = format!("{table}_provision_insert");
@@ -447,32 +471,62 @@ pub async fn verify_part8_provisioning_rls_metadata(
             let check: Option<String> = policy.get("check_expr");
 
             if roles != vec![runtime_oid] {
-                return Err(PgAuthorityError::SecurityViolation);
+                violation!(
+                    table,
+                    format!("policy {name} roles {roles:?} do not equal [{runtime_oid}]")
+                );
             }
 
             if name == expected_insert {
                 // INSERT has no USING clause; the row must pass WITH CHECK.
                 if command != b'a' as i8 || qual.is_some() {
-                    return Err(PgAuthorityError::SecurityViolation);
+                    violation!(
+                        table,
+                        format!(
+                            "INSERT policy {name} command={command} using={:?}",
+                            qual.as_deref()
+                        )
+                    );
                 }
-                let check = check.ok_or(PgAuthorityError::SecurityViolation)?;
-                if !references_tenant_column(&check, table)
-                    || !check.contains("<>")
-                    || !check.contains("''")
-                {
-                    return Err(PgAuthorityError::SecurityViolation);
+                let check = match check {
+                    Some(value) => value,
+                    None => violation!(table, format!("INSERT policy {name} has no WITH CHECK")),
+                };
+                if !references_tenant_column(&check, table) {
+                    violation!(
+                        table,
+                        format!("INSERT check does not reference the tenant column: {check}")
+                    );
+                }
+                if !check.contains("<>") || !check.contains("''") {
+                    violation!(
+                        table,
+                        format!("INSERT check lacks the non-empty guard: {check}")
+                    );
                 }
             } else if name == expected_read {
                 // SELECT has no WITH CHECK clause; USING limits visible rows.
                 if command != b'r' as i8 || check.is_some() {
-                    return Err(PgAuthorityError::SecurityViolation);
+                    violation!(
+                        table,
+                        format!(
+                            "SELECT policy {name} command={command} with_check={:?}",
+                            check.as_deref()
+                        )
+                    );
                 }
-                let qual = qual.ok_or(PgAuthorityError::SecurityViolation)?;
+                let qual = match qual {
+                    Some(value) => value,
+                    None => violation!(table, format!("SELECT policy {name} has no USING")),
+                };
                 if !references_tenant_column(&qual, table) {
-                    return Err(PgAuthorityError::SecurityViolation);
+                    violation!(
+                        table,
+                        format!("SELECT USING does not reference the tenant column: {qual}")
+                    );
                 }
             } else {
-                return Err(PgAuthorityError::SecurityViolation);
+                violation!(table, format!("unexpected policy {name}"));
             }
         }
     }
