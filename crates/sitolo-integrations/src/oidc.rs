@@ -9,15 +9,24 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use hyper::{Method, Request, Response, StatusCode, Uri};
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::rt::TokioExecutor;
 use jsonwebtoken::jwk::{AlgorithmParameters, JwkSet, KeyAlgorithm, PublicKeyUse};
 use jsonwebtoken::{Algorithm, DecodingKey, Header, Validation, decode, decode_header};
-use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use sitolo_auth::{
     Assurance, AuthError, AuthenticationMethod, ExternalIdentity, IdentityProviderPort, TokenSet,
 };
 use sitolo_security::SecretValue;
 use tokio::sync::{Mutex, RwLock};
+use url::Url;
 
 const MAX_ACCESS_TOKEN_BYTES: usize = 16 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES: usize = 64 * 1024;
@@ -177,7 +186,7 @@ struct CachedJwks {
 /// configured resource audience/scopes.
 pub struct CognitoOidcProvider {
     config: CognitoOidcConfig,
-    client: Client,
+    client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
     jwks: RwLock<Option<CachedJwks>>,
     refresh_lock: Mutex<()>,
 }
@@ -186,11 +195,16 @@ impl CognitoOidcProvider {
     /// Constructs the provider using TLS certificate verification and a
     /// bounded request timeout. Redirect following is disabled.
     pub fn new(config: CognitoOidcConfig) -> Result<Self, AuthError> {
-        let client = Client::builder()
-            .timeout(config.request_timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| AuthError::ConfigurationInvalid)?;
+        let connector = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .map_err(|_| AuthError::ConfigurationInvalid)?
+            .https_only()
+            .enable_http1()
+            .build();
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(8)
+            .build(connector);
         Ok(Self {
             config,
             client,
@@ -239,17 +253,32 @@ impl CognitoOidcProvider {
     }
 
     async fn refresh_jwks(&self) -> Result<(), AuthError> {
-        let response = self
-            .client
-            .get(self.config.jwks_url.clone())
-            .send()
-            .await
-            .map_err(|_| AuthError::IdentityProviderUnavailable)?;
+        let uri = self
+            .config
+            .jwks_url
+            .as_str()
+            .parse::<Uri>()
+            .map_err(|_| AuthError::ConfigurationInvalid)?;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(Full::new(Bytes::new()))
+            .map_err(|_| AuthError::ConfigurationInvalid)?;
+        let response =
+            tokio::time::timeout(self.config.request_timeout, self.client.request(request))
+                .await
+                .map_err(|_| AuthError::IdentityProviderUnavailable)?
+                .map_err(|_| AuthError::IdentityProviderUnavailable)?;
         let status = response.status();
         if !status.is_success() {
             return Err(map_provider_status(status));
         }
-        let body = read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES).await?;
+        let body = tokio::time::timeout(
+            self.config.request_timeout,
+            read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES),
+        )
+        .await
+        .map_err(|_| AuthError::IdentityProviderUnavailable)??;
         let keys = parse_jwks(&body)?;
         let now = SystemTime::now();
         let mut cache = self.jwks.write().await;
@@ -398,24 +427,41 @@ impl IdentityProviderPort for CognitoOidcProvider {
         if code.is_empty() || code.len() > 4_096 {
             return Err(AuthError::IdentityProviderRejected);
         }
-        let response = self
-            .client
-            .post(self.config.token_endpoint.clone())
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("client_id", self.config.client_id.as_str()),
-                ("code", code.as_str()),
-                ("redirect_uri", self.config.redirect_uri.as_str()),
-                ("code_verifier", pkce_verifier),
-            ])
-            .send()
-            .await
-            .map_err(|_| AuthError::IdentityProviderUnavailable)?;
+        let form = serde_urlencoded::to_string([
+            ("grant_type", "authorization_code"),
+            ("client_id", self.config.client_id.as_str()),
+            ("code", code.as_str()),
+            ("redirect_uri", self.config.redirect_uri.as_str()),
+            ("code_verifier", pkce_verifier),
+        ])
+        .map_err(|_| AuthError::IdentityProviderRejected)?;
+        let uri = self
+            .config
+            .token_endpoint
+            .as_str()
+            .parse::<Uri>()
+            .map_err(|_| AuthError::ConfigurationInvalid)?;
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Full::new(Bytes::from(form)))
+            .map_err(|_| AuthError::ConfigurationInvalid)?;
+        let response =
+            tokio::time::timeout(self.config.request_timeout, self.client.request(request))
+                .await
+                .map_err(|_| AuthError::IdentityProviderUnavailable)?
+                .map_err(|_| AuthError::IdentityProviderUnavailable)?;
         let status = response.status();
         if !status.is_success() {
             return Err(map_provider_status(status));
         }
-        let body = read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES).await?;
+        let body = tokio::time::timeout(
+            self.config.request_timeout,
+            read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES),
+        )
+        .await
+        .map_err(|_| AuthError::IdentityProviderUnavailable)??;
         let token_response: CognitoTokenResponse =
             serde_json::from_slice(&body).map_err(|_| AuthError::IdentityProviderRejected)?;
         if token_response.access_token.is_empty()
@@ -485,19 +531,25 @@ struct CognitoTokenResponse {
     id_token: Option<String>,
 }
 
-async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, AuthError> {
+async fn read_bounded(
+    mut response: Response<Incoming>,
+    limit: usize,
+) -> Result<Vec<u8>, AuthError> {
     if response
-        .content_length()
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > u64::try_from(limit).unwrap_or(u64::MAX))
     {
         return Err(AuthError::IdentityProviderRejected);
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| AuthError::IdentityProviderUnavailable)?
-    {
+    while let Some(frame) = response.frame().await {
+        let frame = frame.map_err(|_| AuthError::IdentityProviderUnavailable)?;
+        let Ok(chunk) = frame.into_data() else {
+            continue;
+        };
         if body.len().saturating_add(chunk.len()) > limit {
             return Err(AuthError::IdentityProviderRejected);
         }

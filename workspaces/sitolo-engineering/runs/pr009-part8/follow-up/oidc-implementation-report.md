@@ -9,6 +9,7 @@
 - Bounds token and provider response sizes, request duration, JWKS size/key count/cache age, and refresh frequency. HTTPS is required and redirects are disabled.
 - Rejects JWKS key-ID ambiguity and returns only `(issuer, subject)` identity facts from token validation. Tenant, membership, role and permission authority is not accepted from Cognito claims.
 - Uses `SecretValue` for returned access/refresh/ID token values and redacts their `Debug` representation.
+- Performs provider calls with Hyper 1 and hyper-rustls using the platform native certificate store, HTTPS-only transport, redirects disabled by omission of redirect middleware, bounded request and body timeouts, and a bounded connection pool. This avoids introducing the `CDLA-Permissive-2.0` embedded-root package, which the repository's current license allowlist rejects.
 
 ## Verification performed locally
 
@@ -29,6 +30,6 @@ This slice does not close AUD-02 and does not claim production authentication re
 ## Dependency rationale
 
 - `jsonwebtoken` supplies maintained JOSE/JWT parsing and signature verification; the adapter pins RS256 and selects the AWS-LC implementation instead of accepting token-selected algorithms.
-- `reqwest` supplies bounded HTTPS provider calls using rustls with certificate validation; redirects are disabled and no caller-controlled URL is fetched.
+- `hyper`/`hyper-util` provide the approved HTTP client path; `hyper-rustls` provides TLS using native trust roots and the AWS-LC backend; `http-body-util` and `serde_urlencoded` support bounded response parsing and OAuth form encoding.
 
-Both are workspace-pinned through `Cargo.lock`. Supply-chain approval remains subject to the repository's `cargo deny` / `cargo vet` gates.
+The adapter is configured for HTTPS-only connections and uses native trust roots instead of adding the repository-excluded `webpki-root-certs` package. Versions are workspace-pinned through `Cargo.lock`. Supply-chain approval remains subject to the repository's `cargo deny` / `cargo vet` gates.
