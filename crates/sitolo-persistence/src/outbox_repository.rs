@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use sitolo_events::{
     ClaimToken, MAX_LEASE_DURATION, OutboxClaimPolicy, OutboxError, OutboxErrorClass, OutboxEvent,
-    OutboxStatus, validate_backoff,
+    OutboxStatus, validate_backoff, validate_iam_payload,
 };
 
 use crate::postgres_time::{from_utc, to_utc};
@@ -179,6 +179,10 @@ impl OutboxWriter for PostgresOutboxRepository {
         if event.payload.len() > OutboxEvent::MAX_PAYLOAD_SIZE {
             return Err(OutboxError::PayloadTooLarge.into());
         }
+        // `OutboxEvent` fields are public, so constructor validation is not a
+        // persistence-boundary guarantee. Revalidate the approved lifecycle
+        // schemas before sequence allocation or any other database write.
+        validate_iam_payload(&event.event_name, event.event_version, &event.payload)?;
         // Enqueue accepts only a fresh event. Database-assigned state must not
         // be supplied by the caller, and a loaded event is a duplicate rather
         // than a new intent.

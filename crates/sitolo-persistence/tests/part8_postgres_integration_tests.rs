@@ -21,7 +21,7 @@ use std::time::Duration;
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::AuditEventId;
 use sitolo_domain::tenancy::OrganizationId;
-use sitolo_events::{MAX_ATTEMPTS, OutboxClaimPolicy, OutboxErrorClass, OutboxEvent};
+use sitolo_events::{MAX_ATTEMPTS, OutboxClaimPolicy, OutboxError, OutboxErrorClass, OutboxEvent};
 use sitolo_persistence::audit_repository::{AuditWriter, PostgresAuditWriter};
 use sitolo_persistence::outbox_repository::{
     OutboxPersistenceError, OutboxReader, OutboxWriter, PostgresOutboxRepository,
@@ -213,6 +213,66 @@ async fn enqueue_pending_event(
     writer.enqueue(&mut tx, &event).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// The repository boundary must revalidate public event fields before it
+/// mutates either the outbox or the aggregate sequence table.
+#[tokio::test]
+async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes() {
+    let ctx = setup_test_context().await.unwrap();
+
+    let result = async {
+        let organization_id = OrganizationId::new("org-enqueue-validation").unwrap();
+        let aggregate_id = "membership-enqueue-validation";
+        let event_id = format!("evt-{}", Uuid::new_v4());
+        let mut event = OutboxEvent::new(
+            event_id.clone(),
+            "membership".to_owned(),
+            aggregate_id.to_owned(),
+            "iam.membership.pending_acceptance".to_owned(),
+            1,
+            organization_id.clone(),
+            None,
+            r#"{"membership_id":"membership-enqueue-validation","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2}"#.to_owned(),
+        )?;
+        event.payload = r#"{"membership_id":"membership-enqueue-validation","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2,"email":"person@example.test"}"#.to_owned();
+
+        let writer = PostgresOutboxRepository::new(ctx.runtime_pool.clone());
+        let mut tx = ctx.runtime_pool.begin().await?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        let enqueue_result = writer.enqueue(&mut tx, &event).await;
+        assert!(matches!(
+            enqueue_result,
+            Err(OutboxPersistenceError::InvalidRequest(
+                OutboxError::InvalidSchema
+            ))
+        ));
+
+        let persisted_events: i64 = query_scalar(
+            "SELECT COUNT(*) FROM outbox_events WHERE event_id = $1",
+        )
+        .bind(&event_id)
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        let assigned_sequences: i64 = query_scalar(
+            "SELECT COUNT(*) FROM outbox_aggregate_sequences WHERE aggregate_type = $1 AND aggregate_id = $2",
+        )
+        .bind("membership")
+        .bind(aggregate_id)
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(persisted_events, 0);
+        assert_eq!(assigned_sequences, 0);
+        tx.rollback().await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+
+    teardown_test_context(&ctx).await;
+    result.unwrap();
 }
 
 /// Tears down test schema.
