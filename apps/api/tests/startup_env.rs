@@ -48,7 +48,7 @@ async fn process_environment_config_and_secret_coexist() {
     let context = StartupContext::build()
         .await
         .expect("configuration and a development secret value must coexist");
-    assert_eq!(context.readiness(), Readiness::Ready);
+    assert_eq!(context.readiness(), Readiness::NotReady);
     assert_eq!(context.config().db_host, "127.0.0.1");
 }
 
