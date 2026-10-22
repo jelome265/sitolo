@@ -28,6 +28,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 async-trait = { version = "0.1.83", default-features = false }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
@@ -48,6 +49,8 @@ sha2 = { version = "0.11", default-features = false }
 sqlx-core = { version = "0.8", default-features = false, features = ["_rt-tokio"] }
 sqlx-postgres = { version = "0.8", default-features = false, features = ["chrono", "json"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+tower = { version = "0.5.3", default-features = false, features = ["limit", "load-shed", "util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }
 # `std` is required for dispatcher installation (`with_default` in tests)
 # and subscriber timestamp/thread metadata. Every workspace crate is
 # std-only, so this is not a no-std regression.

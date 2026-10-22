@@ -1,176 +1,302 @@
-//! Listener lifecycle: bind-gated serving, bounded probes, ordered shutdown
-//! and tenancy HTTP routing (§28 PR-006).
+//! Axum HTTP boundary with a reviewed route inventory and bounded ingress.
 
+use std::convert::Infallible;
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Body;
+use axum::error_handling::HandleErrorLayer;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde_json::json;
+use thiserror::Error;
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tower::ServiceBuilder;
+use tower::limit::ConcurrencyLimitLayer;
+use tower::load_shed::LoadShedLayer;
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
+
+use crate::shutdown::{
+    MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, ShutdownCoordinator, Subsystem,
+};
+use crate::state::AppState;
 use sitolo_api::{AppError, ProblemDetails};
 use sitolo_observability::RequestId;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Semaphore, oneshot};
 
-use crate::shutdown::{MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
-use crate::state::AppState;
+const MAX_INGRESS_BODY_BYTES: usize = 32 * 1024;
+const MAX_PROBE_BODY_BYTES: usize = 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
-const PROBE_READ_TIMEOUT_SECS: u64 = 5;
-const PROBE_MAX_BYTES: usize = 32 * 1024;
+/// Whether a route is public or requires a permission decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Public { reason: &'static str },
+    Permission(&'static str),
+}
 
-/// Serves probes and tenancy APIs until `shutdown` fires, then drains
-/// in-flight connections within [`SHUTDOWN_DRAIN_DEADLINE_SECS`] and stops
-/// subsystems in deterministic order. Returns the completed shutdown order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Method {
+    Get,
+    Post,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RouteSpec {
+    method: Method,
+    path: &'static str,
+    access: Access,
+    body_limit: usize,
+    timeout: Duration,
+}
+
+const ROUTES: &[RouteSpec] = &[
+    RouteSpec {
+        method: Method::Get,
+        path: "/process/live",
+        access: Access::Public {
+            reason: "container liveness probe",
+        },
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: PROBE_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Get,
+        path: "/process/ready",
+        access: Access::Public {
+            reason: "container readiness probe",
+        },
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: PROBE_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations",
+        access: Access::Permission("organization.create"),
+        body_limit: MAX_INGRESS_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/branches",
+        access: Access::Permission("branch.create"),
+        body_limit: MAX_INGRESS_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/activate",
+        access: Access::Permission("organization.lifecycle"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
+        access: Access::Permission("branch.lifecycle"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+];
+
+/// Reviewed route snapshot. Update only with an intentional route change and its tests.
+pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/activate access=perm(organization.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms";
+
+/// Errors returned while validating the static route inventory or serving HTTP.
+#[derive(Debug, Error)]
+pub enum ServeError {
+    /// The route list is invalid or differs from its reviewed snapshot.
+    #[error("HTTP route inventory is invalid")]
+    InvalidRouteInventory,
+    /// The HTTP listener terminated unexpectedly.
+    #[error("HTTP listener failed")]
+    Listener(#[source] std::io::Error),
+    /// Graceful shutdown exceeded its configured drain deadline.
+    #[error("HTTP listener drain deadline exceeded")]
+    DrainDeadlineExceeded,
+}
+
+/// Builds the single live router from its validated permission/body/deadline inventory.
+///
+/// Protected handlers authenticate requests but return dependency unavailable until
+/// the PostgreSQL tenant authorization and command path is fully composed.
+///
+/// # Errors
+/// Returns [`ServeError::InvalidRouteInventory`] if declarations are invalid or the
+/// reviewed snapshot does not match.
+pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
+    let snapshot = validate_route_inventory()?;
+    if snapshot != ROUTE_INVENTORY_SNAPSHOT {
+        return Err(ServeError::InvalidRouteInventory);
+    }
+
+    let mut router = Router::new();
+    for spec in ROUTES {
+        let body_limit = DefaultBodyLimit::max(spec.body_limit);
+        let timeout = TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, spec.timeout);
+        router = match (spec.method, spec.path, spec.access) {
+            (Method::Get, "/process/live", Access::Public { .. }) => router.route(
+                spec.path,
+                get(liveness)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout),
+            ),
+            (Method::Get, "/process/ready", Access::Public { .. }) => router.route(
+                spec.path,
+                get(readiness)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout),
+            ),
+            (Method::Post, _, Access::Permission(_)) => router.route(
+                spec.path,
+                post(protected_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout),
+            ),
+            _ => return Err(ServeError::InvalidRouteInventory),
+        };
+    }
+
+    Ok(router.with_state(state).layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(ingress_error))
+            .layer(LoadShedLayer::new())
+            .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT_CONNECTIONS))
+            .layer(RequestBodyLimitLayer::new(MAX_INGRESS_BODY_BYTES))
+            .layer(TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                REQUEST_TIMEOUT,
+            )),
+    ))
+}
+
+/// Serves the validated router and drains in-flight requests within the process deadline.
+///
+/// # Errors
+/// Returns a listener error or drain timeout. In either case the error contains no
+/// request data or credentials.
 pub async fn serve(
     listener: TcpListener,
     state: Arc<AppState>,
     shutdown: oneshot::Receiver<()>,
-) -> Vec<Subsystem> {
-    let mut shutdown = shutdown;
-    let semaphore = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
-    let mut in_flight = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
-                let Ok(permit) = semaphore.clone().try_acquire_owned() else { continue };
-                let state = Arc::clone(&state);
-                in_flight.spawn(async move {
-                    let _permit = permit;
-                    handle_connection(stream, &state).await;
-                });
-            }
+) -> Result<Vec<Subsystem>, ServeError> {
+    let router = app_router(state)?;
+    let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+        let _ = shutdown.await;
+    });
+    match tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), server).await {
+        Ok(Ok(())) => {
+            let mut coordinator = ShutdownCoordinator::new();
+            Ok(coordinator.shutdown().to_vec())
         }
+        Ok(Err(error)) => Err(ServeError::Listener(error)),
+        Err(_) => Err(ServeError::DrainDeadlineExceeded),
     }
-    let _ = tokio::time::timeout(
-        Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS),
-        in_flight.join_all(),
-    )
-    .await;
-    let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
-    coordinator.shutdown().to_vec()
 }
 
-async fn handle_connection(mut stream: TcpStream, state: &AppState) {
-    let mut buf = vec![0u8; PROBE_MAX_BYTES];
-    let read = tokio::time::timeout(
-        Duration::from_secs(PROBE_READ_TIMEOUT_SECS),
-        stream.read(&mut buf),
-    )
-    .await;
-    let n = match read {
-        Ok(Ok(n)) if n > 0 => n,
-        _ => return,
+fn validate_route_inventory() -> Result<String, ServeError> {
+    let mut lines = Vec::with_capacity(ROUTES.len());
+    for (index, spec) in ROUTES.iter().enumerate() {
+        let access_ok = match spec.access {
+            Access::Public { reason } => !reason.trim().is_empty(),
+            Access::Permission(permission) => !permission.trim().is_empty(),
+        };
+        if !access_ok
+            || spec.body_limit == 0
+            || spec.body_limit > MAX_INGRESS_BODY_BYTES
+            || spec.timeout.is_zero()
+            || spec.timeout > Duration::from_secs(60)
+            || ROUTES[..index]
+                .iter()
+                .any(|prior| prior.method == spec.method && prior.path == spec.path)
+        {
+            return Err(ServeError::InvalidRouteInventory);
+        }
+        lines.push(render_route(spec));
+    }
+    lines.sort_unstable();
+    Ok(lines.join("\n"))
+}
+
+fn render_route(spec: &RouteSpec) -> String {
+    let method = match spec.method {
+        Method::Get => "GET",
+        Method::Post => "POST",
     };
-    let raw = &buf[..n];
-    let header_end = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
-        .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|p| p + 2))
-        .unwrap_or(n);
-    let headers_part = String::from_utf8_lossy(&raw[..header_end]);
-    let authorization = headers_part
-        .lines()
-        .skip(1)
-        .filter_map(|line| line.split_once(':'))
-        .find_map(|(name, value)| {
-            name.eq_ignore_ascii_case("authorization")
-                .then_some(value.trim())
-        });
-    let first_line = headers_part.lines().next().unwrap_or("");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return;
-    }
-    let method = parts[0];
-    let path = parts[1];
-    let (status_str, body) =
-        dispatch_request_with_authorization(method, path, authorization, "", state).await;
-    let response = format!(
-        "HTTP/1.1 {status_str}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-}
-
-pub async fn dispatch_request(
-    method: &str,
-    path: &str,
-    body: &str,
-    state: &AppState,
-) -> (&'static str, String) {
-    dispatch_request_with_authorization(method, path, None, body, state).await
-}
-
-/// Dispatches a request while preserving the Authorization header at the
-/// HTTP boundary. The current runtime has no composed OIDC verifier, session
-/// lookup, or membership/permission resolver. Consequently the presence of a
-/// bearer header cannot establish authority and protected writes remain
-/// fail-closed until that verified context is wired end-to-end.
-pub async fn dispatch_request_with_authorization(
-    method: &str,
-    path: &str,
-    _authorization: Option<&str>,
-    _body: &str,
-    state: &AppState,
-) -> (&'static str, String) {
-    // Liveness / readiness probes remain authoritative and unconditional.
-    if method == "GET" {
-        if path == "/process/live" {
-            return (
-                "200 OK",
-                format!(
-                    "{{\"status\":\"live\",\"service\":\"{}\",\"version\":\"{}\"}}",
-                    json_escape(state.service_name()),
-                    json_escape(state.service_version())
-                ),
-            );
-        } else if path == "/process/ready" {
-            return ("200 OK", "{\"status\":\"ready\"}".to_string());
-        }
-    }
-
-    // The shipped HTTP runtime does not compose an OIDC verifier, validated
-    // session lookup, or membership/permission resolver into AppState. A
-    // syntactically present bearer therefore cannot establish authority.
-    // Keep tenancy writes disabled and never call the pre-auth reference
-    // handlers until the complete server-derived authority chain is wired.
-    if method == "POST" && path.starts_with("/v1/organizations") {
-        return format_error_response(&AppError::Authentication);
-    }
-
-    ("404 Not Found", "{\"status\":\"not_found\"}".to_string())
-}
-
-fn format_error_response(err: &AppError) -> (&'static str, String) {
-    let status = match err {
-        AppError::Validation => "422 Unprocessable Entity",
-        AppError::Authentication => "401 Unauthorized",
-        AppError::Authorization => "403 Forbidden",
-        AppError::NotFound => "404 Not Found",
-        AppError::Conflict | AppError::IdempotencyConflict => "409 Conflict",
-        AppError::RateLimited => "429 Too Many Requests",
-        AppError::DependencyUnavailable
-        | AppError::UpstreamInvalidResponse
-        | AppError::UpstreamTimeout
-        | AppError::UnknownOutcome
-        | AppError::Internal => "500 Internal Server Error",
+    let access = match spec.access {
+        Access::Public { reason } => format!("public({reason})"),
+        Access::Permission(permission) => format!("perm({permission})"),
     };
-    let body = ProblemDetails::from_error(err, &RequestId::new_server()).json();
-    (status, body)
+    format!(
+        "{method} {} access={} body<={} timeout={}ms",
+        spec.path,
+        access,
+        spec.body_limit,
+        spec.timeout.as_millis()
+    )
 }
 
-/// Minimal JSON string escaping for operator-controlled identity fields.
-fn json_escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(c),
-        }
+async fn liveness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(json!({
+        "status": "live",
+        "service": state.service_name(),
+        "version": state.service_version(),
+    }))
+}
+
+async fn readiness(State(state): State<Arc<AppState>>) -> Response {
+    if state.runtime_ready() {
+        (StatusCode::OK, Json(json!({"status": "ready"}))).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "not_ready"})),
+        )
+            .into_response()
     }
-    out
+}
+
+async fn protected_route(State(state): State<Arc<AppState>>, request: Request<Body>) -> Response {
+    let authorization = header_text(request.headers(), header::AUTHORIZATION);
+    let session_selector = header_text(request.headers(), "session-id");
+    match state
+        .authenticate_request(authorization, session_selector)
+        .await
+    {
+        Ok(_security_context) => app_error_response(AppError::DependencyUnavailable),
+        Err(error) => app_error_response(error),
+    }
+}
+
+fn header_text(headers: &HeaderMap, name: impl axum::http::header::AsHeaderName) -> Option<&str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+async fn ingress_error(error: Box<dyn StdError + Send + Sync>) -> Response {
+    tracing::warn!(error_class = %std::any::type_name_of_val(error.as_ref()), "HTTP ingress rejected request");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "service temporarily unavailable",
+    )
+        .into_response()
+}
+
+fn app_error_response(error: AppError) -> Response {
+    let request_id = RequestId::new_server();
+    let details = ProblemDetails::from_error(&error, &request_id);
+    let status = StatusCode::from_u16(details.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/problem+json")],
+        details.json(),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -178,8 +304,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_escape_neutralizes_quotes() {
-        assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
-        assert_eq!(json_escape("plain"), "plain");
+    fn route_inventory_matches_reviewed_snapshot() {
+        assert_eq!(
+            validate_route_inventory().expect("route inventory validates"),
+            ROUTE_INVENTORY_SNAPSHOT
+        );
     }
 }

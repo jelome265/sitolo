@@ -1,0 +1,48 @@
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use tower::ServiceExt;
+
+use sitolo_api_bin::bootstrap::StartupContext;
+use sitolo_api_bin::serve::app_router;
+use sitolo_api_bin::state::AppState;
+use std::sync::Arc;
+
+struct StubProvider;
+
+#[async_trait::async_trait]
+impl sitolo_security::SecretProvider for StubProvider {
+    async fn get(
+        &self,
+        _reference: &sitolo_security::SecretRef,
+    ) -> Result<sitolo_security::SecretValue, sitolo_security::SecretError> {
+        Ok(sitolo_security::SecretValue::new("test-only"))
+    }
+}
+
+async fn test_app_state() -> Arc<AppState> {
+    let context = StartupContext::build_from_pairs_with_provider(
+        Vec::<(String, String)>::new(),
+        Some(Arc::new(StubProvider)),
+    )
+    .await
+    .expect("test bootstrap succeeds");
+    Arc::clone(context.state())
+}
+
+#[tokio::test]
+async fn axum_protected_route_rejects_missing_credentials() {
+    let app = app_router(test_app_state().await).expect("route inventory is valid");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/organizations")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .expect("request is valid"),
+        )
+        .await
+        .expect("router returns an HTTP response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

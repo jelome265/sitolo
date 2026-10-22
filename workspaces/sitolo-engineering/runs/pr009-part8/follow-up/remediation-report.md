@@ -1,5 +1,13 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## HTTP boundary and fail-closed readiness update — 2026-10-22
+
+The latest implementation replaces the hand-written one-read TCP parser with an Axum router driven by a reviewed route inventory. Protected routes now consume `Authorization: Bearer …` and the owner-approved `Session-ID` header through the existing identity/session authority ports; missing, malformed, unknown-identity, and cross-user session cases are denied by HTTP-level router tests. The router applies request-size limits, request deadlines, concurrency limits, load shedding, and bounded graceful shutdown. The server task result is now observed by process entry rather than discarded.
+
+Readiness now remains `503` until database, identity, tenancy, and command dependencies are composed and probed. Protected requests with valid test identity still fail closed with `503` because production Cognito/PG composition and authoritative tenant permission resolution are not installed. This is a partial transport/auth-boundary slice, **not closure of AUD-02**. No local PostgreSQL was started or used. Exact-head PostgreSQL CI is still required after this source update.
+
+Local verification on the worktree: API boundary/startup tests passed (11 tests), workspace check passed, workspace Clippy passed with warnings denied, and formatting passed. The commit SHA and exact-head CI result will be recorded after publication; previous CI results do not apply to this source.
+
 ## R2 authority implementation slice — 2026-10-22
 
 The latest follow-up adds an API authentication pipeline, exact issuer/subject mapping, a PostgreSQL identity/session lookup repository and schema, and denial regressions. The focused implementation evidence and limitations are recorded in [R2 authentication implementation report](r2-authentication-implementation-report.md). Formatting, workspace check, workspace Clippy and API unit tests pass locally; the PostgreSQL integration target compiles but has not executed against a database on this source revision. Exact-source PostgreSQL CI is required. Local PostgreSQL remains deferred to the next phase.

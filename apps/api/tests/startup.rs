@@ -67,7 +67,7 @@ async fn development_boots_and_serves_bounded_probes() {
         StartupContext::build_from_pairs_with_provider(Vec::<(String, String)>::new(), stub())
             .await
             .expect("development bootstrap succeeds");
-    assert_eq!(dev.readiness(), Readiness::Ready);
+    assert_eq!(dev.readiness(), Readiness::NotReady);
     assert!(dev.state().config_fingerprint().starts_with("sha256:"));
 
     // Live serving: ephemeral port, real socket, bounded probes.
@@ -84,7 +84,7 @@ async fn development_boots_and_serves_bounded_probes() {
     assert!(!live.contains(PROBE_SECRET), "probe leaked secret material");
     let ready = probe_once(addr, "/process/ready").await;
     assert!(
-        ready.contains("200 OK"),
+        ready.contains("503 Service Unavailable"),
         "unexpected ready response: {ready}"
     );
     let missing = probe_once(addr, "/no/such/path").await;
@@ -98,6 +98,7 @@ async fn development_boots_and_serves_bounded_probes() {
         .await
         .expect("serve shuts down")
         .expect("serve joins");
+    let order = order.expect("server shuts down cleanly");
     assert_eq!(
         order,
         &[
@@ -123,7 +124,7 @@ async fn staging_boots_with_explicit_database_identity() {
     )
     .await
     .expect("staging bootstrap succeeds");
-    assert_eq!(staging.readiness(), Readiness::Ready);
+    assert_eq!(staging.readiness(), Readiness::NotReady);
 }
 
 #[tokio::test]
@@ -165,5 +166,5 @@ async fn explicit_provider_is_honored_in_production() {
     )
     .await
     .expect("explicit provider boots production");
-    assert_eq!(production.readiness(), Readiness::Ready);
+    assert_eq!(production.readiness(), Readiness::NotReady);
 }

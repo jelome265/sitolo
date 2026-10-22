@@ -155,7 +155,10 @@ impl StartupContext {
             state,
             provider,
             db_intent,
-            readiness: Readiness::Ready,
+            // A resolved secret proves configuration access only. Until the
+            // persistent PostgreSQL/auth/tenancy composition is installed and
+            // probed, the HTTP process must not advertise readiness.
+            readiness: Readiness::NotReady,
         })
     }
 
@@ -194,6 +197,8 @@ pub enum StartupError {
     SecretProviderUnavailable,
     #[error("startup secret probe failed for {class}")]
     SecretProbeFailed { class: &'static str },
+    #[error("HTTP server terminated unexpectedly ({class})")]
+    ServeFailed { class: &'static str },
 }
 
 fn logging_level(level: LogLevel) -> tracing::level_filters::LevelFilter {
