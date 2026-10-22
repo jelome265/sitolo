@@ -103,6 +103,11 @@ pub enum TenancyError {
     /// mandatory evidence blocks the transition it describes).
     #[error("mandatory audit/outbox evidence persistence failed")]
     EvidencePersistenceFailed,
+    /// Safe, non-sensitive diagnostic stage for infrastructure logs and
+    /// integration-test failures. The display text intentionally remains
+    /// generic so callers do not receive persistence internals.
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailedAt(&'static str),
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {
