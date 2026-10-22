@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@b458fb429281c96745b0f67f30a9f16a09515043
+source_revision: feat/phase4-pr009-audit-outbox@9451b4ef127299e52fc16addf8cda857e1105946
 source: crates/sitolo-persistence/src/postgres.rs
 source_citation: crates/sitolo-persistence/src/postgres.rs:45-76
 ---
@@ -43,7 +43,7 @@ Business transaction semantics inside later repository/application operations.
 
 ## Verification
 
-Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier checks forced tenant RLS and that role assignments and scope grants permit only state and state-version updates, not table-wide or identity-column updates. Application role assignment/revocation and scope grant/revocation couple PostgreSQL state with audit/outbox evidence in a transaction, with rollback and concurrency/idempotency integration cases. Invitation acceptance remains incomplete; this process does not claim the complete business mutation/outbox flow is production-wired.
+Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier checks forced tenant RLS, invitation token-resolution policy, and narrow runtime update grants. Role/scope mutations and invitation acceptance couple PostgreSQL state with audit/outbox evidence in a transaction, with rollback, idempotency, and invitation-race integration cases. Other required IAM transitions and live HTTP authority remain under implementation; this process does not claim the complete mutation flow is production-wired.
 
 ## See
 
