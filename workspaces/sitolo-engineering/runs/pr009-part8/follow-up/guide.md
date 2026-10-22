@@ -6,6 +6,8 @@
 
 ## 1. Read the current state correctly
 
+The requested defaults for relay, lifecycle events, and production identity/secrets are now documented in [Decision Proposals](decisions/README.md). They deliberately remain proposals until the accountable owners approve the provider/cloud choices and event contract. Do not treat prose alone as approval or enable production wiring against an unapproved provider.
+
 The code head reviewed for this packet is `e49de425b74c0095fee0737612ae40dbc50c770a`; the delivery/documentation tip at the start was `d863bd2be3eec72fedb9f48709caf1a07a11f2f6`. The delivery record lists 10/10 passing PR checks at that tip and the separate successful release-workflow dispatch, run [39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077), on `144a284`.
 
 Treat those as scoped test evidence. Do not infer that the live API has authentication, that all IAM transitions are transactionally audited, or that a real event reached a consumer. The current worker executable refuses to start without an approved relay adapter. Production API bootstrap also fails closed because no managed production secret provider is implemented.
@@ -29,7 +31,7 @@ Treat those as scoped test evidence. Do not infer that the live API has authenti
 
 ## 2. Follow this order
 
-1. **Get the decisions first.** The product/architecture owner must approve the relay destination and delivery/consumer contract. The audit/event contract owner must resolve missing lifecycle event mappings. Do not invent a queue, topic, event name, or acknowledgement rule.
+1. **Review the proposals and capture explicit owner approval.** Start with [the decision index](decisions/README.md), then review the [relay contract](decisions/relay-delivery-contract-proposal.md), [lifecycle event mapping](decisions/iam-lifecycle-event-mapping-proposal.md), and [identity/runtime/secret provider](decisions/identity-production-runtime-proposal.md). These documents recommend a concrete AWS baseline but do not approve it. Replace any choice that fails the actual hosting, commercial or operational constraints.
 2. **Establish trusted authority.** Connect the verified session/principal to each command. Derive the actor and initial owner on the server; tenant IDs supplied by a client select a resource but do not authorize it.
 3. **Close the transaction boundary.** Refactor every mandatory state mutation so that business state, the audit row, and outbox intent use one authoritative PostgreSQL transaction. Add rollback tests for audit and outbox failures, not just success tests.
 4. **Compose real runtime dependencies.** Implement the approved production secret provider and actual API/worker database pools, preserving separate runtime and worker identities. Keep startup fail-closed until all required dependencies are valid.

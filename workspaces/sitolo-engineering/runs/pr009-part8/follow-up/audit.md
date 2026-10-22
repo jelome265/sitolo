@@ -12,6 +12,8 @@ This is a fresh follow-up review of the post-Stage-08 code state. The original S
 
 ## 1. Executive assessment
 
+A concrete baseline for the three owner-decision gaps is now documented in the [decision proposal pack](decisions/README.md): SNS FIFO/SQS FIFO fan-out, five distinct v1 lifecycle mappings, and Cognito with ECS/RDS/Secrets Manager. These are proposals only. They do not represent cloud procurement, event-contract approval, or permission to enable production adapters.
+
 The follow-up fixes for database-role identity, the Part 8 RLS verifier, secret/config namespace separation, release-workflow database setup, environment references, and the SQLx advisory path are reported closed. The delivery record reports **10/10 PR checks passing at `d863bd2`** and a successful branch dispatch of the release workflow at `144a284` (run [39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077)).
 
 Those checks demonstrate the covered test paths only. They do not establish that the live API has authenticated authority, that every IAM mutation is coupled atomically to mandatory audit/outbox rows, or that an event has been delivered through a real destination. The worker executable intentionally refuses to start without an approved relay adapter.
@@ -39,12 +41,12 @@ The source of truth for detailed job IDs and the full evidence inventory is the 
 
 ## 4. Open findings
 
-### AUD-01 — Relay destination and delivery contract are not approved
+### AUD-01 — Relay destination and delivery contract need owner approval
 
 **Severity:** P1 — release blocker  
 **Evidence:** `apps/worker/src/main.rs`; `apps/worker/src/relay.rs`; [binding Part 8 contract](../../../../../docs/phase4_part8_audit_outbox_implementation_contract.md).
 
-The worker library has a bounded claim/publish/transition loop, stale-claim recovery, event/version guards, retry backoff, quarantine, and stable event-ID handoff. The executable exits with status 78 until a destination adapter and configuration are approved. No destination, protocol, endpoint/topic/queue, payload schema, acknowledgement rule, ordering requirement, authentication mechanism, or operator ownership can be inferred from “main and sub”.
+The worker library has a bounded claim/publish/transition loop, stale-claim recovery, event/version guards, retry backoff, quarantine, and stable event-ID handoff. The executable exits with status 78 until a destination adapter and configuration are approved. A concrete AWS SNS FIFO/SQS FIFO fan-out proposal now exists, but it is not owner-approved. Cloud adoption, destination, payload schema, acknowledgement/ordering semantics and operations ownership remain unaccepted until the accountable owner approves or replaces it. See [relay proposal](decisions/relay-delivery-contract-proposal.md).
 
 The outbox pattern permits duplicate publication around failure windows; a stable event ID in the producer is not proof that a real consumer deduplicates its business effect. The external transactional-outbox guidance explicitly calls for idempotent consumers and says not to publish an event for a rolled-back transaction. See [AWS transactional outbox guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html).
 
@@ -72,12 +74,12 @@ That proof is path-specific. Other methods such as branch creation, membership c
 
 **Required closure:** move every in-scope durable IAM mutation onto an application-owned PostgreSQL transaction that includes the business write and both required evidence writes, or record an explicit contract-approved exclusion. Add fault-injection proof for each operation family that shows a failed audit or outbox insert leaves no business mutation. Do not claim universal Part 8 atomicity based on the organization-provisioning test alone.
 
-### AUD-04 — Several IAM lifecycle transitions lack canonical audit-event mappings
+### AUD-04 — Several IAM lifecycle transitions lack approved canonical audit-event mappings
 
 **Severity:** P1 until disposition is contract-approved  
 **Evidence:** comments and method bodies in `crates/sitolo-application/src/tenancy.rs`; event catalogue in `crates/sitolo-audit/src/iam_event.rs`; binding Part 8 contract.
 
-The service explicitly documents transitions not wired to evidence because the current `IamEventName` catalogue does not define distinct events for them. Examples include moving a member to pending acceptance, membership/invitation expiry, invitation creation, invitation withdrawal, and the scheduled invitation-expiry sweep. Reusing an existing event name for a materially different operation would misstate the audit record; inventing a new name locally would bypass the contract vocabulary.
+The service explicitly documents transitions not wired to evidence because the current `IamEventName` catalogue does not define distinct events for them. A proposed v1 matrix covers member pending acceptance, membership expiry, invitation issuance, invitation withdrawal and per-item invitation expiry during the sweep. These names and payloads are not yet approved in the binding contract or source catalogue. Reusing an existing event name for a materially different operation would misstate the audit record; adding variants locally before contract approval would bypass the contract vocabulary. See [event mapping proposal](decisions/iam-lifecycle-event-mapping-proposal.md).
 
 **Required closure:** produce a transition-to-event matrix against the binding contract. For each transition, the contract owner must either approve a canonical event name/schema or explicitly approve and document why the transition is out of mandatory audit scope. Implement only after that decision, then add positive and failure-path tests. The matrix must also show which transitions are transactionally coupled as required by AUD-03.
 
@@ -86,7 +88,7 @@ The service explicitly documents transitions not wired to evidence because the c
 **Severity:** P1 — production release blocker  
 **Evidence:** `apps/api/src/bootstrap.rs`; `apps/api/src/state.rs`; `apps/worker/src/main.rs`; [environment configuration reference](../../../../../docs/environment-configuration-reference.md).
 
-The bootstrap code has no managed production secret provider and rejects production startup rather than falling back to the development provider. The application state currently builds an in-memory tenancy store; it records database runtime intent but does not compose the production PostgreSQL runtime for the API. The worker executable also refuses to start without its approved adapter. The environment reference correctly warns that the example files are not production deployment manifests.
+The bootstrap code has no managed production secret provider and rejects production startup rather than falling back to the development provider. The application state currently builds an in-memory tenancy store; it records database runtime intent but does not compose the production PostgreSQL runtime for the API. The worker executable also refuses to start without its approved adapter. A Cognito + ECS Fargate + RDS PostgreSQL + Secrets Manager baseline is now documented as a proposal, not an accepted platform decision. See [identity/runtime proposal](decisions/identity-production-runtime-proposal.md). The environment reference correctly warns that example files are not production deployment manifests.
 
 **Required closure:** approve and implement the managed secret-provider contract, compose real database pools with the restricted runtime and worker LOGIN identities, keep the administrative identity limited to provisioning/migration, and make readiness contingent on the actual required dependencies. Production startup tests must prove that missing provider/credentials, the wrong database identity, or a missing relay adapter fails closed. Do not remove these guards to make a smoke test pass.
 

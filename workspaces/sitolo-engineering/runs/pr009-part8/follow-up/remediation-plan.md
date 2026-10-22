@@ -7,18 +7,20 @@
 
 ## 1. Goal
 
+The current recommendations are collected in [decision proposals](decisions/README.md). They are explicit choices for review, not approvals. Before implementing a vendor-specific adapter, the accountable owners must accept or replace the relay, event-mapping, and identity/secrets proposals.
+
 Close the remaining Part 8 contract gaps without weakening RLS, least-privilege database identity, strict configuration parsing, audit requirements, or fail-closed startup. The current CI result is evidence for exercised behavior, not authority to claim production readiness.
 
 Do not expand the scope by choosing a broker, transport, event name, consumer contract, or authorization rule without the appropriate owner decision.
 
 ## 2. Ordered work
 
-### R1 — Resolve the relay and consumer contract before choosing a technology
+### R1 — Approve the proposed relay and consumer contract before implementing the adapter
 
 **Priority:** P1 / blocking  
 **Dependency:** explicit product/architecture owner decision.
 
-Record an approved, versioned contract that covers:
+Review [the relay and consumer contract proposal](decisions/relay-delivery-contract-proposal.md). If accepted, record it as the approved, versioned contract (or revise the proposal) covering:
 
 - transport and logical destination(s), environment mapping, and ownership;
 - event envelope, event-name registry, schema/version compatibility and size limits;
@@ -57,21 +59,21 @@ Record an approved, versioned contract that covers:
 
 **Acceptance:** every operation classified as mandatory has evidence in the same transaction as its state change, backed by PostgreSQL tests that exercise the real repository path. If a transition is not mandatory, the contract must say so and the omission must be visible in the coverage matrix.
 
-### R4 — Close event-catalogue gaps by contract decision, not by guessing
+### R4 — Approve lifecycle event mappings and close event-catalogue gaps
 
 **Priority:** P1 for required events; do not add arbitrary vocabulary.  
 **Dependency:** audit/event contract owner.
 
-Explicitly resolve at least the currently documented gaps: member pending acceptance, membership expiry, invitation creation, invitation withdrawal, and invitation-expiry sweep. A transition can be handled in one of three ways: use an already-approved semantically correct event; add an approved event name/schema to the binding contract and registry; or record an approved exclusion. Do not reuse a superficially similar name if it changes the meaning of the audit event.
+Review the [five-transition event mapping proposal](decisions/iam-lifecycle-event-mapping-proposal.md), then explicitly resolve the currently documented gaps: member pending acceptance, membership expiry, invitation creation, invitation withdrawal, and invitation-expiry sweep. A transition can be handled in one of three ways: use an already-approved semantically correct event; add an approved event name/schema to the binding contract and registry; or record an approved exclusion. Do not reuse a superficially similar name if it changes the meaning of the audit event.
 
 **Acceptance:** the matrix has no unexplained missing transition; contract and registry agree; the payload is bounded and secret-free; tests prove the selected behavior and atomicity.
 
-### R5 — Complete production runtime composition without relaxing fail-closed guards
+### R5 — Approve the production identity/provider baseline and complete runtime composition
 
 **Priority:** P1 / production blocker  
 **Dependencies:** R1 for worker destination settings; R2/R3 for safe API composition.
 
-1. Implement or integrate an approved managed production secret provider. Keep `SITOLO_SECRET__...` reserved for the development provider and never permit production fallback to it.
+1. Review the [identity, runtime and Secrets Manager proposal](decisions/identity-production-runtime-proposal.md). If AWS is accepted, implement the managed provider through the existing provider boundary. Keep `SITOLO_SECRET__...` reserved for the development provider and never permit production fallback to it.
 2. Construct actual PostgreSQL pools during production composition; the API must not treat database runtime intent or its current in-memory store as a production connection.
 3. Authenticate the runtime pool as `app_runtime` and the worker pool as `app_worker`, each with separate restricted credentials. Reserve the administrative identity for provisioning and migrations.
 4. Keep readiness false until the required secret, database, schema/role identity, and other mandatory runtime dependencies have been validated.

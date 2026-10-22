@@ -15,8 +15,12 @@ A current post-Stage-08 source review and action plan are recorded alongside thi
 - [Follow-up audit](follow-up/audit.md) — current source findings and evidence boundaries.
 - [Remediation plan](follow-up/remediation-plan.md) — dependency-ordered closure tasks and acceptance criteria.
 - [Continuation guide](follow-up/guide.md) — practical implementation, verification, and reviewer handoff.
+- [Decision proposals index](follow-up/decisions/README.md) — proposed choices and owner-approval gates.
+- [Relay and consumer contract proposal](follow-up/decisions/relay-delivery-contract-proposal.md)
+- [IAM lifecycle event-mapping proposal](follow-up/decisions/iam-lifecycle-event-mapping-proposal.md)
+- [Identity, production runtime and secret-provider proposal](follow-up/decisions/identity-production-runtime-proposal.md)
 
-This follow-up review is not human approval. PR #49 remains open and unmerged until the implementation gaps have an approved disposition and a human reviewer completes the merge decision.
+This follow-up review and the new decision records are not owner approvals. The AWS relay/identity/secrets baseline and lifecycle mappings are proposals pending accountable-owner acceptance. PR #49 remains open and unmerged until decisions are accepted or replaced, implementation gaps are closed, and a human reviewer completes the merge decision.
 
 ## Summary
 
