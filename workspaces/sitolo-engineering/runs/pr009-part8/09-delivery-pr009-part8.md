@@ -1,10 +1,11 @@
 # Stage 09 Delivery — PR-009 Part 8
 
 **Date:** 2026-10-22\
-**Delivery head (code):** `52c7392bca56b4fd6b1c90b52e57cec52b651cd3`\
+**Delivery head (code):** `e49de425b74c0095fee0737612ae40dbc50c770a`\
+**Environment/docs head:** `144a28432e67622de53eb7a45f5e2bf8375927b5` (this delivery record is a later documentation-only commit)\
 **Verified predecessor:** `862775c5412b4928df3dfac93580cf8b1863aae1` (stage 08 evidence)\
-**Head semantics:** the code head is the most recent commit that changes code. This handoff and any later commits are documentation-only; compare code evidence against `52c7392`, not against the PR tip.\
-**Disposition:** Review-ready, not merge-ready. Exact-head CI is green at `52c7392` (tip `5653591`), F-01 and F-02 are closed, but the stage 08 release blockers and human review remain.\
+**Head semantics:** the code head is the most recent commit that changes code. Later commits in this handoff are documentation-only; compare code evidence against `e49de42`, not against the PR tip.\
+**Disposition:** Review-ready, not merge-ready. Exact-head CI is green at `144a284` (code `e49de42`), the release workflow branch dispatch passed both jobs, F-01 and F-02 remain closed, and the additional follow-up P1 findings are closed. The stage 08 release blockers and human review remain.\
 **Human check:** Not performed. A human owns the review and merge decision.
 
 ## Summary
@@ -18,6 +19,13 @@ The first attempt scoped the rule to exclude `tests/`, which turned the gate gre
 A static review then found that the runtime pool did not authenticate as its restricted role: it logged in with the administrator and ran `SET ROLE app_runtime`, which any session can reverse. `c090809` removes that mechanism. The runtime and worker pools now authenticate directly as the `app_runtime` and `app_worker` LOGIN roles, `verify_runtime_role` asserts `current_user` and `session_user`, and a new negative test proves `RESET ROLE` is a no-op and `SET ROLE postgres` is denied. `67315a4` updates the one test that still asserted the old `NOLOGIN` role shape.
 
 A second review found that the RLS verifier was bound to the Part 7 fixture while its name claimed general coverage: it required `tenant_resources` and one `{table}_isolation_policy` per table, neither of which the Part 8 production DDL creates. `3056da6` separates the two proofs. The Part 7 verifier is explicitly bound to `tests/fixtures/rls_schema.sql`; a new Part 8 verifier checks the three production tables, the two operation-specific policies per table, and the SELECT + INSERT grant decision. `7d892eb` adds violation diagnostics after the first CI run failed on an unstated policy name, and `52c7392` binds the verifier to the DDL's actual `memberships_provision_*` names. The production DDL itself changes only in its header comment; no table, policy, or grant is added to satisfy a verifier.
+
+A third follow-up review found four additional P1 gaps, all closed in this handoff:
+
+- **Secret/config namespace collision.** The development secret value used `SITOLO__DATABASE__PASSWORD`, the same prefix as the canonical configuration contract. The configuration loader correctly rejects unknown `SITOLO__` keys, so the secret value could not coexist with that contract. `e49de42` moves every development secret value to the disjoint `SITOLO_SECRET__` namespace (`SITOLO_SECRET__DATABASE__PASSWORD` and the other class names). Unknown `SITOLO__` keys still fail closed, production still rejects the development provider, and process-environment tests cover both the config layer and the full API bootstrap.
+- **Part 8 verifier accepted tenant-blind predicates.** The F-02 fix bound the verifier to the DDL but retained substring helpers: `id IS NOT NULL` satisfied the SELECT helper, and `id <> ''` satisfied the INSERT helper. `e49de42` replaces those helpers with exact per-table, per-operation canonical predicates after renderer-only normalization. Two new PostgreSQL negative tests prove the verifier rejects those previously accepted policies for all three tables.
+- **Release job had no database environment.** `build_release_artifact` ran `cargo test --workspace` without a PostgreSQL service or the three scoped DSNs. GitHub Actions jobs do not share service containers or step environments, so that step would abort before packaging. `e49de42` gives the release job its own PostgreSQL service and job-level `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`, and makes the release `verify` job install the tools the canonical verifier requires.
+- **No environment reference.** `144a284` adds `.env.example`, `.env.test.example`, and `docs/environment-configuration-reference.md`. They are derived from the typed configuration contract and document process-environment injection. No dotenv dependency or automatic loader is added.
 
 Two smaller changes close the dependency surface: unused license allowances are removed, and no advisory is suppressed or ignored.
 
@@ -42,6 +50,15 @@ No production runtime composition, relay transport, or authenticated API authori
 
 `299d96b` and `ea3ece2` (docs only) sit between the verified predecessor and this increment and change no code. `e0a146d`, `c11ca45`, and `5653591` are System Map re-pins for `3056da6`, `7d892eb`, and `52c7392`; they change no code either.
 
+### Follow-up increment (`7fc6d86..144a284`)
+
+| Commit | Change | Why | Files |
+|---|---|---|---|
+| `e49de42` | Separate secret values from configuration; harden the Part 8 verifier; repair the release workflow | The development provider read a value under `SITOLO__`, which the canonical loader rejects as unknown configuration. The Part 8 verifier still used substring helpers that accepted tenant-blind expressions. The release job had no PostgreSQL service or DSNs, and the release verify job did not install ripgrep, cargo-deny, or cargo-audit. | 13 files, +647/−41 |
+| `144a284` | Add environment examples and reference; update the runtime and Phase 2 docs; re-pin the PostgreSQL authority map | The environment contract had no maintainable reference, and the secret namespace change needed to be documented together with the code. The map source moved to `e49de42`. | 8 files, +281/−11 |
+
+The code head is `e49de42`; `144a284` changes documentation, examples, and the System Map pin only. This delivery record also changes documentation only.
+
 ### Inherited from the verified predecessor
 
 The audit/outbox implementation, PostgreSQL tenancy provisioning transaction, RLS suites, worker outbox engine, and the SQLx dependency remediation are delivered as verified at `862775c` and recorded in `08-verification-pr009-part8.md`. This handoff does not re-summarize them.
@@ -60,54 +77,80 @@ The alias rule is not relaxed by this delivery. An earlier attempt scoped the ru
 
 ## Verification evidence
 
-### Exact-head CI at `5653591` (code at `52c7392`) — 10/10 checks pass
+### Exact-head CI at `144a284` (code at `e49de42`) — 10/10 checks pass
 
 | Check | Workflow | Result | Link |
 |---|---|---|---|
-| `verify` | rust | PASS, 2m0s | job 119564433986 |
-| `toolchain` | rust | PASS, 17s | job 119564433733 |
-| `application and contract tests with PostgreSQL` | integration | PASS, 1m5s | job 119564433761 |
-| `advisories` | security | PASS, 20s | job 119564433917 |
-| `dependency-policy` | security | PASS, 21s | job 119564434039 |
-| `secrets` | security | PASS, 6s | job 119564434170 |
-| `codeql` | security | PASS, 3m56s | job 119564434012 |
-| `offensive-regression` | security | PASS, 1m27s | job 119564433717 |
-| `policy` | policy | PASS, 12s | job 119564433680 |
-| `CodeQL` | code scanning | PASS, 2s | run 119565686727 |
+| `verify` | rust | PASS, 2m12s | [job 119578784192](https://github.com/jelome265/sitolo/actions/runs/39703748028/job/119578784192) |
+| `toolchain` | rust | PASS, 26s | [job 119578783698](https://github.com/jelome265/sitolo/actions/runs/39703748028/job/119578783698) |
+| `application and contract tests with PostgreSQL` | integration | PASS, 1m22s | [job 119578784150](https://github.com/jelome265/sitolo/actions/runs/39703748021/job/119578784150) |
+| `advisories` | security | PASS, 32s | [job 119578784924](https://github.com/jelome265/sitolo/actions/runs/39703748184/job/119578784924) |
+| `dependency-policy` | security | PASS, 31s | [job 119578784913](https://github.com/jelome265/sitolo/actions/runs/39703748184/job/119578784913) |
+| `secrets` | security | PASS, 9s | [job 119578784737](https://github.com/jelome265/sitolo/actions/runs/39703748184/job/119578784737) |
+| `codeql` | security | PASS, 2m51s | [job 119578785013](https://github.com/jelome265/sitolo/actions/runs/39703748184/job/119578785013) |
+| `offensive-regression` | security | PASS, 1m25s | [job 119578784862](https://github.com/jelome265/sitolo/actions/runs/39703748184/job/119578784862) |
+| `policy` | policy | PASS, 19s | [job 119578783627](https://github.com/jelome265/sitolo/actions/runs/39703748023/job/119578783627) |
+| `CodeQL` | code scanning | PASS, 2s | [run 119579670814](https://github.com/jelome265/sitolo/runs/119579670814) |
 
-The tip is `5653591` (a System Map re-pin); the last code change is `52c7392`, and every check above ran on the same tree.
+The evidence tip is `144a284` (environment/docs and the System Map re-pin); the last code change is `e49de42`, and every check above ran on the same tree. This delivery record is a later documentation-only commit; the final PR tip is covered by the same check set in PR #49.
 
-The `verify` job log is the load-bearing evidence. For the policy gap it contains `==> Architecture check` / `Architecture check PASSED` and `==> Phase 2 policy check` / `Phase 2 policy check PASSED`, and contains no `command not found` occurrence anywhere in the job, so both gates executed real searches. For F-01 it runs the Part 8 PostgreSQL suite at **23 passed** and the dedicated RLS suite **twice at 28 passed each**, including `test_runtime_pool_identity_cannot_escalate ... ok`; the second RLS run is the standalone `==> PostgreSQL RLS Security Suite` step after the workspace tests. For F-02 the application evidence suite passes **5 tests**, each of which applies `phase4_part8_tenancy_provisioning.sql` and then calls `verify_part8_provisioning_rls_metadata`; the job contains no `Part 8 RLS contract violation` occurrence. The `integration` job passed the same five application tests separately.
+The `verify` job log is the load-bearing evidence for this increment:
 
-### Local verification at `52c7392` (Windows host, ripgrep 15.2.0)
+- The full API bootstrap suite passes **2 tests**: `process_environment_config_and_secret_coexist ... ok` and `unknown_configuration_key_still_fails_closed ... ok`.
+- The configuration-layer process-environment suite passes **2 tests**: `configuration_and_secret_value_namespaces_coexist ... ok` and `unknown_configuration_key_still_fails_closed ... ok`.
+- The Part 8 application evidence suite passes **7 tests**, including `part8_verifier_rejects_select_policies_without_tenant_context ... ok` and `part8_verifier_rejects_insert_policies_without_tenant_context ... ok`.
+- The Part 8 PostgreSQL suite passes **23 tests**, and the dedicated RLS suite passes **28 tests**.
+- The log contains `Architecture check PASSED` and `Phase 2 policy check PASSED`, so both policy gates executed real searches.
+
+The `integration` job independently passes the same Part 8 suite at **7 tests**, including both negative verifier tests. The `policy` job contains `Release workflow check PASSED: verify installs its tools; build_release_artifact has PostgreSQL and scoped DSNs`, `Workflow policy check PASSED`, the System Map source check, and the documentation-reference check (213 Markdown files, 985 resolved references, 0 unresolved/ambiguous/escaping errors).
+
+### Release workflow dispatch
+
+`gh workflow run artifact.yml --ref feat/phase4-pr009-audit-outbox` dispatched [run 39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077) at `144a284`. It passed both jobs:
+
+| Job | Result | Link |
+|---|---|---|
+| `verify` | PASS, 5m35s | [job 119579422265](https://github.com/jelome265/sitolo/actions/runs/39703940077/job/119579422265) |
+| `build_release_artifact` | PASS, 2m13s | [job 119581205259](https://github.com/jelome265/sitolo/actions/runs/39703940077/job/119581205259) |
+
+The branch run skipped `Create release record before SBOM publication` as designed. It ran the exact-source build, applied the production DDL in the release job's own PostgreSQL service, ran the workspace tests (Part 8 evidence **7 passed**, Part 8 PostgreSQL **23 passed**, RLS **28 passed**), packaged the artifact, generated an SPDX SBOM, attested provenance, and retained the artifact. This is the execution check for the release path that the policy job validates structurally; it is a branch dispatch, not a tagged production release. The release-record and publication steps remain part of a tagged release.
+
+### Local verification at `e49de42` (Windows host, ripgrep 15.2.0)
 
 | Command | Result |
 |---|---|
 | `cargo fmt --all -- --check` | PASS |
 | `cargo check --workspace --all-targets --all-features --locked` | PASS, exit 0 |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS, exit 0 |
+| `cargo test -p sitolo-config -p sitolo-security --all-targets --all-features --locked` | PASS (20 config unit tests, 2 process-environment config tests, security provider tests) |
+| `cargo test -p sitolo-persistence --lib --all-features --locked` | PASS (35 unit tests, including the policy-normalization tests) |
+| `cargo test -p sitolo-api-bin --test startup_env --all-features --locked` | PASS (2 full-bootstrap tests) |
 | `check-architecture` (bash, forward-slash shim) | PASS |
 | `check-phase2-policy` (bash, forward-slash shim) | PASS |
 | `check-phase2-policy.ps1` | PASS |
+| `check-workflow-policy` (includes the release-workflow check) | PASS |
+| `check-release-workflow` | PASS |
 | `check-icm-workspace` (bash) | PASS |
+| `check-doc-references` | PASS (213 Markdown files, 986 resolved references, 0 errors) |
 | Alias scan with **no exclusion** | 0 matches |
 
 The temporary `rg` binary on this host had been purged between runs. Because the bash scripts wrap every scan in `|| true`, they printed PASS while the binary was missing. Restoring ripgrep 15.2.0 and placing the forward-slash path shim first in `PATH` produced genuine searches and the PASS results above. This is a host artefact, not a repository state; the CI runner installs ripgrep explicitly.
 
-`cargo metadata --locked`, `cargo deny check`, `cargo test`, and `cargo audit` were last run locally at `e66c73a`. No manifest and no lockfile changed between `e66c73a` and `52c7392`, and `cargo check --locked` passes at the new head; the `dependency-policy`, `advisories`, and `integration` jobs cover the rest at exact head.
+`cargo metadata --locked`, `cargo deny check`, and `cargo audit` were last run locally at `e66c73a`. No manifest and no lockfile changed between `e66c73a` and `e49de42`; `cargo check --locked` passes at the new head, and the `dependency-policy`, `advisories`, and `integration` jobs cover those tools at exact head.
 
 ### Not run locally, and why
 
-- **`cargo test` at `52c7392`:** not re-run locally. The workspace and application suites are covered by the exact-head `verify` and `integration` jobs above.
-- **PostgreSQL execution:** NOT RUN locally. No server, `psql`, container runtime, or database URLs exist on this host. PostgreSQL evidence comes exclusively from the exact-head CI jobs. That includes the direct-login identity proof and the Part 8 verifier against the production DDL, both of which only a live server can execute.
-- **`cargo audit` at `52c7392`:** not run locally (not installed). The `advisories` job covers it at exact head.
+- **`cargo test` at `e49de42`:** not run as one workspace command locally. The non-PostgreSQL config, security, persistence, and API bootstrap suites were run individually; the full workspace suite is covered by the exact-head `verify` job above.
+- **PostgreSQL execution:** NOT RUN locally. No server, `psql`, container runtime, or database URLs exist on this host. PostgreSQL evidence comes exclusively from the exact-head `integration` and `verify` jobs. That includes the direct-login identity proof, the Part 8 verifier against the production DDL, and both negative verifier tests.
+- **`cargo audit` at `e49de42`:** not run locally (not installed). The `advisories` job covers it at exact head.
+- **Release workflow execution:** the workflow was dispatched on GitHub at `144a284`; both jobs passed, but it cannot be executed locally.
 - **`scripts/ci/verify` end to end:** not executed as one command locally, because it requires `cargo-audit` and a Linux shell. Its constituent checks were run individually as listed.
 
 ## Audit status
 
 All stage 06 findings remain closed as recorded in `07-remediation-pr009-part8.md` and re-verified in `08-verification-pr009-part8.md`.
 
-**Scope gap, stated plainly:** the commits in this increment were produced after stage 08 verification and were **not** re-audited at stage 06. Stage 08's evidence is pinned to `862775c`; this handoff delivers `52c7392`. The increment is covered by exact-head CI and the post-hoc static reviews below, not by a stage 06 re-audit. A human may require one before merge; that is a human-controlled decision, not an automatic dependency.
+**Scope gap, stated plainly:** the commits in this increment were produced after stage 08 verification and were **not** re-audited at stage 06. Stage 08's evidence is pinned to `862775c`; this handoff delivers `e49de42`. The increment is covered by exact-head CI and the post-hoc static reviews below, not by a stage 06 re-audit. A human may require one before merge; that is a human-controlled decision, not an automatic dependency. The follow-up increment was likewise reviewed after the fact, not at stage 06.
 
 ### Static audits received after stage 08
 
@@ -118,7 +161,16 @@ Two independent static reviews of `e66c73a` were received after this increment w
 | F-04 / AUD-CFG-002 — the alias ban exempted all `tests/` paths | **Closed by `891c273`.** The exemption and the aliases it permitted are both gone; both scripts are byte-identical to `main`. |
 | F-01 / AUD-SEC-001 — runtime privilege drop via `SET ROLE` is not a boundary | **Closed by `c090809`.** The runtime and worker pools authenticate as their own LOGIN roles; `verify_runtime_role` asserts `current_user` and `session_user`; `test_runtime_pool_identity_cannot_escalate` proves `RESET ROLE` is a no-op and `SET ROLE postgres` is denied. `67315a4` updates the obsolete NOLOGIN assertion. PostgreSQL CI passes at `52c7392`. |
 | F-02 / AUD-SEC-002 — the production Part 8 DDL contradicts the RLS verifier | **Closed at `3056da6`, corrected in `52c7392`.** The Part 7 verifier is explicitly bound to `tests/fixtures/rls_schema.sql`; a new Part 8 verifier checks the production DDL's three tables, two operation-specific policies per table, INSERT → `WITH CHECK` only, SELECT → `USING` only, `app_runtime` only, and SELECT + INSERT grants only. The application evidence test applies the production DDL and runs the verifier; PostgreSQL CI passes at `52c7392` with no `Part 8 RLS contract violation`. The DDL header is corrected; no table, policy, or grant was added to satisfy a verifier. |
-| F-09 — the `deny.toml` license narrowing may break the gate | **Closed empirically.** `cargo deny check` passes at `e66c73a`; the `dependency-policy` job passes at `52c7392`. |
+| F-09 — the `deny.toml` license narrowing may break the gate | **Closed empirically.** `cargo deny check` passes at `e66c73a`; the `dependency-policy` job passes at `e49de42`. |
+
+The follow-up review added four P1 findings. None was a P0. One closes a residual weakness in the F-02 verifier without reopening the DDL/verifier divergence finding; the others are independent:
+
+| Follow-up finding | Status |
+|---|---|
+| Secret values lived under the configuration prefix, so the config loader rejected them as unknown keys | **Closed by `e49de42`.** Development secret values use `SITOLO_SECRET__...`; ordinary configuration remains `SITOLO__...`; unknown keys still fail; the production provider guard is unchanged. Process-environment and full-bootstrap tests cover the boundary. |
+| Part 8 verifier substring helpers accepted tenant-blind expressions | **Closed by `e49de42`.** The verifier compares exact per-table, per-operation canonical predicates after renderer-only normalization. Negative PostgreSQL tests now prove that `id IS NOT NULL` SELECT and `id <> ''` INSERT policies fail for all three tables. This closes the residual weakness in the F-02 fix; the DDL and policy set are unchanged. |
+| `build_release_artifact` had no PostgreSQL service or DSNs, and the release `verify` job did not install the verifier's tools | **Closed by `e49de42`.** Both jobs now have a PostgreSQL service; the release job has all three scoped DSNs; the release verify job installs ripgrep, cargo-deny, and cargo-audit. `check-release-workflow` enforces the structure in the policy job, and branch dispatch 39703940077 passed both jobs. |
+| No environment examples or reference existed for the typed configuration contract | **Closed by `144a284`.** `.env.example`, `.env.test.example`, and `docs/environment-configuration-reference.md` document process-environment injection; no loader or dotenv dependency is added. |
 
 The security-control positions recorded in stage 08 are unchanged for the tenancy, audit, and worker behaviour. This increment changes the database connection identity and the RLS verification boundary, which the evidence above now covers:
 
@@ -134,8 +186,11 @@ The security-control positions recorded in stage 08 are unchanged for the tenanc
 
 - **Schema:** no migration. `crates/sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql` keeps the same tables, policies, and grants; only its header comment is corrected to state the SELECT + INSERT decision. The new Part 8 verifier binds to that file.
 - **Runtime:** the runtime pool no longer issues `SET ROLE`. `RUNTIME_DATABASE_URL` must authenticate as `app_runtime` and `WORKER_DATABASE_URL` as `app_worker`, each with its own credentials. Deployment must provision both as LOGIN with `NOINHERIT`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`, and reserve the administrative identity for provisioning and migration. This is a breaking configuration change for any environment that still supplies the administrator DSN for the runtime pool; `verify_runtime_role` fails closed rather than falling back.
-- **Tests:** the three PostgreSQL harnesses now require `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`, and the fixture creates the client roles as LOGIN before the pools connect. The application evidence test applies the production DDL and calls `verify_part8_provisioning_rls_metadata` immediately afterwards, so every PostgreSQL run checks the Part 8 contract against the file it applies. `rust.yml`, `integration.yml`, and `artifact.yml` export the split DSNs; `artifact.yml` also gains the worker DSN it was missing.
-- **CI:** the `rust` `verify` job installs `ripgrep` via `apt-get`, adding roughly ten seconds and a package dependency to that runner image. If the Ubuntu image ever ships `ripgrep` preinstalled, the step becomes redundant but harmless.
+- **Tests:** the three PostgreSQL harnesses now require `ADMIN_DATABASE_URL`, `RUNTIME_DATABASE_URL`, and `WORKER_DATABASE_URL`, and the fixture creates the client roles as LOGIN before the pools connect. The application evidence test applies the production DDL and calls `verify_part8_provisioning_rls_metadata` immediately afterwards, so every PostgreSQL run checks the Part 8 contract against the file it applies. `rust.yml`, `integration.yml`, and `artifact.yml` export the split DSNs.
+- **Release workflow:** `artifact.yml` now gives both `verify` and `build_release_artifact` their own PostgreSQL service and scoped DSNs. Jobs do not share service containers or step environments, so the release job cannot inherit the verification job's database. The release `verify` job installs `ripgrep`, `cargo-deny`, and `cargo-audit`; `scripts/ci/check-release-workflow` enforces the wiring in the policy job. Branch dispatch 39703940077 passed both jobs.
+- **Local secret input:** rename any local `SITOLO__DATABASE__PASSWORD` to `SITOLO_SECRET__DATABASE__PASSWORD`. The old key is now rejected as unknown configuration; the new key is read only by the development provider. `.env.example` documents a placeholder, and no automatic `.env` loader is added.
+- **Environment reference:** `.env.example` covers the canonical application keys and the development secret placeholder; `.env.test.example` covers the three PostgreSQL harness DSNs. `docs/environment-configuration-reference.md` states that values are injected through the process environment, not loaded from a file.
+- **CI:** the `rust` and release `verify` jobs install `ripgrep` via `apt-get`, adding roughly ten seconds and a package dependency to those runner images. If the Ubuntu image ever ships `ripgrep` preinstalled, the step becomes redundant but harmless.
 - **Policy:** `deny.toml` now rejects ISC- and MPL-2.0-licensed dependencies. No current dependency requires them.
 
 ## Known limitations
@@ -147,8 +202,9 @@ The security-control positions recorded in stage 08 are unchanged for the tenanc
    - the live HTTP command path still lacks authenticated principal-derived owner/actor authority;
    - no real destination adapter or production worker runtime exists.
 4. **This increment was not re-audited** at stage 06, as stated above.
-5. **The release-artifact test step has no database environment.** `build_release_artifact` in `artifact.yml` runs `cargo test --workspace --all-targets --all-features --locked` without a PostgreSQL service or the three DSNs. The Part 8 harnesses are fail-closed by design, so that step would abort before the release is packaged. This is pre-existing and dormant — the workflow runs on tags and manual dispatch — and was not changed here because fixing it requires a release-pipeline composition decision rather than a test edit.
-6. **No production readiness, certification, or complete validation is claimed.** The evidence proves the listed checks at the listed heads and nothing more.
+5. **The release path has a successful branch-dispatch proof, not a tagged release.** `artifact.yml` was dispatched at `144a284`; both jobs passed (5m35s and 2m13s), including the exact-source test step in the release job's own PostgreSQL service. A tagged release would still execute the release-record and publication steps. The static `check-release-workflow` check is structural; the dispatch is the execution evidence.
+6. **Development secret values are process-environment values, not a production secret store.** `SITOLO_SECRET__...` is read only by the development provider. Production still rejects that provider and has no managed adapter, so production startup fails closed rather than reading these values.
+7. **No production readiness, certification, or complete validation is claimed.** The evidence proves the listed checks at the listed heads and nothing more.
 
 ## Rollback or disable considerations
 
@@ -166,11 +222,13 @@ No data migration is required. Every change is CI, policy, map, test, connection
 | `3056da6` | Restores the single verifier bound to the Part 7 fixture | Not recommended: reintroduces F-02, and the Part 8 DDL would again have no verifier |
 | `7d892eb` | Restores the bare `SecurityViolation` error | Diagnostics only; behaviour is unchanged |
 | `52c7392` | Restores the `{table}_provision_*` name assumption | The verifier would reject the DDL's `memberships_provision_*` policies; do not revert alone |
+| `e49de42` | Restores secret values under `SITOLO__`, the substring verifier, and a release job without PostgreSQL | Not recommended: reopens all four follow-up P1 findings |
+| `144a284` | Removes the environment examples/reference and reverts the System Map pin | Not recommended alone: loses the environment contract and breaks `check-icm-workspace` |
 
-`891c273` supersedes `e66c73a`. Reverting only `891c273` would restore both the exemption and the aliases, which is the opposite of what both reviews recommended. `c090809` is the F-01 fix; do not revert it without replacing the authority mechanism and the identity assertions together. `3056da6` is the F-02 fix and `52c7392` corrects its policy-name binding; revert them together only if replacing the Part 8 verifier.
+`891c273` supersedes `e66c73a`. Reverting only `891c273` would restore both the exemption and the aliases, which is the opposite of what both reviews recommended. `c090809` is the F-01 fix; do not revert it without replacing the authority mechanism and the identity assertions together. `3056da6` is the F-02 fix and `52c7392` corrects its policy-name binding; revert them together only if replacing the Part 8 verifier. `e49de42` is the follow-up fix for the four P1 findings; it must not be reverted together with `144a284`, which only documents the new contract and re-pins the map.
 
 ## Integration decision
 
-PR #49 is `OPEN`, `MERGEABLE`, and `BLOCKED` on `REVIEW_REQUIRED` at `5653591` (code head `52c7392`).
+PR #49 is `OPEN` and `BLOCKED` on `REVIEW_REQUIRED`; its code head is `e49de42` and its environment/docs head is `144a284`. This delivery record is a later documentation-only commit.
 
-Stage 09 completion does not authorize merge. The blocking items are human review, the three unresolved release blockers above, the P1 items (authenticated API authority and the relay contract), and the absence of a stage 06 re-audit for this increment. No P0 static-audit finding remains open: F-01 and F-02 are closed. Merge remains a human decision.
+Stage 09 completion does not authorize merge. The blocking items are human review, the three stage 08 release blockers above (the relay destination/contract, authenticated API authority, and production composition), and the absence of a stage 06 re-audit for this increment. The release-artifact database gap is closed, and branch dispatch 39703940077 passed both jobs. No P0 static-audit finding remains open: F-01 and F-02 remain closed, and the four follow-up P1 findings are closed. Merge remains a human decision.
