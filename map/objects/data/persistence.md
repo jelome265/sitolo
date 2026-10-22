@@ -3,7 +3,7 @@ type: object
 status: verified
 universe: live
 cluster: data
-source_revision: feat/phase4-pr009-audit-outbox@bd2f60a5a2c24041905c1fe1555278094f059264
+source_revision: feat/phase4-pr009-audit-outbox@8d7185b8189868c3b1a41d2abdd5b86bcdb22466
 source: crates/sitolo-persistence/src/postgres.rs
 source_citation: crates/sitolo-persistence/src/postgres.rs:45-77
 ---
@@ -16,7 +16,7 @@ Persistence is the durable authority boundary where transactional business truth
 
 ## Shape
 
-Primary implementation: `crates/sitolo-persistence`. PostgreSQL authority/runtime primitives exist; the complete Phase 5 business schema remains phase-gated.
+Primary implementation: `crates/sitolo-persistence`. PostgreSQL authority/runtime primitives and the Part 8 tenant-scoped organization, membership, invitation, and role-assignment schema exist. The complete Phase 5 business schema remains phase-gated. Application role-assignment writes couple PostgreSQL state with mandatory audit and outbox evidence in one transaction.
 
 ## Connected to
 

@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@5bc5d4cbdfa2bac73b1f0236d1183d14ee1bba7a
+source_revision: feat/phase4-pr009-audit-outbox@8d7185b8189868c3b1a41d2abdd5b86bcdb22466
 source: crates/sitolo-persistence/src/postgres.rs
 source_citation: crates/sitolo-persistence/src/postgres.rs:45-76
 ---
@@ -43,7 +43,7 @@ Business transaction semantics inside later repository/application operations.
 
 ## Verification
 
-Verified against the current PostgreSQL authority implementation. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. This movement does not claim that the complete business mutation/outbox flow is production-wired.
+Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier also checks forced tenant RLS and least-privilege grants for role assignments. This movement does not claim that the complete business mutation/outbox flow is production-wired.
 
 ## See
 
