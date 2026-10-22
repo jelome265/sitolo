@@ -1,13 +1,17 @@
 # Proposed IAM Lifecycle Event Mapping
 
-**Status:** **PROPOSED — NOT APPROVED**  
+**Status:** **OWNER-APPROVED — 2026-10-22**  
 **Binding catalogue:** `docs/phase4_part8_audit_outbox_implementation_contract.md` §6.2 and `crates/sitolo-audit/src/iam_event.rs`.
 
-## Decision
+## Approval record
+
+**Approval record — 2026-10-22:** the repository owner explicitly instructed that the decision in this record be labelled owner-approved. This records repository-owner approval of the proposal as written. It does not claim separate signatures from distinct platform, security or domain role holders unless those roles are delegated to the repository owner.
+
+## Approved decision
 
 Treat all five undocumented state-changing paths as mandatory durable audit evidence and paired outbox intent. Add distinct event names instead of reusing `MembershipInvited`, `MembershipActivated` or an event with different semantics. Each new event starts at schema version **1**.
 
-This proposal does not add code variants, change the binding contract or close the findings by itself.
+The mapping decision is approved, but the binding contract and source registry have not yet been changed. Approval alone does not close the implementation findings.
 
 ## Mapping matrix
 
@@ -52,4 +56,4 @@ The top-level organization scope is mandatory. Consumers must not treat an event
 6. Test concurrent sweeps, invitation accept/revoke/expiry races, duplicate commands, cross-tenant calls, audit failure and outbox failure.
 7. Register every accepted variant in `IamEventName::ALL`, `as_str()`, catalogue/schema checks and destination compatibility tests.
 
-**Owner decision required:** approve these five event names, v1 payloads and system-actor conventions, or replace a row with an explicit exclusion and reason. Until then, AUD-03/AUD-04 remain open. Update the binding contract before modifying the enum/source. See [the audit](../audit.md).
+**Implementation required:** update the binding contract, event enum, payload schema and tests to this approved mapping before wiring these transitions. If implementation exposes a genuine incompatibility, record a scoped decision amendment rather than silently changing names or meanings. AUD-03/AUD-04 remain open until implementation and proof pass. See [the audit](../audit.md).

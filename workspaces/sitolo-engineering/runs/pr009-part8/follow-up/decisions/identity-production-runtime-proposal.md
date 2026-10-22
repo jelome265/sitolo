@@ -1,9 +1,13 @@
 # Proposed Identity, Production Runtime and Secret Provider
 
-**Status:** **PROPOSED — NOT APPROVED**  
+**Status:** **OWNER-APPROVED — 2026-10-22**  
 **Governing sources:** [Phase 3 identity/session specification](../../../../../../docs/phase3_identity_sessions_mfa_device_identity_implementation.md) and [Phase 2 configuration/secrets specification](../../../../../../docs/phase2_config_secrets_logging_errors_telemetry_implementation.md).
 
-## 1. Concrete baseline proposal
+## Approval record
+
+**Approval record — 2026-10-22:** the repository owner explicitly instructed that the decision in this record be labelled owner-approved. This records repository-owner approval of the proposal as written. It does not claim separate signatures from distinct platform, security or domain role holders unless those roles are delegated to the repository owner.
+
+## 1. Approved baseline
 
 | Capability | Proposed choice |
 |---|---|
@@ -85,4 +89,4 @@ Current `apps/api/src/state.rs` creates an in-memory tenancy store and bootstrap
 
 ## Approval
 
-This is an explicit baseline for review, not an approved choice. The accountable owner must accept it or replace it with another concrete provider/deployment record. If cost/ownership rejects AWS, keep the existing provider/adapter boundaries and choose one alternative deliberately; do not introduce a multi-cloud framework just to avoid the decision.
+This baseline is owner-approved for implementation. If a concrete cost, availability, legal or account constraint makes a selected service unusable, pause that slice and record an amendment before substituting another provider; do not introduce a multi-cloud framework just to avoid a decision.

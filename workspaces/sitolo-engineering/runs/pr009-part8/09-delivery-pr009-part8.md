@@ -20,7 +20,7 @@ A current post-Stage-08 source review and action plan are recorded alongside thi
 - [IAM lifecycle event-mapping proposal](follow-up/decisions/iam-lifecycle-event-mapping-proposal.md)
 - [Identity, production runtime and secret-provider proposal](follow-up/decisions/identity-production-runtime-proposal.md)
 
-This follow-up review and the new decision records are not owner approvals. The AWS relay/identity/secrets baseline and lifecycle mappings are proposals pending accountable-owner acceptance. PR #49 remains open and unmerged until decisions are accepted or replaced, implementation gaps are closed, and a human reviewer completes the merge decision.
+The repository owner approved the AWS relay/identity/secrets baseline and lifecycle mappings on 2026-10-22. The goal is no longer blocked waiting for those three decisions; implementation, integration evidence, deployment safeguards, re-audit and human review remain outstanding. PR #49 remains open and unmerged.
 
 ## Summary
 
@@ -254,3 +254,18 @@ After this delivery snapshot, PR #49 advanced to documentation commit `bf6b7b04e
 The PR remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` for merge. The current successful checks do not close the independent follow-up findings AUD-01 through AUD-05 in [the follow-up audit](follow-up/audit.md). In particular, the reviewed code head remains `e49de42`; the newer commit changes documentation only. The owner-approved relay/consumer contract, server-derived API authority, complete transaction/event decisions, managed production secret provider, and their acceptance evidence remain outstanding.
 
 The earlier sentence in this record that says “the four follow-up P1 findings are closed” refers to the separate static-review increment summarized above; it does not refer to AUD-01 through AUD-05, which were raised by the later follow-up audit and remain open.
+
+
+## Owner-approval status update — 2026-10-22
+
+The repository owner explicitly instructed that the three decision records be labelled **OWNER-APPROVED** on this date. The approval scope is the proposals as written:
+
+- SNS FIFO topic → separate SQS FIFO queues for the main and sub-consumers, at-least-once delivery, durable consumer idempotency, per-aggregate ordering, explicit acknowledgements and bounded retry/quarantine.
+- Five lifecycle mappings: `iam.membership.pending_acceptance`, `iam.membership.expired`, `iam.invitation.issued`, `iam.invitation.withdrawn`, and per-invitation `iam.invitation.expired` for the scheduled sweep.
+- Cognito behind Sitolo's OIDC provider boundary; ECS Fargate, RDS PostgreSQL, and a restricted Secrets Manager-backed provider with separate workload roles.
+
+See [decision index](follow-up/decisions/README.md), [relay contract](follow-up/decisions/relay-delivery-contract-proposal.md), [event mappings](follow-up/decisions/iam-lifecycle-event-mapping-proposal.md), and [identity/runtime contract](follow-up/decisions/identity-production-runtime-proposal.md).
+
+**Current goal status:** the decision-selection blocker is **closed by repository-owner approval**. Engineering goal remains **BLOCKED on implementation and evidence**: real relay adapter and consumer integration tests; authenticated principal-derived API authority; atomic business/audit/outbox coverage for all mandatory IAM paths; event catalogue/schema updates; and production runtime/secret-provider composition. The docs do not authorize a production rollout or PR merge.
+
+Approval is attributed to the repository owner; no separate signatures from distinct platform, security or domain role holders are claimed unless those roles are delegated to the repository owner. PR #49 remains open and unmerged pending implementation, exact-head verification, re-audit, and human review.

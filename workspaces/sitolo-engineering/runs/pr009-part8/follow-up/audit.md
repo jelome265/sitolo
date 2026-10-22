@@ -12,6 +12,8 @@ This is a fresh follow-up review of the post-Stage-08 code state. The original S
 
 ## 1. Executive assessment
 
+The repository owner approved the three decision records on 2026-10-22: [relay/consumer contract](decisions/relay-delivery-contract-proposal.md), [lifecycle event mappings](decisions/iam-lifecycle-event-mapping-proposal.md), and [identity/production runtime](decisions/identity-production-runtime-proposal.md). This closes the decision-selection part of the previous goal blocker. The remaining findings are engineering, integration-test, deployment and review blockers.
+
 A concrete baseline for the three owner-decision gaps is now documented in the [decision proposal pack](decisions/README.md): SNS FIFO/SQS FIFO fan-out, five distinct v1 lifecycle mappings, and Cognito with ECS/RDS/Secrets Manager. These are proposals only. They do not represent cloud procurement, event-contract approval, or permission to enable production adapters.
 
 The follow-up fixes for database-role identity, the Part 8 RLS verifier, secret/config namespace separation, release-workflow database setup, environment references, and the SQLx advisory path are reported closed. The delivery record reports **10/10 PR checks passing at `d863bd2`** and a successful branch dispatch of the release workflow at `144a284` (run [39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077)).
@@ -41,12 +43,12 @@ The source of truth for detailed job IDs and the full evidence inventory is the 
 
 ## 4. Open findings
 
-### AUD-01 — Relay destination and delivery contract need owner approval
+### AUD-01 — Approved relay contract not yet implemented or verified
 
 **Severity:** P1 — release blocker  
 **Evidence:** `apps/worker/src/main.rs`; `apps/worker/src/relay.rs`; [binding Part 8 contract](../../../../../docs/phase4_part8_audit_outbox_implementation_contract.md).
 
-The worker library has a bounded claim/publish/transition loop, stale-claim recovery, event/version guards, retry backoff, quarantine, and stable event-ID handoff. The executable exits with status 78 until a destination adapter and configuration are approved. A concrete AWS SNS FIFO/SQS FIFO fan-out proposal now exists, but it is not owner-approved. Cloud adoption, destination, payload schema, acknowledgement/ordering semantics and operations ownership remain unaccepted until the accountable owner approves or replaces it. See [relay proposal](decisions/relay-delivery-contract-proposal.md).
+The worker library has a bounded claim/publish/transition loop, stale-claim recovery, event/version guards, retry backoff, quarantine, and stable event-ID handoff. The executable exits with status 78 until a destination adapter and configuration are approved. The repository owner approved the SNS FIFO topic → separate SQS FIFO queues for the main and sub-consumers, at-least-once delivery, durable consumer inbox, per-aggregate ordering, acknowledgement semantics, bounded retry/quarantine and ownership requirements. See the [approved relay record](decisions/relay-delivery-contract-proposal.md). The concrete adapter, infrastructure, IAM policies and end-to-end delivery proof are not implemented; the worker correctly remains fail-closed. This is an implementation/release blocker, not a missing decision.
 
 The outbox pattern permits duplicate publication around failure windows; a stable event ID in the producer is not proof that a real consumer deduplicates its business effect. The external transactional-outbox guidance explicitly calls for idempotent consumers and says not to publish an event for a rolled-back transaction. See [AWS transactional outbox guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html).
 
@@ -74,7 +76,7 @@ That proof is path-specific. Other methods such as branch creation, membership c
 
 **Required closure:** move every in-scope durable IAM mutation onto an application-owned PostgreSQL transaction that includes the business write and both required evidence writes, or record an explicit contract-approved exclusion. Add fault-injection proof for each operation family that shows a failed audit or outbox insert leaves no business mutation. Do not claim universal Part 8 atomicity based on the organization-provisioning test alone.
 
-### AUD-04 — Several IAM lifecycle transitions lack approved canonical audit-event mappings
+### AUD-04 — Approved lifecycle event mappings not yet wired into the contract and code
 
 **Severity:** P1 until disposition is contract-approved  
 **Evidence:** comments and method bodies in `crates/sitolo-application/src/tenancy.rs`; event catalogue in `crates/sitolo-audit/src/iam_event.rs`; binding Part 8 contract.
@@ -88,7 +90,7 @@ The service explicitly documents transitions not wired to evidence because the c
 **Severity:** P1 — production release blocker  
 **Evidence:** `apps/api/src/bootstrap.rs`; `apps/api/src/state.rs`; `apps/worker/src/main.rs`; [environment configuration reference](../../../../../docs/environment-configuration-reference.md).
 
-The bootstrap code has no managed production secret provider and rejects production startup rather than falling back to the development provider. The application state currently builds an in-memory tenancy store; it records database runtime intent but does not compose the production PostgreSQL runtime for the API. The worker executable also refuses to start without its approved adapter. A Cognito + ECS Fargate + RDS PostgreSQL + Secrets Manager baseline is now documented as a proposal, not an accepted platform decision. See [identity/runtime proposal](decisions/identity-production-runtime-proposal.md). The environment reference correctly warns that example files are not production deployment manifests.
+The bootstrap code has no managed production secret provider and rejects production startup rather than falling back to the development provider. The application state currently builds an in-memory tenancy store; it records database runtime intent but does not compose the production PostgreSQL runtime for the API. The worker executable also refuses to start without its approved adapter. The repository owner approved Cognito/OIDC, ECS Fargate services, RDS PostgreSQL and a narrow Secrets Manager provider with workload IAM roles, subject to regional/service compatibility, account setup and operational safeguards. See [identity/runtime proposal](decisions/identity-production-runtime-proposal.md). The environment reference correctly warns that example files are not production deployment manifests.
 
 **Required closure:** approve and implement the managed secret-provider contract, compose real database pools with the restricted runtime and worker LOGIN identities, keep the administrative identity limited to provisioning/migration, and make readiness contingent on the actual required dependencies. Production startup tests must prove that missing provider/credentials, the wrong database identity, or a missing relay adapter fails closed. Do not remove these guards to make a smoke test pass.
 
@@ -105,6 +107,8 @@ The bootstrap code has no managed production secret provider and rejects product
 | Release workflow wiring | **PASS for recorded branch dispatch** | PostgreSQL services, scoped DSNs, verifier tools, exact-source tests, artifact/SBOM/provenance steps are recorded as passing at run 39703940077. |
 
 ## 6. Decision and exit criteria
+
+The repository owner's instruction dated 2026-10-22 records approval of the decisions in the three linked decision documents. The decision-selection gate is closed at repository-owner level. AUD-01 through AUD-05 remain open because the approved contracts have not been fully implemented and verified. The relevant code paths must be re-audited at the resulting code head. Human PR review remains mandatory; this approval is not a merge approval and makes no claim of production certification.
 
 PR #49 remains open and unmerged. Before a merge decision, AUD-01 through AUD-05 need an approved closure or a separately recorded human disposition accepted under repository governance. The relevant code paths must then be re-audited at the resulting code head. Human review remains mandatory; this audit is not an approval and makes no claim of production certification.
 

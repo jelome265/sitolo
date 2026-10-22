@@ -12,7 +12,7 @@ This updates the earlier verification snapshot below; it does not update the cod
 
 ## 1. Read the current state correctly
 
-The requested defaults for relay, lifecycle events, and production identity/secrets are now documented in [Decision Proposals](decisions/README.md). They deliberately remain proposals until the accountable owners approve the provider/cloud choices and event contract. Do not treat prose alone as approval or enable production wiring against an unapproved provider.
+The repository owner approved the three choices on 2026-10-22. The [decision index](decisions/README.md) records the approval scope. Decision selection is no longer blocked; implementation, integration proof, cloud account provisioning, readiness safeguards and human PR review remain.
 
 The code head reviewed for this packet is `e49de425b74c0095fee0737612ae40dbc50c770a`; the delivery/documentation tip at the start was `d863bd2be3eec72fedb9f48709caf1a07a11f2f6`. The delivery record lists 10/10 passing PR checks at that tip and the separate successful release-workflow dispatch, run [39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077), on `144a284`.
 

@@ -7,7 +7,7 @@
 
 ## 1. Goal
 
-The current recommendations are collected in [decision proposals](decisions/README.md). They are explicit choices for review, not approvals. Before implementing a vendor-specific adapter, the accountable owners must accept or replace the relay, event-mapping, and identity/secrets proposals.
+The repository owner approved the choices in [the decision index](decisions/README.md) on 2026-10-22. Decision selection is closed at repository-owner level; the work below implements and verifies those choices. If implementation reveals a concrete incompatibility, record an amendment before deviating.
 
 Close the remaining Part 8 contract gaps without weakening RLS, least-privilege database identity, strict configuration parsing, audit requirements, or fail-closed startup. The current CI result is evidence for exercised behavior, not authority to claim production readiness.
 
@@ -15,7 +15,7 @@ Do not expand the scope by choosing a broker, transport, event name, consumer co
 
 ## 2. Ordered work
 
-### R1 — Approve the proposed relay and consumer contract before implementing the adapter
+### R1 — Implement the owner-approved relay and consumer contract
 
 **Priority:** P1 / blocking  
 **Dependency:** explicit product/architecture owner decision.
@@ -59,7 +59,7 @@ Review [the relay and consumer contract proposal](decisions/relay-delivery-contr
 
 **Acceptance:** every operation classified as mandatory has evidence in the same transaction as its state change, backed by PostgreSQL tests that exercise the real repository path. If a transition is not mandatory, the contract must say so and the omission must be visible in the coverage matrix.
 
-### R4 — Approve lifecycle event mappings and close event-catalogue gaps
+### R4 — Wire the owner-approved lifecycle event mappings
 
 **Priority:** P1 for required events; do not add arbitrary vocabulary.  
 **Dependency:** audit/event contract owner.
@@ -68,7 +68,7 @@ Review the [five-transition event mapping proposal](decisions/iam-lifecycle-even
 
 **Acceptance:** the matrix has no unexplained missing transition; contract and registry agree; the payload is bounded and secret-free; tests prove the selected behavior and atomicity.
 
-### R5 — Approve the production identity/provider baseline and complete runtime composition
+### R5 — Implement the owner-approved production identity/provider baseline
 
 **Priority:** P1 / production blocker  
 **Dependencies:** R1 for worker destination settings; R2/R3 for safe API composition.

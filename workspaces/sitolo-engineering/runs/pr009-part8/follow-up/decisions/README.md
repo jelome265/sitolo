@@ -1,11 +1,13 @@
 # PR-009 Decision Proposals
 
 **Date:** 2026-10-22  
-**Status:** **PROPOSED — NOT OWNER-APPROVED**
+**Status:** **OWNER-APPROVED — 2026-10-22**
 
-This packet supplies concrete, reviewable defaults for the three decisions still blocking implementation. It is not approval from the product, security, platform or event-contract owner. Do not remove fail-closed behavior or mark findings closed solely because these proposals exist.
+**Approval record — 2026-10-22:** the repository owner explicitly instructed that the decision in this record be labelled owner-approved. This records repository-owner approval of the proposal as written. It does not claim separate signatures from distinct platform, security or domain role holders unless those roles are delegated to the repository owner.
 
-## Proposed baseline
+The decision-selection gate is now closed at repository-owner level. Implementation, deployment provisioning, verification and human PR review remain outstanding.
+
+## Approved baseline
 
 | Decision | Proposed choice | Gate before implementation |
 |---|---|---|
@@ -22,13 +24,13 @@ AWS's [regional service catalogue](https://aws.amazon.com/about-aws/global-infra
 - [IAM lifecycle event mappings](iam-lifecycle-event-mapping-proposal.md)
 - [Identity, production runtime and secrets](identity-production-runtime-proposal.md)
 
-## Explicit non-approval
+## Approval boundary
 
-No production adapter, cloud resource, Cognito token acceptance, or production secret retrieval should be enabled just because these files are committed. The accountable owner must accept or replace the exact proposal revision. Until then, these findings remain open and fail-closed guards remain required.
+The approved choices authorize implementation against these contracts; they do not authorize an unreviewed production rollout or bypass of release gates. Live resources still require infrastructure review, cost/ownership, least-privilege policies, integration tests and release approval. Keep fail-closed guards until implementation is complete.
 
 | Owner role | Decision | Status |
 |---|---|---|
-| Product/platform architecture owner | SNS/SQS FIFO, main/sub subscribers, AWS and region | Pending |
-| Phase 4 domain/event-contract owner | Event names, schemas, payload and expiry actor semantics | Pending |
-| Identity/security owner | Cognito/OIDC boundary and server-side session policy | Pending |
-| Platform/security operations owner | ECS/RDS/Secrets Manager, IAM, rotation, recovery and SLOs | Pending |
+| Repository owner | SNS/SQS FIFO, main/sub subscribers, AWS and region | **Approved 2026-10-22** |
+| Repository owner | Event names, schemas, payload and expiry actor semantics | **Approved 2026-10-22** |
+| Repository owner | Cognito/OIDC boundary and server-side session policy | **Approved 2026-10-22** |
+| Repository owner | ECS/RDS/Secrets Manager baseline, IAM boundaries, rotation and recovery requirements | **Approved 2026-10-22; implementation review remains** |

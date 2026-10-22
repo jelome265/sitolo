@@ -1,11 +1,15 @@
 # Proposed Relay and Consumer Contract
 
-**Status:** **PROPOSED — NOT APPROVED**  
+**Status:** **OWNER-APPROVED — 2026-10-22**  
 **Scope:** Phase 4 Part 8 IAM integration events. The binding contract remains [phase4_part8_audit_outbox_implementation_contract.md](../../../../../../docs/phase4_part8_audit_outbox_implementation_contract.md).
 
-## Decision requested
+## Approval record
 
-Use one Amazon SNS FIFO topic for the IAM event stream and one Amazon SQS FIFO queue for every consuming service. Provision a **main consumer** queue and an independent queue for each **sub-consumer**. These are fan-out subscribers, not a new authority hierarchy. This proposal selects AWS because managed FIFO fan-out fits the current bounded outbox worker without introducing Kafka/RabbitMQ operations. It also introduces real AWS cost and vendor lock-in; the owner must explicitly accept that trade-off.
+**Approval record — 2026-10-22:** the repository owner explicitly instructed that the decision in this record be labelled owner-approved. This records repository-owner approval of the proposal as written. It does not claim separate signatures from distinct platform, security or domain role holders unless those roles are delegated to the repository owner.
+
+## Approved decision
+
+Use one Amazon SNS FIFO topic for the IAM event stream and one Amazon SQS FIFO queue for every consuming service. Provision a **main consumer** queue and an independent queue for each **sub-consumer**. These are fan-out subscribers, not a new authority hierarchy. The approved decision selects AWS because managed FIFO fan-out fits the current bounded outbox worker without introducing Kafka/RabbitMQ operations. It also introduces real AWS cost and vendor lock-in; the owner must explicitly accept that trade-off.
 
 Proposed region: `af-south-1` (AWS Africa/Cape Town), subject to service-level availability checks, measured latency, cost and data-handling review. Regional availability is not a legal-residency finding.
 
@@ -31,7 +35,7 @@ PostgreSQL transaction: business + mandatory audit + outbox
           delete after commit  delete after commit
 ```
 
-Each consumer has its own FIFO queue and FIFO dead-letter queue. Infrastructure creates topic, queues, subscriptions, encryption and resource policies. The producer can publish only to the topic; it cannot consume/delete from subscriber queues. Do not enable a real adapter or create cloud resources until the owner approves the contract.
+Each consumer has its own FIFO queue and FIFO dead-letter queue. Infrastructure creates topic, queues, subscriptions, encryption and resource policies. The producer can publish only to the topic; it cannot consume/delete from subscriber queues. The contract is approved for implementation. Production resources still require infrastructure review, actual account access, cost controls, IAM review, tests and release approval.
 
 ## Published envelope (v1)
 
