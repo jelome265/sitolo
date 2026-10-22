@@ -2054,3 +2054,47 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-scope-concurrent").unwrap();
+    let membership = MembershipId::new("member-scope-concurrent").unwrap();
+    seed_active_membership(&db, org.as_str(), membership.as_str())
+        .await
+        .unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let scope = Scope::Organization {
+        organization_id: org.clone(),
+    };
+    let grant_id = ScopeGrantId::new("grant-scope-concurrent").unwrap();
+    let actor = || ActorRef {
+        subject_ref: "user-scope-operator".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    let (first, second) = tokio::join!(
+        tenancy.grant_scope(
+            org.clone(),
+            membership.clone(),
+            grant_id.clone(),
+            scope.clone(),
+            actor(),
+        ),
+        tenancy.grant_scope(org.clone(), membership, grant_id, scope, actor(),),
+    );
+    assert_eq!(first.unwrap(), second.unwrap());
+    let counts: (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
