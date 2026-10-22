@@ -142,3 +142,11 @@ The branch was fetched and fast-forward checked before edits; it was already at 
 ## Next required work
 
 Implement R2/R3 transaction and authenticated-authority boundaries before wiring the approved transition methods. Then add database-backed fault, race and idempotency tests for each mapping, compose R5 dependencies without enabling production fallback, and implement R1/R6 adapter/consumer integration against the approved contract. Re-audit the resulting exact source head in Stage 06 before Stage 08 verification. Keep PR #49 open and unmerged pending required human review.
+
+## R2 authority slice — exact-head update (2026-10-22)
+
+Current PR source head: `6d4a31dab589120be812c39150d01c66f1d620c8`. The R2 slice adds exact issuer/subject identity mapping, a bounded `Session-ID` selector followed by token validation and server-side session ownership checks, and a PostgreSQL identity/session lookup boundary. The SQL session function now uses valid row targets and the migration validates the restricted global owner role without concurrently mutating it from parallel test fixtures.
+
+All exact-head PR checks passed, including Rust verification, PostgreSQL integration, policy, toolchain, security/dependency checks and CodeQL. PostgreSQL evidence is from GitHub Actions only; no local PostgreSQL instance was started, consistent with the next-phase plan.
+
+**AUD-02 remains OPEN.** Authentication is not wired to live routes. Production composition, durable session lifecycle mutations, and server-derived membership/tenant/operation/resource authorization remain incomplete. Protected writes remain fail-closed. AUD-01, AUD-03 and AUD-05 remain open; AUD-04 remains pending independent Stage 06 re-audit. PR #49 remains open and unmerged.
