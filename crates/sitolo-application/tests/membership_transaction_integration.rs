@@ -2098,3 +2098,246 @@ async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomically() {
+    use sitolo_authz::{InvitationState, RoleAssignmentState};
+
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-accept-persist").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-persist").unwrap();
+    let membership = MembershipId::new("member-accept-persist").unwrap();
+    let user = sitolo_domain::tenancy::TenantUserId::new("user-accept-persist").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    tenancy
+        .create_invitation(
+            org.clone(),
+            invitation.clone(),
+            membership.clone(),
+            user,
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "invitee-accept@example.test").unwrap(),
+            "token-for-acceptance-persist-test",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let accepted = tenancy
+        .accept_invitation(
+            "token-for-acceptance-persist-test",
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-persist").unwrap(),
+            None,
+            ActorRef {
+                subject_ref: "forged-caller-actor".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.invitation.state, InvitationState::Accepted);
+    assert!(accepted.invitation.contact.is_none());
+    assert!(accepted.invitation.token_hash.is_none());
+    assert_eq!(
+        accepted.membership.state,
+        sitolo_domain::tenancy::MembershipState::Active
+    );
+    assert_eq!(accepted.assignment.state, RoleAssignmentState::Effective);
+
+    let stored: (String, Option<String>, bool, String, i64) = sqlx_core::query_as::query_as(
+        "SELECT invitation.state, invitation.contact_value, invitation.token_hash IS NOT NULL, membership.state, membership.state_version FROM invitations invitation JOIN organization_memberships membership ON membership.organization_id = invitation.organization_id AND membership.id = invitation.membership_id WHERE invitation.organization_id = $1 AND invitation.id = $2",
+    )
+    .bind(org.as_str())
+    .bind(invitation.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        ("ACCEPTED".to_owned(), None, false, "ACTIVE".to_owned(), 3)
+    );
+    let accepted_audit: (i64, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT count(*), min(actor_subject_ref), min(actor_membership_ref) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.invitation_accepted'",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        accepted_audit,
+        (
+            1,
+            Some("user-accept-persist".to_owned()),
+            Some(membership.to_string())
+        )
+    );
+    let pii_outbox: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND payload::text LIKE ANY(ARRAY['%invitee-accept@example.test%', '%token-for-acceptance-persist-test%'])",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(pii_outbox, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-accept-rollback").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
+    for (suffix, raw_token) in [
+        ("audit", "token-for-audit-failure-case"),
+        ("outbox", "token-for-outbox-failure-case"),
+    ] {
+        let contact = format!("{suffix}@example.test");
+        create_service
+            .create_invitation(
+                org.clone(),
+                sitolo_domain::tenancy::InvitationId::new(format!("inv-accept-{suffix}")).unwrap(),
+                MembershipId::new(format!("member-accept-{suffix}")).unwrap(),
+                sitolo_domain::tenancy::TenantUserId::new(format!("user-accept-{suffix}")).unwrap(),
+                Role::Cashier,
+                None,
+                InvitationContact::new(ContactKind::Email, &contact).unwrap(),
+                raw_token,
+                std::time::Duration::from_secs(3_600),
+                ActorRef {
+                    subject_ref: "issuer-user".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let audit_failure = service(&db, Arc::new(FailingAuditWriter))
+        .accept_invitation(
+            "token-for-audit-failure-case",
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-audit-failure")
+                .unwrap(),
+            None,
+            ActorRef {
+                subject_ref: "caller".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await;
+    assert!(audit_failure.is_err());
+    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        .with_evidence(TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(FailingOutboxWriter),
+        ))
+        .accept_invitation(
+            "token-for-outbox-failure-case",
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")
+                .unwrap(),
+            None,
+            ActorRef {
+                subject_ref: "caller".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await;
+    assert!(outbox_failure.is_err());
+    let state: (i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM invitations WHERE organization_id = $1 AND state = 'ISSUED'), (SELECT count(*) FROM organization_memberships WHERE organization_id = $1 AND state = 'INVITED'), (SELECT count(*) FROM role_assignments WHERE organization_id = $1), (SELECT count(*) FROM scope_grants WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(state, (2, 2, 0, 0));
+    let accepted_events: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name IN ('iam.membership.invitation_accepted', 'iam.membership.pending_acceptance', 'iam.membership.activated')) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name IN ('iam.membership.invitation_accepted', 'iam.membership.pending_acceptance', 'iam.membership.activated'))",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(accepted_events, 0);
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_invitation_acceptance_claims_token_once() {
+    let db = test_db().await.unwrap();
+    let org = OrganizationId::new("org-accept-concurrent").unwrap();
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-concurrent").unwrap();
+    let membership = MembershipId::new("member-accept-concurrent").unwrap();
+    seed_organization(&db, org.as_str()).await.unwrap();
+    let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
+    tenancy
+        .create_invitation(
+            org.clone(),
+            invitation,
+            membership.clone(),
+            sitolo_domain::tenancy::TenantUserId::new("user-accept-concurrent").unwrap(),
+            Role::Cashier,
+            None,
+            InvitationContact::new(ContactKind::Email, "accept-race@example.test").unwrap(),
+            "token-for-concurrent-acceptance",
+            std::time::Duration::from_secs(3_600),
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: None,
+                device_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    let actor = || ActorRef {
+        subject_ref: "caller".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+    let (first, second) = tokio::join!(
+        tenancy.accept_invitation(
+            "token-for-concurrent-acceptance",
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-a").unwrap(),
+            None,
+            actor(),
+        ),
+        tenancy.accept_invitation(
+            "token-for-concurrent-acceptance",
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-b").unwrap(),
+            None,
+            actor(),
+        ),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM organization_memberships WHERE organization_id = $1 AND state = 'ACTIVE'), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.invitation_accepted'), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.invitation_accepted')",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1, 1));
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}

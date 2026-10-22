@@ -23,17 +23,12 @@
 //! organization provisioning and lifecycle transitions, branch creation and
 //! lifecycle transitions, direct membership invitation and transitions,
 //! membership pending/expiry transitions, role assignment/revocation, scope
-//! grant/revocation, token-bound invitation issue/withdrawal, and invitation
-//! expiry sweeping. Invitation acceptance remains unavailable with the
-//! evidence sink until an authoritative PostgreSQL transaction exists.
+//! grant/revocation, token-bound invitation issue/acceptance/withdrawal, and
+//! invitation expiry sweeping.
 //!
-//! Each of these methods takes an `actor: ActorRef` parameter identifying
-//! who is performing the transition, because the audit record's actor
-//! fields must reflect the true caller — there is no authenticated
-//! principal available yet to derive this automatically (actor *authority*,
-//! as opposed to actor *identity*, remains Phase 6's job per the existing
-//! deferral note above). Callers construct `ActorRef` from whatever caller
-//! context they have; there is no default or synthesized actor.
+//! Most request-driven methods still take an `actor: ActorRef`; production
+//! HTTP authority is not yet composed. Token-bound acceptance derives its
+//! actor from the user bound to the locked invitation membership.
 //!
 //! Owner-approved invitation issue, withdrawal, and expiry sweeping are
 //! coupled to their state changes; expiry sweeping is tenant-scoped and
@@ -42,10 +37,10 @@
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
 //! default branch, audit, and outbox share one application-owned transaction.
-//! Role and scope grant/revocation are PostgreSQL-backed, but invitation
-//! acceptance still lacks a durable PostgreSQL path. The API
-//! composition root must wire verified authority and the durable database
-//! path before it can be considered a production tenancy authority.
+//! Role/scope grant and revocation plus invitation acceptance use
+//! PostgreSQL transactions when the durable evidence sink is configured.
+//! The API composition root must wire verified authority and the durable
+//! database path before it can be considered a production tenancy authority.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -85,6 +80,16 @@ type PersistedInvitationRow = (
     DateTime<Utc>,
     DateTime<Utc>,
     i64,
+);
+
+type PersistedInvitationAcceptanceRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    DateTime<Utc>,
+    DateTime<Utc>,
 );
 
 fn persisted_role_assignment_state(value: &str) -> Option<RoleAssignmentState> {
@@ -778,6 +783,329 @@ impl TenancyService {
                 sqlstate: None,
             })?;
         Ok(grant)
+    }
+
+    async fn accept_invitation_with_evidence(
+        &self,
+        token_hash: [u8; 32],
+        assignment_id: RoleAssignmentId,
+        grant_id: Option<ScopeGrantId>,
+        now: SystemTime,
+    ) -> Result<AcceptedInvitation, InvitationError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(InvitationError::EvidencePersistenceFailed)?;
+        let mut tx = sink
+            .pool
+            .begin()
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let organization_raw: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT resolve_invitation_organization($1)")
+                .bind(token_hash.to_vec())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let Some(organization_raw) = organization_raw else {
+            return Err(InvitationError::Invalid);
+        };
+        let organization_id = OrganizationId::new(organization_raw)
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        query("SELECT lock_organization_mutations($1)")
+            .bind(organization_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+
+        let row: Option<PersistedInvitationAcceptanceRow> = sqlx_core::query_as::query_as(
+            "SELECT id, membership_id, proposed_role, scope_kind, branch_id, issued_at, expires_at FROM invitations WHERE organization_id = $1 AND token_hash = $2 AND state = 'ISSUED' FOR UPDATE",
+        )
+        .bind(organization_id.as_str())
+        .bind(token_hash.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let Some((
+            invitation_raw,
+            membership_raw,
+            role_raw,
+            scope_kind,
+            branch_raw,
+            issued_at,
+            expires_at,
+        )) = row
+        else {
+            return Err(InvitationError::Invalid);
+        };
+        let now_utc =
+            system_time_to_utc(now).map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        if now_utc >= expires_at {
+            return Err(InvitationError::Expired);
+        }
+        let invitation_id = InvitationId::new(invitation_raw)
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let membership_id = MembershipId::new(membership_raw)
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let role = Role::all()
+            .iter()
+            .copied()
+            .find(|candidate| candidate.as_str() == role_raw)
+            .ok_or(InvitationError::EvidencePersistenceFailed)?;
+        let proposed_scope = match (scope_kind.as_deref(), branch_raw) {
+            (None, None) => None,
+            (Some("ORGANIZATION"), None) => Some(Scope::Organization {
+                organization_id: organization_id.clone(),
+            }),
+            (Some("BRANCH"), Some(branch)) => Some(Scope::Branch {
+                organization_id: organization_id.clone(),
+                branch_id: BranchId::new(branch)
+                    .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+            }),
+            _ => return Err(InvitationError::EvidencePersistenceFailed),
+        };
+        if proposed_scope.is_some() != grant_id.is_some() {
+            return Err(InvitationError::Invalid);
+        }
+
+        let membership: Option<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT user_id, state FROM organization_memberships WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let Some((user_raw, membership_state)) = membership else {
+            return Err(InvitationError::Invalid);
+        };
+        let user_id =
+            TenantUserId::new(user_raw).map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let actor = ActorRef {
+            subject_ref: user_id.as_str().to_owned(),
+            membership_ref: Some(membership_id.as_str().to_owned()),
+            device_ref: None,
+        };
+        if membership_state == "INVITED" {
+            let version: Option<i64> = sqlx_core::query_scalar::query_scalar(
+                "UPDATE organization_memberships SET state = 'PENDING_ACCEPTANCE', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'INVITED' RETURNING state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(membership_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            let Some(version) = version else {
+                return Err(InvitationError::Invalid);
+            };
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::MembershipPendingAcceptance,
+                &organization_id,
+                None,
+                TargetRef::Membership(membership_id.clone()),
+                actor.clone(),
+                "accept_invitation_pending",
+                "membership",
+                membership_id.to_string(),
+                serde_json::json!({ "membership_id": membership_id.as_str(), "from_state": "INVITED", "to_state": "PENDING_ACCEPTANCE", "state_version": version }),
+            )
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        } else if membership_state != "PENDING_ACCEPTANCE" {
+            return Err(InvitationError::Invalid);
+        }
+        let active_version: Option<i64> = sqlx_core::query_scalar::query_scalar(
+            "UPDATE organization_memberships SET state = 'ACTIVE', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'PENDING_ACCEPTANCE' RETURNING state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let Some(active_version) = active_version else {
+            return Err(InvitationError::Invalid);
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::MembershipActivated,
+            &organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor.clone(),
+            "accept_invitation_activate",
+            "membership",
+            membership_id.to_string(),
+            serde_json::json!({ "organization_id": organization_id.as_str(), "membership_id": membership_id.as_str(), "state": "ACTIVE", "state_version": active_version }),
+        )
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+
+        let assignment_version: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ($1, $2, $3, $4, 'EFFECTIVE', 3) RETURNING state_version",
+        )
+        .bind(assignment_id.as_str())
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .bind(role.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| {
+            let sqlstate = match &error {
+                SqlxError::Database(database_error) => {
+                    database_error.code().map(|code| code.into_owned())
+                }
+                _ => None,
+            };
+            if matches!(sqlstate.as_deref(), Some("23505" | "23503")) {
+                InvitationError::Invalid
+            } else {
+                InvitationError::EvidencePersistenceFailed
+            }
+        })?;
+        let assignment = RoleAssignment {
+            id: assignment_id,
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            role,
+            state: RoleAssignmentState::Effective,
+            state_version: u64::try_from(assignment_version)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::RoleAssigned,
+            &organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            actor.clone(),
+            "accept_invitation_assign_role",
+            "role_assignment",
+            assignment.id.to_string(),
+            serde_json::json!({ "organization_id": organization_id.as_str(), "membership_id": membership_id.as_str(), "assignment_id": assignment.id.as_str(), "role": role.as_str(), "state": "EFFECTIVE", "state_version": assignment.state_version }),
+        )
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+
+        let scope_grant = if let (Some(scope), Some(grant_id)) = (proposed_scope.clone(), grant_id)
+        {
+            let (kind, branch_id) = match &scope {
+                Scope::Organization { .. } => ("ORGANIZATION", None),
+                Scope::Branch { branch_id, .. } => ("BRANCH", Some(branch_id.as_str().to_owned())),
+            };
+            sqlx_core::query::query(
+                "INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', 1)",
+            )
+            .bind(grant_id.as_str())
+            .bind(organization_id.as_str())
+            .bind(membership_id.as_str())
+            .bind(kind)
+            .bind(branch_id.as_deref())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| {
+                let sqlstate = match &error {
+                    SqlxError::Database(database_error) => {
+                        database_error.code().map(|code| code.into_owned())
+                    }
+                    _ => None,
+                };
+                if matches!(sqlstate.as_deref(), Some("23505" | "23503")) {
+                    InvitationError::Invalid
+                } else {
+                    InvitationError::EvidencePersistenceFailed
+                }
+            })?;
+            let grant = ScopeGrant::grant(
+                grant_id.clone(),
+                organization_id.clone(),
+                membership_id.clone(),
+                scope,
+            );
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::ScopeGranted,
+                &organization_id,
+                None,
+                TargetRef::Membership(membership_id.clone()),
+                actor.clone(),
+                "accept_invitation_grant_scope",
+                "scope_grant",
+                grant_id.to_string(),
+                serde_json::json!({ "organization_id": organization_id.as_str(), "membership_id": membership_id.as_str(), "grant_id": grant_id.as_str(), "scope_kind": kind, "branch_id": branch_id, "state": "ACTIVE", "state_version": grant.state_version }),
+            )
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+            Some(grant)
+        } else {
+            None
+        };
+
+        let invitation_version: Option<i64> = sqlx_core::query_scalar::query_scalar(
+            "UPDATE invitations SET state = 'ACCEPTED', state_version = state_version + 1, contact_kind = NULL, contact_value = NULL, token_hash = NULL WHERE organization_id = $1 AND id = $2 AND state = 'ISSUED' RETURNING state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(invitation_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        let Some(invitation_version) = invitation_version else {
+            return Err(InvitationError::Invalid);
+        };
+        let invitation = Invitation {
+            id: invitation_id.clone(),
+            organization_id: organization_id.clone(),
+            membership_id: membership_id.clone(),
+            proposed_role: role,
+            proposed_scope,
+            contact: None,
+            token_hash: None,
+            issued_at: utc_to_system_time(issued_at)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+            expires_at: utc_to_system_time(expires_at)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+            state: InvitationState::Accepted,
+            state_version: u64::try_from(invitation_version)
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::MembershipInvitationAccepted,
+            &organization_id,
+            None,
+            TargetRef::Invitation(invitation_id.clone()),
+            actor.clone(),
+            "accept_invitation",
+            "invitation",
+            invitation_id.to_string(),
+            serde_json::json!({ "organization_id": organization_id.as_str(), "invitation_id": invitation_id.as_str(), "membership_id": membership_id.as_str(), "state": "ACCEPTED", "state_version": invitation.state_version }),
+        )
+        .await
+        .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        tx.commit()
+            .await
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+
+        let mut membership = Membership::invite(membership_id, organization_id, user_id);
+        if membership_state == "INVITED" {
+            membership
+                .mark_pending()
+                .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        }
+        membership
+            .activate()
+            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
+        Ok(AcceptedInvitation {
+            invitation,
+            membership,
+            assignment,
+            scope_grant,
+        })
     }
 
     async fn invite_member_with_evidence(
@@ -1886,8 +2214,6 @@ impl TenancyService {
         grant_id: Option<ScopeGrantId>,
         actor: ActorRef,
     ) -> Result<AcceptedInvitation, InvitationError> {
-        self.require_authoritative_mutation_path()
-            .map_err(|_| InvitationError::EvidencePersistenceFailed)?;
         Invitation::validate_raw_token(raw_token).map_err(|_| InvitationError::Invalid)?;
         let token_hash = Invitation::hash_token(raw_token);
         if matches!(
@@ -1897,6 +2223,11 @@ impl TenancyService {
             return Err(InvitationError::RateLimited);
         }
         let now = SystemTime::now();
+        if self.evidence.is_some() {
+            return self
+                .accept_invitation_with_evidence(token_hash, assignment_id, grant_id, now)
+                .await;
+        }
         let accepted = self
             .db
             .accept_invitation(token_hash, assignment_id, grant_id, now)

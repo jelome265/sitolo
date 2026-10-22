@@ -943,3 +943,22 @@ async fn part8_verifier_rejects_table_wide_scope_grant_update_privilege() {
         "verifier accepted a table-wide scope-grant UPDATE grant"
     );
 }
+
+#[tokio::test]
+async fn part8_verifier_rejects_unrestricted_invitation_token_resolution_policy() {
+    let ctx = setup().await;
+    raw_sql(
+        "DROP POLICY invitations_token_resolution ON invitations; \
+         CREATE POLICY invitations_token_resolution ON invitations \
+         FOR SELECT TO app_outbox_owner USING (true)",
+    )
+    .execute(&ctx.admin_pool)
+    .await
+    .expect("replace the token-bound invitation resolution policy");
+    let verified = verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+    teardown(&ctx).await;
+    assert!(
+        verified.is_err(),
+        "verifier accepted an unrestricted invitation-resolution policy"
+    );
+}

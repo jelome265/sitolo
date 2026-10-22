@@ -854,6 +854,130 @@ pub async fn verify_part8_provisioning_rls_metadata(
         violation!("scope_grants", "tenant policy differs from contract");
     }
 
+    let invitation_metadata = match query(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'SELECT') AS can_select,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'INSERT') AS can_insert,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'UPDATE') AS can_update,
+                has_table_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'DELETE') AS can_delete,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'state', 'UPDATE') AS can_update_state,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'state_version', 'UPDATE') AS can_update_version,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'contact_kind', 'UPDATE') AS can_update_contact_kind,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'contact_value', 'UPDATE') AS can_update_contact_value,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'token_hash', 'UPDATE') AS can_update_token_hash,
+                has_column_privilege('app_runtime', format('%I.%I', $1, 'invitations'), 'id', 'UPDATE') AS can_update_id
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'invitations'",
+    )
+    .bind(schema_name)
+    .fetch_optional(admin_pool)
+    .await?
+    {
+        Some(row) => row,
+        None => violation!("invitations", "table not found"),
+    };
+    let invitation_rls: bool = invitation_metadata.get("relrowsecurity");
+    let invitation_force_rls: bool = invitation_metadata.get("relforcerowsecurity");
+    let invitation_select: bool = invitation_metadata.get("can_select");
+    let invitation_insert: bool = invitation_metadata.get("can_insert");
+    let invitation_update: bool = invitation_metadata.get("can_update");
+    let invitation_delete: bool = invitation_metadata.get("can_delete");
+    let invitation_state: bool = invitation_metadata.get("can_update_state");
+    let invitation_version: bool = invitation_metadata.get("can_update_version");
+    let invitation_contact_kind: bool = invitation_metadata.get("can_update_contact_kind");
+    let invitation_contact_value: bool = invitation_metadata.get("can_update_contact_value");
+    let invitation_token_hash: bool = invitation_metadata.get("can_update_token_hash");
+    let invitation_id: bool = invitation_metadata.get("can_update_id");
+    if !invitation_rls
+        || !invitation_force_rls
+        || !invitation_select
+        || !invitation_insert
+        || invitation_update
+        || invitation_delete
+        || !invitation_state
+        || !invitation_version
+        || !invitation_contact_kind
+        || !invitation_contact_value
+        || !invitation_token_hash
+        || invitation_id
+    {
+        violation!(
+            "invitations",
+            "RLS or app_runtime privileges differ from contract"
+        );
+    }
+    let invitation_policies = query(
+        "SELECT p.polname, p.polcmd, p.polroles::bigint[] AS polroles,
+                pg_get_expr(p.polqual, p.polrelid) AS qual_expr,
+                pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr
+         FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = 'invitations'",
+    )
+    .bind(schema_name)
+    .fetch_all(admin_pool)
+    .await?;
+    if invitation_policies.len() != 4 {
+        violation!("invitations", "expected four scoped policies");
+    }
+    let token_resolution_predicate = normalize_policy_expression(
+        "state = 'ISSUED' AND token_hash = decode(NULLIF(current_setting('app.invitation_token_hash', true), ''), 'hex')",
+    );
+    for policy in invitation_policies {
+        let name: String = policy.get("polname");
+        let command: i8 = policy.get("polcmd");
+        let roles: Vec<i64> = policy.get("polroles");
+        let qual: Option<String> = policy.get("qual_expr");
+        let check: Option<String> = policy.get("check_expr");
+        let (expected_name, expected_command, expected_role, expected_qual, expected_check) =
+            match name.as_str() {
+                "invitations_tenant_insert" => (
+                    "invitations_tenant_insert",
+                    b'a' as i8,
+                    runtime_oid,
+                    None,
+                    Some(tenant_check.as_str()),
+                ),
+                "invitations_tenant_read" => (
+                    "invitations_tenant_read",
+                    b'r' as i8,
+                    runtime_oid,
+                    Some(tenant_predicate.as_str()),
+                    None,
+                ),
+                "invitations_terminal_update" => (
+                    "invitations_terminal_update",
+                    b'w' as i8,
+                    runtime_oid,
+                    Some(tenant_predicate.as_str()),
+                    Some(tenant_check.as_str()),
+                ),
+                "invitations_token_resolution" => (
+                    "invitations_token_resolution",
+                    b'r' as i8,
+                    outbox_owner_oid,
+                    Some(token_resolution_predicate.as_str()),
+                    None,
+                ),
+                _ => violation!("invitations", format!("unexpected policy {name}")),
+            };
+        if name != expected_name
+            || command != expected_command
+            || roles != vec![expected_role]
+            || qual.as_deref().is_none_or(|expr| {
+                expected_qual.is_none_or(|expected| normalize_policy_expression(expr) != expected)
+            }) != expected_qual.is_none()
+            || check.as_deref().is_none_or(|expr| {
+                expected_check.is_none_or(|expected| normalize_policy_expression(expr) != expected)
+            }) != expected_check.is_none()
+        {
+            violation!(
+                "invitations",
+                format!("policy {name} differs from contract")
+            );
+        }
+    }
+
     Ok(())
 }
 

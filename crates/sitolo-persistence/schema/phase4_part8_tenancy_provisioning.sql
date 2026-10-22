@@ -188,6 +188,14 @@ CREATE POLICY invitations_tenant_insert ON invitations
 CREATE POLICY invitations_tenant_read ON invitations
     FOR SELECT TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY invitations_token_resolution ON invitations
+    FOR SELECT TO app_outbox_owner
+    USING (
+        state = 'ISSUED'
+        AND token_hash = pg_catalog.decode(
+            NULLIF(current_setting('app.invitation_token_hash', true), ''), 'hex'
+        )
+    );
 CREATE POLICY invitations_terminal_update ON invitations
     FOR UPDATE TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''))
@@ -247,6 +255,29 @@ BEGIN
     FROM organizations
     WHERE id = p_organization_id;
     RETURN organization_state;
+END;
+$$;
+
+CREATE FUNCTION resolve_invitation_organization(p_token_hash BYTEA)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path FROM CURRENT
+AS $$
+DECLARE
+    resolved_organization_id TEXT;
+BEGIN
+    IF p_token_hash IS NULL OR pg_catalog.octet_length(p_token_hash) <> 32 THEN
+        RETURN NULL;
+    END IF;
+
+    PERFORM pg_catalog.set_config(
+        'app.invitation_token_hash', pg_catalog.encode(p_token_hash, 'hex'), true
+    );
+    SELECT organization_id INTO resolved_organization_id
+    FROM invitations
+    WHERE token_hash = p_token_hash AND state = 'ISSUED';
+    RETURN resolved_organization_id;
 END;
 $$;
 
@@ -315,12 +346,15 @@ $$;
 
 ALTER FUNCTION transition_organization_state(TEXT, TEXT) OWNER TO app_outbox_owner;
 ALTER FUNCTION transition_branch_state(TEXT, TEXT, TEXT) OWNER TO app_outbox_owner;
+ALTER FUNCTION resolve_invitation_organization(BYTEA) OWNER TO app_outbox_owner;
 REVOKE ALL ON FUNCTION lock_organization_mutations(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION transition_organization_state(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION resolve_invitation_organization(BYTEA) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION lock_organization_mutations(TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_organization_state(TEXT, TEXT) TO app_runtime;
 GRANT EXECUTE ON FUNCTION transition_branch_state(TEXT, TEXT, TEXT) TO app_runtime;
+GRANT EXECUTE ON FUNCTION resolve_invitation_organization(BYTEA) TO app_runtime;
 
 REVOKE ALL ON organizations, organization_memberships, branches, invitations, role_assignments, scope_grants FROM PUBLIC;
 GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
