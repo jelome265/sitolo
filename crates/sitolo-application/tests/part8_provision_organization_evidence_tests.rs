@@ -22,11 +22,13 @@ use std::env;
 use std::sync::Arc;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
+use sitolo_audit::ActorRef;
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyError, TenantUserId};
 use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
 use sitolo_persistence::postgres::verify_part8_provisioning_rls_metadata;
+use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -168,6 +170,21 @@ fn fresh_provision_args() -> ProvisionArgs {
     }
 }
 
+async fn seed_invited_member(ctx: &TestContext, args: &ProvisionArgs) -> MembershipId {
+    let member_id = MembershipId::new(format!("member-{}", Uuid::new_v4().simple())).unwrap();
+    let user_id = TenantUserId::new(format!("user-{}", Uuid::new_v4().simple())).unwrap();
+    query(
+        "INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, $3, 'INVITED', 1)",
+    )
+    .bind(member_id.as_str())
+    .bind(args.org_id.as_str())
+    .bind(user_id.as_str())
+    .execute(&ctx.admin_pool)
+    .await
+    .expect("seed invited member");
+    member_id
+}
+
 /// Test C (§61): all writes succeed -> business, audit, and outbox present;
 /// exactly one audit event and one outbox event per successful command
 /// (§38 — no duplicate semantic events for one command).
@@ -215,6 +232,267 @@ async fn provision_organization_emits_audit_and_outbox_on_success() {
         outbox_count, 1,
         "exactly one outbox event for one successful command (§38)"
     );
+}
+
+/// R3/R4 regression: the approved pending-acceptance transition updates
+/// authoritative PostgreSQL state in the same transaction as its mandatory
+/// audit and outbox records.
+#[tokio::test]
+async fn mark_member_pending_commits_state_audit_and_outbox_together() {
+    let ctx = setup().await;
+    let service = service_with_evidence(ctx.runtime_pool.clone());
+    let args = fresh_provision_args();
+    service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await
+        .expect("provision the tenant before seeding the invited member");
+
+    let member_id = seed_invited_member(&ctx, &args).await;
+
+    let result = service
+        .mark_member_pending(
+            &args.org_id,
+            &member_id,
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: Some(args.membership_id.to_string()),
+                device_ref: None,
+            },
+        )
+        .await;
+    let duplicate_result = service
+        .mark_member_pending(
+            &args.org_id,
+            &member_id,
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: Some(args.membership_id.to_string()),
+                device_ref: None,
+            },
+        )
+        .await;
+    let membership: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read transitioned membership");
+    let event_count: i64 = query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.pending_acceptance' AND target_ref = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("count pending audit event");
+    let outbox_payload: serde_json::Value = query_scalar(
+        "SELECT payload FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.pending_acceptance' AND aggregate_id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read pending outbox payload");
+    teardown(&ctx).await;
+
+    result.expect("membership transition should succeed");
+    assert!(matches!(
+        duplicate_result,
+        Err(TenancyError::InvalidTransition)
+    ));
+    assert_eq!(membership, ("PENDING_ACCEPTANCE".to_owned(), 2));
+    assert_eq!(event_count, 1);
+    assert_eq!(outbox_payload["membership_id"], member_id.as_str());
+    assert_eq!(outbox_payload["from_state"], "INVITED");
+    assert_eq!(outbox_payload["to_state"], "PENDING_ACCEPTANCE");
+    assert_eq!(outbox_payload["state_version"], 2);
+}
+
+#[tokio::test]
+async fn mark_member_pending_rolls_back_state_and_audit_when_outbox_fails() {
+    let ctx = setup().await;
+    let service = service_with_evidence(ctx.runtime_pool.clone());
+    let args = fresh_provision_args();
+    service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await
+        .expect("provision tenant");
+    let member_id = seed_invited_member(&ctx, &args).await;
+    raw_sql("ALTER TABLE outbox_events RENAME TO outbox_events_disabled")
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("induce an outbox write failure");
+
+    let result = service
+        .mark_member_pending(
+            &args.org_id,
+            &member_id,
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: Some(args.membership_id.to_string()),
+                device_ref: None,
+            },
+        )
+        .await;
+    let membership: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read membership after failed transition");
+    let audit_count: i64 = query_scalar(
+        "SELECT COUNT(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.pending_acceptance' AND target_ref = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("count rolled-back audit events");
+    teardown(&ctx).await;
+
+    assert!(matches!(
+        result,
+        Err(TenancyError::EvidencePersistenceFailed)
+    ));
+    assert_eq!(membership, ("INVITED".to_owned(), 1));
+    assert_eq!(audit_count, 0);
+}
+
+#[tokio::test]
+async fn mark_member_pending_rolls_back_state_when_audit_fails() {
+    let ctx = setup().await;
+    let service = service_with_evidence(ctx.runtime_pool.clone());
+    let args = fresh_provision_args();
+    service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await
+        .expect("provision tenant");
+    let member_id = seed_invited_member(&ctx, &args).await;
+    raw_sql("ALTER TABLE audit_events RENAME TO audit_events_disabled")
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("induce an audit write failure");
+
+    let result = service
+        .mark_member_pending(
+            &args.org_id,
+            &member_id,
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: Some(args.membership_id.to_string()),
+                device_ref: None,
+            },
+        )
+        .await;
+    let membership: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read membership after failed transition");
+    teardown(&ctx).await;
+
+    assert!(matches!(
+        result,
+        Err(TenancyError::EvidencePersistenceFailed)
+    ));
+    assert_eq!(membership, ("INVITED".to_owned(), 1));
+}
+
+#[tokio::test]
+async fn expire_invitation_commits_membership_audit_and_outbox_together() {
+    let ctx = setup().await;
+    let service = service_with_evidence(ctx.runtime_pool.clone());
+    let args = fresh_provision_args();
+    service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await
+        .expect("provision tenant");
+    let member_id = seed_invited_member(&ctx, &args).await;
+    service
+        .mark_member_pending(
+            &args.org_id,
+            &member_id,
+            ActorRef {
+                subject_ref: "issuer-user".to_owned(),
+                membership_ref: Some(args.membership_id.to_string()),
+                device_ref: None,
+            },
+        )
+        .await
+        .expect("move membership to pending acceptance");
+
+    let result = service.expire_invitation(&args.org_id, &member_id).await;
+    let membership: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read expired membership");
+    let event: (String, String, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT event_name, actor_subject_ref, reason_class FROM audit_events WHERE organization_id = $1 AND target_ref = $2 AND event_name = 'iam.membership.expired'",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read expiry audit event");
+    let payload: serde_json::Value = query_scalar(
+        "SELECT payload FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.expired' AND aggregate_id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read expiry payload");
+    teardown(&ctx).await;
+
+    result.expect("expiry should succeed");
+    assert_eq!(membership, ("EXPIRED".to_owned(), 3));
+    assert_eq!(event.0, "iam.membership.expired");
+    assert_eq!(event.1, "system:invitation-expiry");
+    assert_eq!(event.2, None);
+    assert_eq!(payload["membership_id"], member_id.as_str());
+    assert_eq!(payload["from_state"], "PENDING_ACCEPTANCE");
+    assert_eq!(payload["to_state"], "EXPIRED");
+    assert_eq!(payload["state_version"], 3);
+    assert_eq!(payload["expiry_reason"], "enrollment_window_elapsed");
 }
 
 /// A repeated command with the same complete topology payload returns the
@@ -507,4 +785,39 @@ async fn part8_verifier_rejects_insert_policies_without_tenant_context() {
             "verifier accepted an INSERT policy without tenant context on {table}"
         );
     }
+}
+
+#[tokio::test]
+async fn part8_verifier_rejects_membership_update_policy_without_tenant_context() {
+    let ctx = setup().await;
+    raw_sql(
+        "DROP POLICY memberships_transition_update ON organization_memberships; \
+         CREATE POLICY memberships_transition_update ON organization_memberships \
+         FOR UPDATE TO app_runtime USING (organization_id IS NOT NULL) \
+         WITH CHECK (organization_id IS NOT NULL)",
+    )
+    .execute(&ctx.admin_pool)
+    .await
+    .expect("replace the UPDATE policy with a tenant-blind expression");
+    let verified = verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+    teardown(&ctx).await;
+    assert!(
+        verified.is_err(),
+        "verifier accepted a membership UPDATE policy without tenant context"
+    );
+}
+
+#[tokio::test]
+async fn part8_verifier_rejects_broad_membership_update_grant() {
+    let ctx = setup().await;
+    raw_sql("GRANT UPDATE ON organization_memberships TO app_runtime")
+        .execute(&ctx.admin_pool)
+        .await
+        .expect("widen the runtime UPDATE grant");
+    let verified = verify_part8_provisioning_rls_metadata(&ctx.admin_pool, &ctx.schema_name).await;
+    teardown(&ctx).await;
+    assert!(
+        verified.is_err(),
+        "verifier accepted a table-wide membership UPDATE grant"
+    );
 }

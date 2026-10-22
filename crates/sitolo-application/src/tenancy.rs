@@ -19,15 +19,10 @@
 //!
 //! ## Phase 4 Part 8 evidence (PR-009)
 //!
-//! Every named IAM state transition in this file — organization and branch
-//! provisioning and lifecycle, membership invite/accept/suspend/resume/
-//! revoke, invitation acceptance, and role/scope grant and revocation —
-//! emits its mandatory audit record and paired outbox event
-//! (`docs/phase4_part8_audit_outbox_implementation_contract.md` §5, §29,
-//! §38) through an optional [`TenancyEvidenceSink`], via the shared
-//! `record_evidence`/`record_organization_evidence`/`record_branch_evidence`
-//! helpers. The audit write and the outbox write for one transition share
-//! one PostgreSQL transaction, so that pair is atomic with each other.
+//! Durable business-state/audit/outbox atomicity is currently implemented
+//! for organization provisioning and membership pending/expiry transitions.
+//! Several other methods still use the in-memory reference store and do not
+//! satisfy the production atomicity contract.
 //!
 //! Each of these methods takes an `actor: ActorRef` parameter identifying
 //! who is performing the transition, because the audit record's actor
@@ -37,12 +32,9 @@
 //! deferral note above). Callers construct `ActorRef` from whatever caller
 //! context they have; there is no default or synthesized actor.
 //!
-//! A few transitions are deliberately **not** wired: `mark_member_pending`,
-//! `expire_invitation`, `expire_invitations`, `create_invitation`, and
-//! `revoke_invitation` have no corresponding variant in `IamEventName`
-//! (`sitolo-audit`). Inventing an event name locally would mean this crate,
-//! rather than the contract, defines the audit vocabulary; each such method
-//! carries a doc comment explaining the specific gap.
+//! Owner-approved invitation issue/withdrawal/expiry mappings remain
+//! unwired until their business state has an authoritative PostgreSQL
+//! repository; they must not be emitted after a memory-only mutation.
 //!
 //! Organization provisioning uses PostgreSQL for its business bundle when
 //! the durable evidence sink is configured: organization, owner membership,
@@ -63,8 +55,8 @@ use sitolo_authz::{
     ScopeGrant, authorize_scope, resolve_permissions,
 };
 use sitolo_domain::tenancy::{
-    Branch, BranchId, InvitationId, Membership, MembershipId, Organization, OrganizationId,
-    RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
+    Branch, BranchId, InvitationId, Membership, MembershipId, MembershipState, Organization,
+    OrganizationId, RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
 };
 use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
@@ -494,16 +486,70 @@ impl TenancyService {
 
     /// Advances an invitation to pending acceptance.
     ///
-    /// Not wired to evidence emission: `IamEventName` (contract-defined
-    /// vocabulary) has no variant for this intermediate transition
-    /// (`Invited -> PendingAcceptance`) — only the invite, activation,
-    /// suspension, and revocation edges are named events. Adding an event
-    /// name is a contract change, not something to invent locally.
+    /// When the durable sink is configured, the PostgreSQL state transition,
+    /// mandatory audit event, and outbox intent share one transaction.
+    /// Without that sink, this method uses the in-memory reference store,
+    /// which is not an authoritative production persistence path.
     pub async fn mark_member_pending(
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
+        actor: ActorRef,
     ) -> Result<Membership, TenancyError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let mut tx = sink
+                .pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+                "UPDATE organization_memberships SET state = 'PENDING_ACCEPTANCE', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'INVITED' RETURNING user_id, state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let Some((user_id, state_version)) = changed else {
+                return Err(TenancyError::InvalidTransition);
+            };
+            let membership = Membership {
+                id: id.clone(),
+                organization_id: organization_id.clone(),
+                user_id: TenantUserId::new(user_id)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+                state: MembershipState::PendingAcceptance,
+                state_version: u64::try_from(state_version)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+            };
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::MembershipPendingAcceptance,
+                organization_id,
+                None,
+                TargetRef::Membership(id.clone()),
+                actor,
+                "mark_member_pending",
+                "membership",
+                id.to_string(),
+                serde_json::json!({
+                    "membership_id": id.as_str(),
+                    "from_state": "INVITED",
+                    "to_state": "PENDING_ACCEPTANCE",
+                    "state_version": membership.state_version,
+                }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            return Ok(membership);
+        }
         self.db.advance_membership(organization_id, id).await
     }
 
@@ -619,17 +665,74 @@ impl TenancyService {
         Ok(membership)
     }
 
-    /// Expires a lapsed enrollment window.
+    /// Expires a lapsed enrollment window with the approved system actor.
     ///
-    /// Not wired to evidence emission: no `IamEventName` variant exists for
-    /// membership expiry (distinct from revocation) — see the
-    /// `mark_member_pending` doc for the same contract-vocabulary
-    /// limitation.
+    /// With the durable sink configured, state, audit, and outbox are written
+    /// in one PostgreSQL transaction.
     pub async fn expire_invitation(
         &self,
         organization_id: &OrganizationId,
         id: &MembershipId,
     ) -> Result<Membership, TenancyError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let mut tx = sink
+                .pool
+                .begin()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            query("SELECT set_config('app.organization_id', $1, true)")
+                .bind(organization_id.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+                "UPDATE organization_memberships SET state = 'EXPIRED', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'PENDING_ACCEPTANCE' RETURNING user_id, state_version",
+            )
+            .bind(organization_id.as_str())
+            .bind(id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            let Some((user_id, state_version)) = changed else {
+                return Err(TenancyError::InvalidTransition);
+            };
+            let membership = Membership {
+                id: id.clone(),
+                organization_id: organization_id.clone(),
+                user_id: TenantUserId::new(user_id)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+                state: MembershipState::Expired,
+                state_version: u64::try_from(state_version)
+                    .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
+            };
+            self.record_evidence_in_transaction(
+                &mut tx,
+                IamEventName::MembershipExpired,
+                organization_id,
+                None,
+                TargetRef::Membership(id.clone()),
+                ActorRef {
+                    subject_ref: "system:invitation-expiry".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+                "expire_invitation",
+                "membership",
+                id.to_string(),
+                serde_json::json!({
+                    "membership_id": id.as_str(),
+                    "from_state": "PENDING_ACCEPTANCE",
+                    "to_state": "EXPIRED",
+                    "state_version": membership.state_version,
+                    "expiry_reason": "enrollment_window_elapsed",
+                }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
+            return Ok(membership);
+        }
         self.db.expire_membership(organization_id, id).await
     }
 
@@ -638,12 +741,9 @@ impl TenancyService {
     /// caller-minted high-entropy material — hashed on entry, never stored,
     /// never logged. Throttled per organization (section 38).
     ///
-    /// Not wired to evidence emission: no `IamEventName` variant names
-    /// "invitation created" distinctly from `MembershipInvited` (which
-    /// [`Self::invite_member`] already emits for the direct-invite path),
-    /// and reusing that name here would record two different transitions
-    /// under one event name. See `mark_member_pending` for the same
-    /// contract-vocabulary limitation.
+    /// Evidence emission remains blocked on authoritative PostgreSQL
+    /// invitation storage; the approved event is distinct from direct member
+    /// invitation and must not be written after a memory-only mutation.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_invitation(
         &self,
@@ -729,9 +829,9 @@ impl TenancyService {
     /// Withdraws an issued invitation and releases the linked membership
     /// for re-enrollment.
     ///
-    /// Not wired to evidence emission: no `IamEventName` variant exists for
-    /// invitation withdrawal. See `mark_member_pending` for the same
-    /// contract-vocabulary limitation.
+    /// Evidence emission remains blocked on authoritative PostgreSQL
+    /// invitation storage; the approved mapping must be coupled to both the
+    /// invitation and any linked membership transition.
     pub async fn revoke_invitation(
         &self,
         organization_id: &OrganizationId,
@@ -745,10 +845,8 @@ impl TenancyService {
     /// Sweeps lapsed issued invitations to expired, releasing their linked
     /// memberships. Returns the count transitioned.
     ///
-    /// Not wired to evidence emission: no `IamEventName` variant exists for
-    /// invitation expiry, and this is a batch sweep rather than one
-    /// (organization, actor)-scoped command — see `mark_member_pending`
-    /// for the underlying contract-vocabulary limitation.
+    /// Evidence emission remains blocked on authoritative PostgreSQL
+    /// invitation storage and concurrency-safe per-invitation claiming.
     pub async fn expire_invitations(&self) -> u64 {
         self.db.expire_invitations(SystemTime::now()).await
     }
@@ -1330,7 +1428,10 @@ mod tests {
             service.accept_member(org, &invited.id, actor("test")).await,
             Err(TenancyError::InvalidTransition)
         );
-        service.mark_member_pending(org, &invited.id).await.unwrap();
+        service
+            .mark_member_pending(org, &invited.id, actor("issuer"))
+            .await
+            .unwrap();
         let active = service
             .accept_member(org, &invited.id, actor("test"))
             .await
@@ -1435,7 +1536,10 @@ mod tests {
             )
             .await
             .unwrap();
-        service.mark_member_pending(org, &cashier.id).await.unwrap();
+        service
+            .mark_member_pending(org, &cashier.id, actor("issuer"))
+            .await
+            .unwrap();
         service
             .accept_member(org, &cashier.id, actor("test"))
             .await
@@ -1872,7 +1976,10 @@ mod tests {
             )
             .await
             .unwrap();
-        service.mark_member_pending(org, &cashier.id).await.unwrap();
+        service
+            .mark_member_pending(org, &cashier.id, actor("issuer"))
+            .await
+            .unwrap();
         service
             .accept_member(org, &cashier.id, actor("test"))
             .await

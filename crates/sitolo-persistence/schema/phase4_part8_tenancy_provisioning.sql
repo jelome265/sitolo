@@ -1,9 +1,8 @@
 -- Phase 4 Part 8: durable organization provisioning tables.
 -- Apply with the database migration/administrative identity after the
 -- Part 8 app_runtime and app_outbox_owner roles exist. The API runtime role
--- receives SELECT and INSERT: it may read its own organization, membership,
--- and branch rows and insert provisioning rows inside the authorized tenant
--- context. Update and delete are not granted by this provisioning slice.
+-- receives SELECT and INSERT plus narrowly scoped UPDATE of membership state
+-- and state_version. RLS tenant predicates apply to every operation.
 
 CREATE TABLE organizations (
     id TEXT PRIMARY KEY,
@@ -56,6 +55,13 @@ CREATE POLICY memberships_provision_insert ON organization_memberships
 CREATE POLICY memberships_provision_read ON organization_memberships
     FOR SELECT TO app_runtime
     USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''));
+CREATE POLICY memberships_transition_update ON organization_memberships
+    FOR UPDATE TO app_runtime
+    USING (organization_id = NULLIF(current_setting('app.organization_id', true), ''))
+    WITH CHECK (
+        organization_id = NULLIF(current_setting('app.organization_id', true), '')
+        AND current_setting('app.organization_id', true) <> ''
+    );
 
 CREATE POLICY branches_provision_insert ON branches
     FOR INSERT TO app_runtime
@@ -72,4 +78,6 @@ ALTER TABLE organization_memberships OWNER TO app_outbox_owner;
 ALTER TABLE branches OWNER TO app_outbox_owner;
 
 REVOKE ALL ON organizations, organization_memberships, branches FROM PUBLIC;
-GRANT SELECT, INSERT ON organizations, organization_memberships, branches TO app_runtime;
+GRANT SELECT, INSERT ON organizations, branches TO app_runtime;
+GRANT SELECT, INSERT ON organization_memberships TO app_runtime;
+GRANT UPDATE (state, state_version) ON organization_memberships TO app_runtime;

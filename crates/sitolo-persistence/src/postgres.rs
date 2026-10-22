@@ -424,13 +424,18 @@ pub async fn verify_part8_provisioning_rls_metadata(
             );
         }
 
-        // The grant decision is SELECT + INSERT only. Assert it here so the
-        // verifier fails if the DDL is widened to UPDATE or DELETE.
+        // Runtime receives only the provisioning grants and the narrowly
+        // scoped membership state columns needed for approved transitions.
         let privilege = query(
             "SELECT has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'SELECT') AS can_select,
                     has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'INSERT') AS can_insert,
                     has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'UPDATE') AS can_update,
-                    has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'DELETE') AS can_delete",
+                    has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'DELETE') AS can_delete,
+                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'state', 'UPDATE') AS can_update_state,
+                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'state_version', 'UPDATE') AS can_update_version,
+                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'id', 'UPDATE') AS can_update_id,
+                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'organization_id', 'UPDATE') AS can_update_organization,
+                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'user_id', 'UPDATE') AS can_update_user",
         )
         .bind(schema_name)
         .bind(table)
@@ -441,12 +446,30 @@ pub async fn verify_part8_provisioning_rls_metadata(
         let can_insert: bool = privilege.get("can_insert");
         let can_update: bool = privilege.get("can_update");
         let can_delete: bool = privilege.get("can_delete");
-        if !can_select || !can_insert || can_update || can_delete {
+        let can_update_state: bool = privilege.get("can_update_state");
+        let can_update_version: bool = privilege.get("can_update_version");
+        let can_update_id: bool = privilege.get("can_update_id");
+        let can_update_organization: bool = privilege.get("can_update_organization");
+        let can_update_user: bool = privilege.get("can_update_user");
+        let membership_table = table == "organization_memberships";
+        if !can_select
+            || !can_insert
+            || can_update
+            || can_delete
+            || can_update_state != membership_table
+            || can_update_version != membership_table
+            || can_update_id
+            || can_update_organization
+            || can_update_user
+        {
             violation!(
                 table,
                 format!(
-                    "expected SELECT+INSERT only, got SELECT={can_select} INSERT={can_insert} \
-                     UPDATE={can_update} DELETE={can_delete}"
+                    "unexpected runtime grants: SELECT={can_select} INSERT={can_insert} \
+                     table UPDATE={can_update} DELETE={can_delete} \
+                     state UPDATE={can_update_state} version UPDATE={can_update_version} \
+                     id UPDATE={can_update_id} organization UPDATE={can_update_organization} \
+                     user UPDATE={can_update_user}"
                 )
             );
         }
@@ -466,15 +489,20 @@ pub async fn verify_part8_provisioning_rls_metadata(
         .fetch_all(admin_pool)
         .await?;
 
-        if policies.len() != 2 {
+        let expected_policy_count = if membership_table { 3 } else { 2 };
+        if policies.len() != expected_policy_count {
             violation!(
                 table,
-                format!("expected 2 policies, found {}", policies.len())
+                format!(
+                    "expected {expected_policy_count} policies, found {}",
+                    policies.len()
+                )
             );
         }
 
         let expected_insert = format!("{policy_prefix}_provision_insert");
         let expected_read = format!("{policy_prefix}_provision_read");
+        let expected_update = "memberships_transition_update";
         let expected_insert_predicate = normalize_policy_expression(&format!(
             "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
              AND current_setting('app.organization_id', true) <> ''"
@@ -547,6 +575,30 @@ pub async fn verify_part8_provisioning_rls_metadata(
                              expected normalized `{expected_select_predicate}`, got `{actual}` \
                              (raw: {qual})"
                         )
+                    );
+                }
+            } else if membership_table && name == expected_update {
+                let expected_update_predicate = normalize_policy_expression(&format!(
+                    "{tenant_column} = NULLIF(current_setting('app.organization_id', true), '') \
+                     AND current_setting('app.organization_id', true) <> ''"
+                ));
+                if command != b'w' as i8 {
+                    violation!(table, format!("UPDATE policy {name} command={command}"));
+                }
+                let qual = match qual {
+                    Some(value) => value,
+                    None => violation!(table, format!("UPDATE policy {name} has no USING")),
+                };
+                let check = match check {
+                    Some(value) => value,
+                    None => violation!(table, format!("UPDATE policy {name} has no WITH CHECK")),
+                };
+                if normalize_policy_expression(&qual) != expected_select_predicate
+                    || normalize_policy_expression(&check) != expected_update_predicate
+                {
+                    violation!(
+                        table,
+                        format!("UPDATE policy {name} does not enforce the tenant context")
                     );
                 }
             } else {
