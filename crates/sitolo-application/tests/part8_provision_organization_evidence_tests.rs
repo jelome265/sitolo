@@ -436,7 +436,8 @@ async fn mark_member_pending_rolls_back_state_and_audit_when_outbox_fails() {
 
     assert!(matches!(
         result,
-        Err(TenancyError::EvidencePersistenceFailed | TenancyError::EvidencePersistenceFailedAt(_))
+        Err(TenancyError::EvidencePersistenceFailed
+            | TenancyError::EvidencePersistenceFailedAt { .. })
     ));
     assert_eq!(membership, ("INVITED".to_owned(), 1));
     assert_eq!(audit_count, 0);
@@ -487,7 +488,8 @@ async fn mark_member_pending_rolls_back_state_when_audit_fails() {
 
     assert!(matches!(
         result,
-        Err(TenancyError::EvidencePersistenceFailed | TenancyError::EvidencePersistenceFailedAt(_))
+        Err(TenancyError::EvidencePersistenceFailed
+            | TenancyError::EvidencePersistenceFailedAt { .. })
     ));
     assert_eq!(membership, ("INVITED".to_owned(), 1));
 }
@@ -721,7 +723,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
         matches!(
             result,
             Err(TenancyError::EvidencePersistenceFailed
-                | TenancyError::EvidencePersistenceFailedAt(_))
+                | TenancyError::EvidencePersistenceFailedAt { .. })
         ),
         "expected evidence persistence failure, got {result:?}"
     );

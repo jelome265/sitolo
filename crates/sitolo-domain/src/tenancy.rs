@@ -107,7 +107,10 @@ pub enum TenancyError {
     /// integration-test failures. The display text intentionally remains
     /// generic so callers do not receive persistence internals.
     #[error("mandatory audit/outbox evidence persistence failed")]
-    EvidencePersistenceFailedAt(&'static str),
+    EvidencePersistenceFailedAt {
+        stage: &'static str,
+        sqlstate: Option<String>,
+    },
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {

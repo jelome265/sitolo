@@ -61,10 +61,12 @@ use sitolo_domain::tenancy::{
 use sitolo_events::OutboxEvent;
 use sitolo_persistence::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
-    TenancyDatabase, TenancyStores, audit_repository::AuditWriter, outbox_repository::OutboxWriter,
-    tenancy_postgres::insert_provisioned_organization,
+    TenancyDatabase, TenancyStores, audit_repository::AuditPersistenceError,
+    audit_repository::AuditWriter, outbox_repository::OutboxPersistenceError,
+    outbox_repository::OutboxWriter, tenancy_postgres::insert_provisioned_organization,
 };
 use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
+use sqlx_core::error::Error as SqlxError;
 use sqlx_core::query::query;
 use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgPool, Postgres};
@@ -80,6 +82,24 @@ pub struct TenancyEvidenceSink {
     pool: PgPool,
     audit: Arc<dyn AuditWriter>,
     outbox: Arc<dyn OutboxWriter>,
+}
+
+fn audit_sqlstate(error: &AuditPersistenceError) -> Option<String> {
+    match error {
+        AuditPersistenceError::Database(SqlxError::Database(database_error)) => {
+            database_error.code().map(|code| code.into_owned())
+        }
+        _ => None,
+    }
+}
+
+fn outbox_sqlstate(error: &OutboxPersistenceError) -> Option<String> {
+    match error {
+        OutboxPersistenceError::Database(SqlxError::Database(database_error)) => {
+            database_error.code().map(|code| code.into_owned())
+        }
+        _ => None,
+    }
 }
 
 impl TenancyEvidenceSink {
@@ -265,11 +285,17 @@ impl TenancyService {
         sink.audit
             .record_required(tx, &audit_event)
             .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt("audit_write"))?;
+            .map_err(|error| TenancyError::EvidencePersistenceFailedAt {
+                stage: "audit_write",
+                sqlstate: audit_sqlstate(&error),
+            })?;
         sink.outbox
             .enqueue(tx, &outbox_event)
             .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt("outbox_enqueue"))?;
+            .map_err(|error| TenancyError::EvidencePersistenceFailedAt {
+                stage: "outbox_enqueue",
+                sqlstate: outbox_sqlstate(&error),
+            })?;
         Ok(())
     }
 
@@ -319,17 +345,21 @@ impl TenancyService {
                 default_branch,
             };
 
-            let mut tx = sink
-                .pool
-                .begin()
-                .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt("membership_begin"))?;
+            let mut tx =
+                sink.pool
+                    .begin()
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "membership_begin",
+                        sqlstate: None,
+                    })?;
             query("SELECT set_config('app.organization_id', $1, true)")
                 .bind(organization_id.as_str())
                 .execute(&mut *tx)
                 .await
-                .map_err(|_| {
-                    TenancyError::EvidencePersistenceFailedAt("membership_tenant_context")
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_tenant_context",
+                    sqlstate: None,
                 })?;
             let newly_created = insert_provisioned_organization(
                 &mut tx,
@@ -516,18 +546,25 @@ impl TenancyService {
             .bind(id.as_str())
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt("membership_update"))?;
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt { stage: "membership_update", sqlstate: None })?;
             let Some((user_id, state_version)) = changed else {
                 return Err(TenancyError::InvalidTransition);
             };
             let membership = Membership {
                 id: id.clone(),
                 organization_id: organization_id.clone(),
-                user_id: TenantUserId::new(user_id)
-                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt("membership_user_id"))?,
+                user_id: TenantUserId::new(user_id).map_err(|_| {
+                    TenancyError::EvidencePersistenceFailedAt {
+                        stage: "membership_user_id",
+                        sqlstate: None,
+                    }
+                })?,
                 state: MembershipState::PendingAcceptance,
                 state_version: u64::try_from(state_version).map_err(|_| {
-                    TenancyError::EvidencePersistenceFailedAt("membership_state_version")
+                    TenancyError::EvidencePersistenceFailedAt {
+                        stage: "membership_state_version",
+                        sqlstate: None,
+                    }
                 })?,
             };
             self.record_evidence_in_transaction(
@@ -550,7 +587,10 @@ impl TenancyService {
             .await?;
             tx.commit()
                 .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt("membership_commit"))?;
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "membership_commit",
+                    sqlstate: None,
+                })?;
             return Ok(membership);
         }
         self.db.advance_membership(organization_id, id).await
@@ -678,16 +718,22 @@ impl TenancyService {
         id: &MembershipId,
     ) -> Result<Membership, TenancyError> {
         if let Some(sink) = self.evidence.as_ref() {
-            let mut tx = sink
-                .pool
-                .begin()
-                .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt("expiry_begin"))?;
+            let mut tx =
+                sink.pool
+                    .begin()
+                    .await
+                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                        stage: "expiry_begin",
+                        sqlstate: None,
+                    })?;
             query("SELECT set_config('app.organization_id', $1, true)")
                 .bind(organization_id.as_str())
                 .execute(&mut *tx)
                 .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt("expiry_tenant_context"))?;
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "expiry_tenant_context",
+                    sqlstate: None,
+                })?;
             let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
                 "UPDATE organization_memberships SET state = 'EXPIRED', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'PENDING_ACCEPTANCE' RETURNING user_id, state_version",
             )
@@ -695,18 +741,25 @@ impl TenancyService {
             .bind(id.as_str())
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|_| TenancyError::EvidencePersistenceFailedAt("expiry_update"))?;
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt { stage: "expiry_update", sqlstate: None })?;
             let Some((user_id, state_version)) = changed else {
                 return Err(TenancyError::InvalidTransition);
             };
             let membership = Membership {
                 id: id.clone(),
                 organization_id: organization_id.clone(),
-                user_id: TenantUserId::new(user_id)
-                    .map_err(|_| TenancyError::EvidencePersistenceFailedAt("expiry_user_id"))?,
+                user_id: TenantUserId::new(user_id).map_err(|_| {
+                    TenancyError::EvidencePersistenceFailedAt {
+                        stage: "expiry_user_id",
+                        sqlstate: None,
+                    }
+                })?,
                 state: MembershipState::Expired,
                 state_version: u64::try_from(state_version).map_err(|_| {
-                    TenancyError::EvidencePersistenceFailedAt("expiry_state_version")
+                    TenancyError::EvidencePersistenceFailedAt {
+                        stage: "expiry_state_version",
+                        sqlstate: None,
+                    }
                 })?,
             };
             self.record_evidence_in_transaction(
@@ -734,7 +787,10 @@ impl TenancyService {
             .await?;
             tx.commit()
                 .await
-                .map_err(|_| TenancyError::EvidencePersistenceFailedAt("expiry_commit"))?;
+                .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                    stage: "expiry_commit",
+                    sqlstate: None,
+                })?;
             return Ok(membership);
         }
         self.db.expire_membership(organization_id, id).await
