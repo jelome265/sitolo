@@ -43,6 +43,16 @@ This addendum supersedes historical implementation and verification details belo
 
 The decision record documents the owner-approved terminal invitation retention rule. These changes do not close AUD-03/AUD-04 or make PR #49 merge-ready. Stage 06 re-audit and human review remain required.
 
+## Exact-head implementation update — 2026-10-22
+
+Verified implementation head: `8a4a58bb55512343eeb31056a83610a34bc57b00`. All 10 required PR checks passed on this exact head: PostgreSQL integration [39731541826](https://github.com/jelome265/sitolo/actions/runs/39731541826), Rust/workspace verification [39731541832](https://github.com/jelome265/sitolo/actions/runs/39731541832), policy [39731541896](https://github.com/jelome265/sitolo/actions/runs/39731541896), security [39731541825](https://github.com/jelome265/sitolo/actions/runs/39731541825), and CodeQL [119668322293](https://github.com/jelome265/sitolo/runs/119668322293). No check result is carried over from another source head.
+
+Since the preceding update, PostgreSQL-backed invitation issuance, withdrawal, and bounded expiry sweeping now persist invitation state together with mandatory audit and outbox events. The sweep uses tenant-scoped transactions and `FOR UPDATE SKIP LOCKED`; it removes contact and token-hash data on terminalization, expires a linked `INVITED` membership when it actually transitions, and is safe under repeated/concurrent sweeps. Integration tests cover state/event outcomes and rollback on audit/outbox failures. Direct membership expiry now also has audit/outbox rollback regression coverage. The owner-approved v1 `iam.membership.expired` schema permits `INVITED → EXPIRED` in addition to `PENDING_ACCEPTANCE → EXPIRED`, as recorded in the lifecycle mapping decision.
+
+**AUD-03 remains OPEN.** These additions expand PostgreSQL transaction coverage but do not establish authoritative transaction handling and complete rollback/race coverage for every mandatory IAM operation (including outstanding role/scope grant and acceptance paths), nor do they resolve the live API authority gap. **AUD-04 implementation is present for the five approved mappings and has PostgreSQL integration evidence on this head; independent Stage 06 re-audit is still required before closure.** AUD-01, AUD-02 and AUD-05 remain open. Protected HTTP writes remain fail-closed until authenticated identity and server-derived authority are composed.
+
+GitHub Actions PostgreSQL integration is the database evidence for this phase. **No local PostgreSQL instance was started or used; local PostgreSQL verification is deferred to the next phase.** PR #49 remains open and unmerged. Exact-source re-audit and human review remain required.
+
 **Date:** 2026-10-22  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
 **Verified implementation SHA:** `441ca1fd7974bfbbac2042ac900c82cea1fd3c63`
