@@ -318,6 +318,72 @@ async fn mark_member_pending_commits_state_audit_and_outbox_together() {
 }
 
 #[tokio::test]
+async fn concurrent_mark_member_pending_emits_one_semantic_event() {
+    let ctx = setup().await;
+    let service = Arc::new(service_with_evidence(ctx.runtime_pool.clone()));
+    let args = fresh_provision_args();
+    service
+        .provision_organization(
+            args.org_id.clone(),
+            "Acme Corp",
+            args.membership_id.clone(),
+            args.user_id.clone(),
+            args.branch_id.clone(),
+            "HQ",
+        )
+        .await
+        .expect("provision tenant");
+    let member_id = seed_invited_member(&ctx, &args).await;
+    let barrier = Arc::new(Barrier::new(3));
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let service = Arc::clone(&service);
+        let barrier = Arc::clone(&barrier);
+        let organization_id = args.org_id.clone();
+        let membership_id = member_id.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            service
+                .mark_member_pending(
+                    &organization_id,
+                    &membership_id,
+                    ActorRef {
+                        subject_ref: "issuer-user".to_owned(),
+                        membership_ref: Some("issuer-membership".to_owned()),
+                        device_ref: None,
+                    },
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+    let first = tasks.remove(0).await.expect("first task completes");
+    let second = tasks.remove(0).await.expect("second task completes");
+
+    let event_count: i64 = query_scalar(
+        "SELECT COUNT(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.pending_acceptance' AND aggregate_id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("count lifecycle event");
+    let membership: (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT state, state_version FROM organization_memberships WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(args.org_id.as_str())
+    .bind(member_id.as_str())
+    .fetch_one(&ctx.admin_pool)
+    .await
+    .expect("read transitioned membership");
+    teardown(&ctx).await;
+
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    assert_eq!(event_count, 1);
+    assert_eq!(membership, ("PENDING_ACCEPTANCE".to_owned(), 2));
+}
+
+#[tokio::test]
 async fn mark_member_pending_rolls_back_state_and_audit_when_outbox_fails() {
     let ctx = setup().await;
     let service = service_with_evidence(ctx.runtime_pool.clone());

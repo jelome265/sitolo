@@ -434,8 +434,12 @@ pub async fn verify_part8_provisioning_rls_metadata(
                     has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'state', 'UPDATE') AS can_update_state,
                     has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'state_version', 'UPDATE') AS can_update_version,
                     has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'id', 'UPDATE') AS can_update_id,
-                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'organization_id', 'UPDATE') AS can_update_organization,
-                    has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'user_id', 'UPDATE') AS can_update_user",
+                    CASE WHEN $2 = 'organization_memberships'
+                         THEN has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'organization_id', 'UPDATE')
+                         ELSE false END AS can_update_organization,
+                    CASE WHEN $2 = 'organization_memberships'
+                         THEN has_column_privilege('app_runtime', format('%I.%I', $1, $2), 'user_id', 'UPDATE')
+                         ELSE false END AS can_update_user",
         )
         .bind(schema_name)
         .bind(table)
