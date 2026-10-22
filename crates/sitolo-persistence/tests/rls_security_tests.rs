@@ -595,7 +595,7 @@ async fn test_runtime_pool_identity_cannot_escalate() {
 async fn test_catalog_rls_policy_metadata() {
     run_test_with_teardown(|ctx| async move {
         ctx.pools
-            .verify_rls_catalog_metadata(&ctx.schema_name)
+            .verify_part7_rls_catalog_metadata(&ctx.schema_name)
             .await
             .expect("RLS catalog metadata failed verification");
     })

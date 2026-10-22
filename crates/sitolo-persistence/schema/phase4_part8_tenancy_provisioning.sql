@@ -1,8 +1,9 @@
 -- Phase 4 Part 8: durable organization provisioning tables.
 -- Apply with the database migration/administrative identity after the
 -- Part 8 app_runtime and app_outbox_owner roles exist. The API runtime role
--- receives INSERT only; reads and later lifecycle mutations are not granted
--- by this provisioning slice.
+-- receives SELECT and INSERT: it may read its own organization, membership,
+-- and branch rows and insert provisioning rows inside the authorized tenant
+-- context. Update and delete are not granted by this provisioning slice.
 
 CREATE TABLE organizations (
     id TEXT PRIMARY KEY,

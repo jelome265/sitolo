@@ -226,9 +226,14 @@ impl PgAuthorityPools {
         Ok(())
     }
 
-    /// Verifies via PostgreSQL catalogs (`pg_policy`, `pg_class`, `pg_namespace`) that RLS is enabled, forced,
-    /// polroles strictly equals `[runtime_oid]`, polcmd = '*', and exact USING/WITH CHECK expressions exist.
-    pub async fn verify_rls_catalog_metadata(
+    /// Verifies the **Part 7** RLS fixture (`tests/fixtures/rls_schema.sql`).
+    ///
+    /// This verifier is bound to that fixture's three tables (`organizations`,
+    /// `branches`, `tenant_resources`) and its single `FOR ALL` policy per
+    /// table. It must not be used as evidence for the Part 8 provisioning DDL,
+    /// which creates a different table set and a different policy contract.
+    /// Use [`verify_part8_provisioning_rls_metadata`] for that file.
+    pub async fn verify_part7_rls_catalog_metadata(
         &self,
         schema_name: &str,
     ) -> Result<(), PgAuthorityError> {
@@ -352,6 +357,144 @@ impl PgAuthorityPools {
         }
 
         Ok(())
+    }
+}
+
+/// Verifies the **Part 8** provisioning DDL
+/// (`schema/phase4_part8_tenancy_provisioning.sql`) against the schema it
+/// actually creates.
+///
+/// The contract differs from the Part 7 fixture by design: the runtime role may
+/// read its own organization and branch rows, so each of `organizations`,
+/// `organization_memberships`, and `branches` has exactly two policies —
+/// `*_provision_insert` (INSERT, `WITH CHECK` only) and `*_provision_read`
+/// (SELECT, `USING` only) — both restricted to `app_runtime`. No policy is
+/// expected for `tenant_resources`; that table belongs to the Part 7 fixture.
+pub async fn verify_part8_provisioning_rls_metadata(
+    admin_pool: &PgPool,
+    schema_name: &str,
+) -> Result<(), PgAuthorityError> {
+    let runtime_oid: i64 =
+        query_scalar("SELECT oid::bigint FROM pg_roles WHERE rolname = 'app_runtime'")
+            .fetch_one(admin_pool)
+            .await?;
+
+    for table in ["organizations", "organization_memberships", "branches"] {
+        let row = query(
+            "SELECT c.relrowsecurity, c.relforcerowsecurity
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2",
+        )
+        .bind(schema_name)
+        .bind(table)
+        .fetch_optional(admin_pool)
+        .await?
+        .ok_or(PgAuthorityError::SecurityViolation)?;
+
+        if !row.get::<bool, _>("relrowsecurity") || !row.get::<bool, _>("relforcerowsecurity") {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
+        // The grant decision is SELECT + INSERT only. Assert it here so the
+        // verifier fails if the DDL is widened to UPDATE or DELETE.
+        let privilege = query(
+            "SELECT has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'SELECT') AS can_select,
+                    has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'INSERT') AS can_insert,
+                    has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'UPDATE') AS can_update,
+                    has_table_privilege('app_runtime', format('%I.%I', $1, $2), 'DELETE') AS can_delete",
+        )
+        .bind(schema_name)
+        .bind(table)
+        .fetch_one(admin_pool)
+        .await?;
+
+        if !privilege.get::<bool, _>("can_select")
+            || !privilege.get::<bool, _>("can_insert")
+            || privilege.get::<bool, _>("can_update")
+            || privilege.get::<bool, _>("can_delete")
+        {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
+        let policies = query(
+            "SELECT p.polname, p.polcmd, p.polroles::bigint[] AS polroles,
+                    pg_get_expr(p.polqual, p.polrelid) AS qual_expr,
+                    pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr
+             FROM pg_policy p
+             JOIN pg_class c ON c.oid = p.polrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2
+             ORDER BY p.polname",
+        )
+        .bind(schema_name)
+        .bind(table)
+        .fetch_all(admin_pool)
+        .await?;
+
+        if policies.len() != 2 {
+            return Err(PgAuthorityError::SecurityViolation);
+        }
+
+        let expected_insert = format!("{table}_provision_insert");
+        let expected_read = format!("{table}_provision_read");
+
+        for policy in policies {
+            let name: String = policy.get("polname");
+            let command: i8 = policy.get("polcmd");
+            let roles: Vec<i64> = policy.get("polroles");
+            let qual: Option<String> = policy.get("qual_expr");
+            let check: Option<String> = policy.get("check_expr");
+
+            if roles != vec![runtime_oid] {
+                return Err(PgAuthorityError::SecurityViolation);
+            }
+
+            if name == expected_insert {
+                // INSERT has no USING clause; the row must pass WITH CHECK.
+                if command != b'a' as i8 || qual.is_some() {
+                    return Err(PgAuthorityError::SecurityViolation);
+                }
+                let check = check.ok_or(PgAuthorityError::SecurityViolation)?;
+                if !references_tenant_column(&check, table)
+                    || !check.contains("<>")
+                    || !check.contains("''")
+                {
+                    return Err(PgAuthorityError::SecurityViolation);
+                }
+            } else if name == expected_read {
+                // SELECT has no WITH CHECK clause; USING limits visible rows.
+                if command != b'r' as i8 || check.is_some() {
+                    return Err(PgAuthorityError::SecurityViolation);
+                }
+                let qual = qual.ok_or(PgAuthorityError::SecurityViolation)?;
+                if !references_tenant_column(&qual, table) {
+                    return Err(PgAuthorityError::SecurityViolation);
+                }
+            } else {
+                return Err(PgAuthorityError::SecurityViolation);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks that a policy expression compares the table's tenant column against
+/// the `app.organization_id` transaction context. Whitespace, quotes,
+/// parentheses, and case are ignored so the check is independent of
+/// `pg_get_expr` rendering.
+fn references_tenant_column(expression: &str, table: &str) -> bool {
+    let normalized: String = expression
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '"' && *c != '(' && *c != ')')
+        .collect::<String>()
+        .to_lowercase();
+    let without_context = normalized.replace("app.organization_id", "");
+    if table == "organizations" {
+        without_context.contains("id")
+    } else {
+        without_context.contains("organization_id")
     }
 }
 

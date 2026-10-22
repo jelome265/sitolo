@@ -26,6 +26,7 @@ use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyErro
 use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
+use sitolo_persistence::postgres::verify_part8_provisioning_rls_metadata;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -82,6 +83,10 @@ async fn setup() -> TestContext {
         .execute(&admin_pool)
         .await
         .expect("apply PostgreSQL tenancy provisioning schema");
+
+    verify_part8_provisioning_rls_metadata(&admin_pool, &schema_name)
+        .await
+        .expect("Part 8 provisioning RLS contract failed verification");
 
     let runtime_url = env::var("RUNTIME_DATABASE_URL")
         .expect("RUNTIME_DATABASE_URL must be set for PostgreSQL provisioning tests");
