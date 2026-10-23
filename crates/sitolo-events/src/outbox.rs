@@ -339,7 +339,7 @@ impl OutboxEvent {
     /// [`OutboxEvent::MAX_PAYLOAD_SIZE`].
     /// Returns [`OutboxError::InvalidSchema`] when a mapped lifecycle event
     /// does not match its approved versioned payload schema.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "constructor mirrors the persisted event columns before database assignment"
     )]

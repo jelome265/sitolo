@@ -27,7 +27,9 @@ pub fn validate_iam_payload(
         return Err(OutboxError::InvalidSchema);
     }
 
-    let value: Value = serde_json::from_str(payload).map_err(|_| OutboxError::InvalidSchema)?;
+    // The public error contract exposes a single bounded `InvalidSchema` class
+    // and carries no source, so the concrete parse error is not retained.
+    let value: Value = serde_json::from_str(payload).map_err(|_err| OutboxError::InvalidSchema)?;
     let object = value.as_object().ok_or(OutboxError::InvalidSchema)?;
     match schema {
         LifecycleSchema::MembershipPendingAcceptance => {
@@ -158,7 +160,7 @@ fn validate_membership_id(object: &serde_json::Map<String, Value>) -> Result<(),
         .get("membership_id")
         .and_then(Value::as_str)
         .ok_or(OutboxError::InvalidSchema)?;
-    MembershipId::new(id.to_owned()).map_err(|_| OutboxError::InvalidSchema)?;
+    MembershipId::new(id.to_owned()).map_err(|_err| OutboxError::InvalidSchema)?;
     Ok(())
 }
 
@@ -167,7 +169,7 @@ fn validate_invitation_id(object: &serde_json::Map<String, Value>) -> Result<(),
         .get("invitation_id")
         .and_then(Value::as_str)
         .ok_or(OutboxError::InvalidSchema)?;
-    InvitationId::new(id.to_owned()).map_err(|_| OutboxError::InvalidSchema)?;
+    InvitationId::new(id.to_owned()).map_err(|_err| OutboxError::InvalidSchema)?;
     Ok(())
 }
 
@@ -234,7 +236,8 @@ fn validate_utc_timestamp(
         .get(key)
         .and_then(Value::as_str)
         .ok_or(OutboxError::InvalidSchema)?;
-    let parsed = DateTime::parse_from_rfc3339(timestamp).map_err(|_| OutboxError::InvalidSchema)?;
+    let parsed =
+        DateTime::parse_from_rfc3339(timestamp).map_err(|_err| OutboxError::InvalidSchema)?;
     if parsed.offset().local_minus_utc() != 0 {
         return Err(OutboxError::InvalidSchema);
     }
