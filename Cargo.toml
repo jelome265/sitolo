@@ -40,6 +40,7 @@ bytes = "1"
 http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["aws-lc-rs", "http1", "native-tokio", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 serde_urlencoded = "0.7"
@@ -49,8 +50,8 @@ sha2 = { version = "0.11", default-features = false }
 # optional MySQL packages in Cargo.lock even when those features are disabled;
 # depending on the backend crates directly removes that unused lockfile surface.
 # `_rt-tokio` is the runtime feature the SQLx meta-crate enables for Tokio.
-sqlx-core = { version = "0.8", default-features = false, features = ["_rt-tokio"] }
-sqlx-postgres = { version = "0.8", default-features = false, features = ["chrono", "json"] }
+sqlx-core = { version = "0.9", default-features = false, features = ["_rt-tokio", "_tls-rustls-aws-lc-rs"] }
+sqlx-postgres = { version = "0.9", default-features = false, features = ["chrono", "json"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
 tower = { version = "0.5.3", default-features = false, features = ["limit", "load-shed", "util"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }

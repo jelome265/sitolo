@@ -64,6 +64,29 @@ impl AppState {
         self
     }
 
+    /// Adds the persistent identity/session authority while the OIDC provider
+    /// is being separately composed. Authentication remains unavailable until
+    /// both are installed.
+    #[must_use]
+    pub fn with_identity_authority(
+        mut self,
+        identity_authority: Arc<dyn RequestIdentityAuthority>,
+    ) -> Self {
+        self.identity_authority = Some(identity_authority);
+        self
+    }
+
+    /// Adds the configured external identity provider independently of the
+    /// persistent session authority.
+    #[must_use]
+    pub fn with_identity_provider(
+        mut self,
+        identity_provider: Arc<dyn IdentityProviderPort>,
+    ) -> Self {
+        self.identity_provider = Some(identity_provider);
+        self
+    }
+
     /// Adds the durable tenancy command service to an explicitly composed
     /// runtime. The production bootstrap must provide `new_postgres`; no
     /// in-memory default is installed here.
@@ -100,6 +123,12 @@ impl AppState {
 
     pub fn runtime_ready(&self) -> bool {
         self.runtime_ready
+    }
+
+    /// Whether both the external identity provider and persistent session
+    /// authority have been installed into the request path.
+    pub fn has_request_identity(&self) -> bool {
+        self.identity_provider.is_some() && self.identity_authority.is_some()
     }
 
     /// Validates the bearer, exact linked identity and owner-bound Sitolo session.

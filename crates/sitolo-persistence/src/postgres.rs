@@ -198,12 +198,15 @@ impl PgAuthorityPools {
         let required_privileges = vec!["SELECT", "INSERT", "UPDATE", "DELETE"];
 
         for table in protected_tables {
-            let rel_name = format!("{schema_name}.{table}");
             for priv_kind in &required_privileges {
-                let query = format!(
-                    "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
-                );
-                let has_priv: bool = query_scalar(&query).fetch_one(&self.admin_pool).await?;
+                let has_priv: bool = query_scalar(
+                    "SELECT has_table_privilege('app_runtime', format('%I.%I', $1, $2), $3)",
+                )
+                .bind(schema_name)
+                .bind(table)
+                .bind(priv_kind)
+                .fetch_one(&self.admin_pool)
+                .await?;
 
                 if !has_priv {
                     return Err(PgAuthorityError::SecurityViolation);
@@ -212,10 +215,14 @@ impl PgAuthorityPools {
 
             let forbidden_privileges = vec!["TRUNCATE", "TRIGGER", "REFERENCES"];
             for priv_kind in &forbidden_privileges {
-                let query = format!(
-                    "SELECT has_table_privilege('app_runtime', '{rel_name}', '{priv_kind}')"
-                );
-                let has_priv: bool = query_scalar(&query).fetch_one(&self.admin_pool).await?;
+                let has_priv: bool = query_scalar(
+                    "SELECT has_table_privilege('app_runtime', format('%I.%I', $1, $2), $3)",
+                )
+                .bind(schema_name)
+                .bind(table)
+                .bind(priv_kind)
+                .fetch_one(&self.admin_pool)
+                .await?;
 
                 if has_priv {
                     return Err(PgAuthorityError::SecurityViolation);

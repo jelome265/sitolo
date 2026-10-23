@@ -111,9 +111,12 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .max_connections(1)
         .connect(&admin_url)
         .await?;
-    raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{}\"", schema_name))
-        .execute(&bootstrap)
-        .await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "CREATE SCHEMA IF NOT EXISTS \"{}\"",
+        schema_name
+    )))
+    .execute(&bootstrap)
+    .await?;
     bootstrap.close().await;
 
     let admin_opts =
@@ -127,10 +130,14 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     // the runtime and worker pools authenticate as them.
     let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
-    raw_sql(&schema_sql).execute(&admin_pool).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
+        .execute(&admin_pool)
+        .await?;
     let identity_sql = include_str!("../schema/phase3_identity_authority.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
-    raw_sql(&identity_sql).execute(&admin_pool).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
+        .execute(&admin_pool)
+        .await?;
 
     let runtime_opts =
         PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema_name.as_str())]);
@@ -235,10 +242,10 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed() {
             .unwrap_err();
         assert_eq!(sqlstate(&direct_read), "42501");
 
-        let worker_mapping_call = query(&format!(
+        let worker_mapping_call = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT \"{}\".resolve_external_identity($1, $2)",
             ctx.schema_name
-        ))
+        )))
         .bind("https://issuer.example/tenant")
         .bind("subject-auth-1")
         .fetch_optional(&ctx.worker_pool)
@@ -375,16 +382,16 @@ async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes()
 
 /// Tears down test schema.
 async fn teardown_test_context(ctx: &TestContext) {
-    let _ = raw_sql(&format!(
+    let _ = raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
-    ))
+    )))
     .execute(&ctx.admin_pool)
     .await;
 }
 
 // ============================================================================
-// ATOMICITY TESTS (Contract §13)
+// ATOMICITY TESTS (Contract Â§13)
 // ============================================================================
 
 /// Test A: A mandatory audit write failure rolls back the transaction.
@@ -432,10 +439,10 @@ async fn test_atomicity_business_succeeds_audit_fails() {
         tx.rollback().await?;
 
         // Verify the first audit write did not survive the failure.
-        let count: i64 = query_scalar(&format!(
+        let count: i64 = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(event_id.to_string())
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -508,18 +515,18 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
         tx.rollback().await?;
 
         // Verify neither the audit nor the successful outbox write survived.
-        let audit_count: i64 = query_scalar(&format!(
+        let audit_count: i64 = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(event_id.to_string())
         .fetch_one(&ctx.admin_pool)
         .await?;
 
-        let outbox_count: i64 = query_scalar(&format!(
+        let outbox_count: i64 = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -592,18 +599,18 @@ async fn test_atomicity_all_succeed_commit() {
         tx.commit().await?;
 
         // Verify both exist
-        let audit_count: i64 = query_scalar(&format!(
+        let audit_count: i64 = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(event_id.to_string())
         .fetch_one(&ctx.admin_pool)
         .await?;
 
-        let outbox_count: i64 = query_scalar(&format!(
+        let outbox_count: i64 = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -620,7 +627,7 @@ async fn test_atomicity_all_succeed_commit() {
 }
 
 // ============================================================================
-// SECURITY TESTS (Contract §14, §62)
+// SECURITY TESTS (Contract Â§14, Â§62)
 // ============================================================================
 
 /// Test: Missing tenant context fails closed
@@ -632,11 +639,11 @@ async fn test_missing_tenant_context_fails_closed() {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
         // No SET LOCAL app.organization_id
-        let insert_result = query(&format!(
+        let insert_result = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .bind("iam.organization.created")
         .bind(1i32)
@@ -672,11 +679,11 @@ async fn test_invalid_tenant_context_fails_closed() {
             .execute(&mut *tx)
             .await?;
 
-        let insert_result = query(&format!(
+        let insert_result = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .bind("iam.organization.created")
         .bind(1i32)
@@ -711,11 +718,11 @@ async fn test_runtime_cannot_update_audit() {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
         // Admin inserts audit record
-        query(&format!(
+        query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .bind("iam.organization.created")
         .bind(1i32)
@@ -734,10 +741,10 @@ async fn test_runtime_cannot_update_audit() {
             .execute(&mut *tx)
             .await?;
 
-        let update_result = query(&format!(
+        let update_result = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "UPDATE {}.audit_events SET result = 'FAILURE' WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .execute(&mut *tx)
         .await;
@@ -763,11 +770,11 @@ async fn test_runtime_cannot_delete_audit() {
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
 
-        query(&format!(
+        query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "INSERT INTO {}.audit_events (event_id, event_name, event_version, organization_id, target_type, target_ref, action, result, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .bind("iam.organization.created")
         .bind(1i32)
@@ -786,10 +793,10 @@ async fn test_runtime_cannot_delete_audit() {
             .execute(&mut *tx)
             .await?;
 
-        let delete_result = query(&format!(
+        let delete_result = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "DELETE FROM {}.audit_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&event_id)
         .execute(&mut *tx)
         .await;
@@ -808,7 +815,7 @@ async fn test_runtime_cannot_delete_audit() {
 }
 
 // ============================================================================
-// CONCURRENCY TESTS (Contract §15, §63)
+// CONCURRENCY TESTS (Contract Â§15, Â§63)
 // ============================================================================
 
 /// Test: Two workers claim same event - only one succeeds
@@ -857,10 +864,10 @@ async fn test_concurrent_worker_claim() {
         assert_eq!(total_claims, 1, "Exactly one worker must claim the event");
 
         // Verify event is now CLAIMED
-        let status: String = query_scalar(&format!(
+        let status: String = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -932,10 +939,10 @@ async fn test_lease_recovery() {
         );
 
         // Verify event is back to PENDING
-        let status: String = query_scalar(&format!(
+        let status: String = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -983,10 +990,10 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
         tx.commit().await?;
 
         // Worker tries to update organization_id (immutable field)
-        let update_result = query(&format!(
+        let update_result = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "UPDATE {}.outbox_events SET organization_id = 'org-HACKED' WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .execute(&ctx.worker_pool)
         .await;
@@ -997,10 +1004,10 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
         );
 
         // Verify organization_id unchanged
-        let org: String = query_scalar(&format!(
+        let org: String = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT organization_id FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -1072,10 +1079,10 @@ async fn test_published_event_is_not_reclaimable() {
         );
 
         // Verify status is PUBLISHED
-        let status: String = query_scalar(&format!(
+        let status: String = query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT status FROM {}.outbox_events WHERE event_id = $1",
             ctx.schema_name
-        ))
+        )))
         .bind(&outbox_id)
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -1219,7 +1226,7 @@ async fn test_same_aggregate_claims_follow_sequence() {
 }
 
 // ============================================================================
-// RETRY AND QUARANTINE TESTS (Contract §23, §24, §40)
+// RETRY AND QUARANTINE TESTS (Contract Â§23, Â§24, Â§40)
 // ============================================================================
 
 /// Test: A retryable failure reschedules the event and fences the old token.
@@ -1425,7 +1432,7 @@ async fn test_attempt_budget_exhaustion_quarantines() {
 }
 
 // ============================================================================
-// ROLE-BOUNDARY TESTS (Contract §62)
+// ROLE-BOUNDARY TESTS (Contract Â§62)
 // ============================================================================
 
 /// Extracts the SQLSTATE from a database error, failing loudly when the error

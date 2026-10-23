@@ -65,7 +65,7 @@ database identity and a production secret reference.
 | `RUNTIME__ENVIRONMENT` | `development` | `development`, `staging`, or `production`; unknown values fail startup |
 | `RUNTIME__SERVICE_NAME` | `sitolo` | Bounded non-empty service identity |
 | `RUNTIME__SERVICE_VERSION` | `0.0.0+dev` | Bounded non-empty provenance value |
-| `RUNTIME__CONFIG_SCHEMA_VERSION` | `2` | Only known schema version `2` is accepted |
+| `RUNTIME__CONFIG_SCHEMA_VERSION` | `3` | Versions `2` and `3` are accepted; version 3 includes API schema and OIDC settings |
 | `HTTP__BIND_ADDRESS` | `0.0.0.0:8080` | Socket address |
 | `HTTP__MAX_BODY_BYTES` | `2097152` | At most 26,214,400 bytes |
 | `HTTP__REQUEST_HEADER_TIMEOUT_MS` | `5000` | At most 30,000 ms |
@@ -73,7 +73,8 @@ database identity and a production secret reference.
 | `DATABASE__HOST` | `localhost` | Explicit host required in staging/production |
 | `DATABASE__PORT` | `5432` | Non-zero port |
 | `DATABASE__NAME` | `sitolo` | Explicit database name required in staging/production |
-| `DATABASE__USER` | `sitolo_api` | Local examples use `sitolo_app_runtime` |
+| `DATABASE__SCHEMA` | `public` | Lowercase PostgreSQL identifier, pinned as the API runtime search path; staging/production must set it explicitly |
+| `DATABASE__USER` | `sitolo_api` | Staging/production API must authenticate directly as restricted `app_runtime` |
 | `DATABASE__PASSWORD_REF` | `development/sitolo/db` | Typed secret reference; staging/production reject the development namespace |
 | `DATABASE__POOL_MIN` | `5` | At most 256 |
 | `DATABASE__POOL_MAX` | `20` | At least `POOL_MIN`, at most 512 |
@@ -85,6 +86,10 @@ database identity and a production secret reference.
 | `LOG__LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`; production ceiling is `info` |
 | `SECRETS__ALLOW_LOCAL_PROVIDER` | `true` | Must be `false` in production; validation rejects a local provider there |
 | `SECRETS__AWS_REGION` | absent | Required by production process bootstrap for ECS-role-backed AWS Secrets Manager lookup; bounded AWS region identifier |
+| `IDENTITY__OIDC__ISSUER` | absent | Required in staging/production; trusted Cognito HTTPS issuer, which determines the JWKS URL |
+| `IDENTITY__OIDC__CLIENT_ID` | absent | Required in staging/production; Cognito public app-client identifier |
+| `IDENTITY__OIDC__TOKEN_ENDPOINT` | absent | Required in staging/production; HTTPS OAuth token endpoint |
+| `IDENTITY__OIDC__REDIRECT_URI` | absent | Required in staging/production; registered HTTPS or `sitolo` callback URI |
 
 The source of truth for this table is
 `crates/sitolo-config/src/field.rs`; the typed model and defaults live in
@@ -118,6 +123,11 @@ variable by design.
 - Production API bootstrap uses AWS Secrets Manager with explicit ECS task-role
   credentials when `SECRETS__AWS_REGION` is set. It resolves only the configured
   database reference and never falls back to `SITOLO_SECRET__...`.
+- Staging/production bootstrap opens a bounded SQLx pool using the configured
+  secret, `app_runtime` login, and schema search path; it requires TLS with
+  hostname verification, validates the role and mandatory Phase 3/4/Part 8
+  schema objects, and probes the configured Cognito JWKS endpoint before
+  readiness. `DATABASE__USER` must be `app_runtime`.
 - The worker is a separate binary. An SNS FIFO publisher exists, but the worker
   executable remains fail-closed until its restricted database and relay runtime
   are composed. `.env.example` is an API configuration reference, not a

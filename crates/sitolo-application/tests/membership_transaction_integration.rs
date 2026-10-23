@@ -35,9 +35,11 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
         .max_connections(1)
         .connect(&admin_url)
         .await?;
-    raw_sql(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&bootstrap)
-        .await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "CREATE SCHEMA \"{schema}\""
+    )))
+    .execute(&bootstrap)
+    .await?;
     bootstrap.close().await;
 
     let admin_options =
@@ -49,7 +51,9 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
     let audit_schema =
         include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
             .replace("__SCHEMA__", &format!("\"{schema}\""));
-    raw_sql(&audit_schema).execute(&admin).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_schema.as_str()))
+        .execute(&admin)
+        .await?;
     let tenancy_schema =
         include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
     raw_sql(tenancy_schema).execute(&admin).await?;
@@ -238,10 +242,13 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
             .await,
         Err(sitolo_tenancy::ScopeError::MembershipNotActive)
     );
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
@@ -370,10 +377,13 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 20);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -429,10 +439,13 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -669,10 +682,13 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
             assert_eq!(evidence_count, 0, "{name} must not leave partial evidence");
         }
     }
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -722,10 +738,13 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
     .await
     .unwrap();
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -792,10 +811,13 @@ async fn competing_organization_transitions_and_cross_tenant_branch_update_are_d
     .await
     .unwrap();
     assert_eq!(event_counts, (1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -840,10 +862,13 @@ async fn member_invitation_and_required_evidence_commit_together() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 2);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -894,10 +919,13 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
     .await
     .unwrap();
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -963,10 +991,13 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 2);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 async fn assert_invitation_rows_absent(
@@ -1033,10 +1064,13 @@ async fn token_invitation_issue_rolls_back_when_audit_write_fails() {
             .is_err()
     );
     assert_invitation_rows_absent(&db, &org).await.unwrap();
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1074,10 +1108,13 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
             .is_err()
     );
     assert_invitation_rows_absent(&db, &org).await.unwrap();
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1165,10 +1202,13 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
             .all(|payload| !payload.contains("withdrawal@example.test")
                 && !payload.contains("0123456789abcdef0123456789abcdef"))
     );
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1230,10 +1270,13 @@ async fn concurrent_token_invitation_withdrawals_emit_one_transition() {
     .await
     .unwrap();
     assert_eq!(event_counts, (1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1307,10 +1350,13 @@ async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(event_count, 1);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1399,10 +1445,13 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(audit_count, 1);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1448,10 +1497,13 @@ async fn membership_transition_and_audit_outbox_commit_together() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 2);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 struct FailingAuditWriter;
@@ -1508,10 +1560,13 @@ async fn membership_transition_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 struct FailingOutboxWriter;
@@ -1575,10 +1630,13 @@ async fn membership_transition_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1641,10 +1699,13 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
             "iam.membership.expired".to_owned(),
         ]
     );
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1746,10 +1807,13 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
     .unwrap();
     assert_eq!(membership_state, "EXPIRED");
 
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1799,10 +1863,13 @@ async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(expiry_events, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1857,10 +1924,13 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(expiry_audits, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 async fn seed_pending_membership(db: &TestDb, organization_id: &str, membership_id: &str) {
@@ -1907,10 +1977,13 @@ async fn membership_expiry_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(expiry_events, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1946,10 +2019,13 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(expiry_audits, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2103,10 +2179,13 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2204,10 +2283,13 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
     .await
     .unwrap();
     assert_eq!(counts, (1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2260,10 +2342,13 @@ async fn concurrent_role_assignment_retries_emit_one_semantic_event() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2308,10 +2393,13 @@ async fn role_assignment_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(evidence_count, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2354,10 +2442,13 @@ async fn role_assignment_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2438,10 +2529,13 @@ async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
     .await
     .unwrap();
     assert_eq!(counts, (2, 1, 2, 2, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2494,10 +2588,13 @@ async fn role_revocation_rolls_back_when_audit_write_fails() {
     .await
     .unwrap();
     assert_eq!(removal_events, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2556,10 +2653,13 @@ async fn role_revocation_rolls_back_when_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(removal_events, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2624,10 +2724,13 @@ async fn concurrent_role_revocations_emit_one_semantic_event() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2707,10 +2810,13 @@ async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1, 1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2776,10 +2882,13 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(remaining, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2872,10 +2981,13 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
     .await
     .unwrap();
     assert_eq!(revoked_evidence, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -2916,10 +3028,13 @@ async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -3010,10 +3125,13 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
     .await
     .unwrap();
     assert_eq!(pii_outbox, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -3097,10 +3215,13 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
     .await
     .unwrap();
     assert_eq!(accepted_events, 0);
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -3160,8 +3281,11 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
     .await
     .unwrap();
     assert_eq!(counts, (1, 1, 1));
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await
-        .unwrap();
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await
+    .unwrap();
 }

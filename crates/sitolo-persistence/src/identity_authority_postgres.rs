@@ -25,13 +25,12 @@ use crate::postgres_time::from_utc;
 #[derive(Clone)]
 pub struct PgRequestIdentityAuthority {
     runtime_pool: PgPool,
-    schema_name: String,
 }
 
 impl PgRequestIdentityAuthority {
-    /// The pool must authenticate directly as `app_runtime`; production
-    /// composition is responsible for proving both `current_user` and
-    /// `session_user` before constructing this repository.
+    /// The pool must authenticate directly as `app_runtime`, have the target
+    /// schema pinned as its `search_path`, and prove both `current_user` and
+    /// `session_user` before production composition constructs this repository.
     pub fn new(
         runtime_pool: PgPool,
         schema_name: impl Into<String>,
@@ -40,10 +39,7 @@ impl PgRequestIdentityAuthority {
         if !valid_schema_name(&schema_name) {
             return Err(sitolo_auth::AuthError::ConfigurationInvalid);
         }
-        Ok(Self {
-            runtime_pool,
-            schema_name,
-        })
+        Ok(Self { runtime_pool })
     }
 }
 
@@ -54,11 +50,7 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
         issuer: &str,
         subject: &str,
     ) -> Result<Option<UserId>, sitolo_auth::AuthError> {
-        let statement = format!(
-            "SELECT \"{}\".resolve_external_identity($1, $2)",
-            self.schema_name
-        );
-        let resolved: Option<String> = query_scalar(&statement)
+        let resolved: Option<String> = query_scalar("SELECT resolve_external_identity($1, $2)")
             .bind(issuer)
             .bind(subject)
             .fetch_one(&self.runtime_pool)
@@ -79,11 +71,7 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
     ) -> Result<SessionSnapshot, sitolo_auth::AuthError> {
         let now = crate::postgres_time::to_utc(now)
             .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
-        let statement = format!(
-            "SELECT * FROM \"{}\".accept_sitolo_session($1, $2, $3)",
-            self.schema_name
-        );
-        let row = query(&statement)
+        let row = query("SELECT * FROM accept_sitolo_session($1, $2, $3)")
             .bind(id.as_str())
             .bind(expected_user_id.as_str())
             .bind(now)
@@ -134,11 +122,7 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
         id: &DeviceId,
         expected_user_id: &UserId,
     ) -> Result<Option<Device>, sitolo_auth::AuthError> {
-        let statement = format!(
-            "SELECT * FROM \"{}\".load_identity_device($1, $2)",
-            self.schema_name
-        );
-        let row = query(&statement)
+        let row = query("SELECT * FROM load_identity_device($1, $2)")
             .bind(id.as_str())
             .bind(expected_user_id.as_str())
             .fetch_optional(&self.runtime_pool)

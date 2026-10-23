@@ -89,11 +89,32 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             );
         }
     }
-    if b.db_host.is_empty() || b.db_name.is_empty() || b.db_user.is_empty() {
+    if b.db_host.is_empty()
+        || b.db_name.is_empty()
+        || b.db_user.is_empty()
+        || b.db_schema.is_empty()
+    {
         add(
             ValidationLayer::Semantic,
             "database",
             "identity fields must be non-empty",
+        );
+    }
+    if b.db_schema.len() > 63
+        || !b
+            .db_schema
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        || !b
+            .db_schema
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        add(
+            ValidationLayer::Security,
+            "db_schema",
+            "must be a bounded lowercase PostgreSQL identifier",
         );
     }
     for (field, value) in [
@@ -116,6 +137,13 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             ValidationLayer::Semantic,
             "db_port",
             "must be a non-zero TCP port",
+        );
+    }
+    if b.environment != crate::Environment::Development && b.db_user != "app_runtime" {
+        add(
+            ValidationLayer::Security,
+            "db_user",
+            "staging and production API pools must authenticate directly as app_runtime",
         );
     }
     if b.max_request_body_bytes == 0
@@ -187,6 +215,38 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "allow_local_secret_provider",
             "forbidden in production",
         );
+    }
+    let oidc_values = [
+        ("oidc_issuer", b.oidc_issuer.as_deref()),
+        ("oidc_client_id", b.oidc_client_id.as_deref()),
+        ("oidc_token_endpoint", b.oidc_token_endpoint.as_deref()),
+        ("oidc_redirect_uri", b.oidc_redirect_uri.as_deref()),
+    ];
+    let oidc_count = oidc_values
+        .iter()
+        .filter(|(_, value)| value.is_some())
+        .count();
+    if (b.environment != crate::Environment::Development && oidc_count != oidc_values.len())
+        || (oidc_count != 0 && oidc_count != oidc_values.len())
+    {
+        add(
+            ValidationLayer::Environment,
+            "oidc",
+            "production requires all OIDC settings and partial configuration is invalid",
+        );
+    }
+    for (field, value) in oidc_values {
+        if value.is_some_and(|value| {
+            value.is_empty()
+                || value.len() > ceilings::MAX_BOUNDED_STRING_BYTES
+                || value.bytes().any(|byte| byte.is_ascii_control())
+        }) {
+            add(
+                ValidationLayer::Security,
+                field,
+                "must be bounded, non-empty, and contain no control characters",
+            );
+        }
     }
     if b.secrets_aws_region.as_ref().is_some_and(|region| {
         region.is_empty()
@@ -319,7 +379,12 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         db_host: b.db_host,
         db_port: b.db_port,
         db_name: b.db_name,
+        db_schema: b.db_schema,
         db_user: b.db_user,
+        oidc_issuer: b.oidc_issuer,
+        oidc_client_id: b.oidc_client_id,
+        oidc_token_endpoint: b.oidc_token_endpoint,
+        oidc_redirect_uri: b.oidc_redirect_uri,
         db_password_ref: b.db_password_ref.expect("validated"),
         db_pool_min: b.db_pool_min,
         db_pool_max: b.db_pool_max,

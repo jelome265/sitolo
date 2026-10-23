@@ -70,7 +70,12 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
         "DATABASE__HOST" => b.db_host = value.into(),
         "DATABASE__PORT" => b.db_port = number(key, value)?,
         "DATABASE__NAME" => b.db_name = value.into(),
+        "DATABASE__SCHEMA" => b.db_schema = value.into(),
         "DATABASE__USER" => b.db_user = value.into(),
+        "IDENTITY__OIDC__ISSUER" => b.oidc_issuer = Some(value.into()),
+        "IDENTITY__OIDC__CLIENT_ID" => b.oidc_client_id = Some(value.into()),
+        "IDENTITY__OIDC__TOKEN_ENDPOINT" => b.oidc_token_endpoint = Some(value.into()),
+        "IDENTITY__OIDC__REDIRECT_URI" => b.oidc_redirect_uri = Some(value.into()),
         "DATABASE__PASSWORD_REF" => {
             b.db_password_ref = Some(
                 SecretRef::new(SecretClass::Database, value).map_err(|_| UnknownKey(key.into()))?,

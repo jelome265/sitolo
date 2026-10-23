@@ -48,7 +48,28 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
     line(&mut output, "db_host", &config.db_host);
     line(&mut output, "db_port", &config.db_port.to_string());
     line(&mut output, "db_name", &config.db_name);
+    line(&mut output, "db_schema", &config.db_schema);
     line(&mut output, "db_user", &config.db_user);
+    line(
+        &mut output,
+        "oidc_issuer",
+        config.oidc_issuer.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_client_id",
+        config.oidc_client_id.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_token_endpoint",
+        config.oidc_token_endpoint.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_redirect_uri",
+        config.oidc_redirect_uri.as_deref().unwrap_or("<none>"),
+    );
     line(
         &mut output,
         "db_password_ref",
@@ -196,7 +217,9 @@ mod tests {
         changed!(db_host, "db.example".into());
         changed!(db_port, 5433);
         changed!(db_name, "other".into());
+        changed!(db_schema, "tenant_data".into());
         changed!(db_user, "other_user".into());
+        changed!(oidc_client_id, Some("other-client".into()));
         changed!(db_pool_min, 6);
         changed!(db_pool_max, 21);
         changed!(db_acquire_timeout_ms, 3_000);
@@ -206,7 +229,7 @@ mod tests {
         changed!(trace_sample_ratio, 0.2);
         changed!(log_level, LogLevel::Warn);
         changed!(allow_local_secret_provider, false);
-        changed!(config_schema_version, 3);
+        changed!(config_schema_version, 2);
         changed!(relay_aws_region, Some("af-south-1".into()));
         changed!(
             relay_sns_topic_arn,

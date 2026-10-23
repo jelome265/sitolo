@@ -332,9 +332,11 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
         .max_connections(1)
         .connect(&admin_url)
         .await?;
-    raw_sql(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&bootstrap)
-        .await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "CREATE SCHEMA \"{schema}\""
+    )))
+    .execute(&bootstrap)
+    .await?;
     bootstrap.close().await;
 
     let admin_options =
@@ -347,7 +349,9 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
         "../../../crates/sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql"
     )
     .replace("__SCHEMA__", &format!("\"{schema}\""));
-    raw_sql(&audit_schema).execute(&admin).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_schema.as_str()))
+        .execute(&admin)
+        .await?;
     raw_sql(include_str!(
         "../../../crates/sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql"
     ))
@@ -495,9 +499,12 @@ async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
     .await?;
     assert_eq!(denied_evidence, 2);
 
-    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
-        .execute(&db.admin)
-        .await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
     db.runtime.close().await;
     db.admin.close().await;
     Ok(())

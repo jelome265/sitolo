@@ -10,6 +10,7 @@ mod ports;
 pub mod postgres;
 mod postgres_time;
 mod runtime;
+pub mod runtime_pool;
 mod tenancy;
 pub mod tenancy_postgres;
 
@@ -23,6 +24,7 @@ pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
 };
+pub use runtime_pool::{PgRuntimePool, RuntimePoolError};
 pub use tenancy::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores,

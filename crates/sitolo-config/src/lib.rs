@@ -48,7 +48,7 @@ pub const ENV_SEPARATOR: &str = "__";
 
 /// Config-schema versions this binary understands. Unknown schema fails
 /// startup (Appendix A: `config_schema_version`).
-pub const KNOWN_SCHEMA_VERSIONS: &[u32] = &[2];
+pub const KNOWN_SCHEMA_VERSIONS: &[u32] = &[2, 3];
 
 #[cfg(test)]
 mod contract_tests {
@@ -153,13 +153,38 @@ mod contract_tests {
     }
 
     #[test]
+    fn production_requires_restricted_database_role_and_complete_oidc_config() {
+        let mut config = defaults::Builder::production();
+        config.db_host = "db.internal".into();
+        config.db_name = "sitolo".into();
+        config.db_schema = "sitolo_app".into();
+        config.db_user = "app_runtime".into();
+        config.db_password_ref = Some(
+            SecretRef::new(SecretClass::Database, "production/sitolo/db")
+                .expect("static test reference is valid"),
+        );
+        config.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
+        config.oidc_client_id = Some("client-id".into());
+        config.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
+        config.oidc_redirect_uri = Some("https://app.example.com/callback".into());
+        assert!(validate(config.clone()).is_ok());
+
+        config.db_user = "sitolo_admin".into();
+        assert!(validate(config.clone()).is_err());
+        config.db_user = "app_runtime".into();
+        config.oidc_issuer = None;
+        assert!(validate(config).is_err());
+    }
+
+    #[test]
     fn production_rejects_development_secret_namespace() {
         // F-003: a fully explicit production config with a development
         // secret namespace is rejected; a production namespace is accepted.
         let mut dev_ns = defaults::Builder::production();
         dev_ns.db_host = "db.internal".into();
         dev_ns.db_name = "sitolo".into();
-        dev_ns.db_user = "sitolo_api".into();
+        dev_ns.db_schema = "sitolo_app".into();
+        dev_ns.db_user = "app_runtime".into();
         dev_ns.db_password_ref =
             Some(SecretRef::new(SecretClass::Database, "development/sitolo/db").unwrap());
         assert!(validate(dev_ns).is_err());
@@ -167,9 +192,14 @@ mod contract_tests {
         let mut prod_ns = defaults::Builder::production();
         prod_ns.db_host = "db.internal".into();
         prod_ns.db_name = "sitolo".into();
-        prod_ns.db_user = "sitolo_api".into();
+        prod_ns.db_schema = "sitolo_app".into();
+        prod_ns.db_user = "app_runtime".into();
         prod_ns.db_password_ref =
             Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+        prod_ns.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
+        prod_ns.oidc_client_id = Some("client-id".into());
+        prod_ns.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
+        prod_ns.oidc_redirect_uri = Some("https://app.example.com/callback".into());
         assert!(validate(prod_ns).is_ok());
     }
 
@@ -196,6 +226,15 @@ mod contract_tests {
                 // so only the endpoint rule is under test here.
                 builder.db_password_ref =
                     Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+                builder.db_host = "db.internal".into();
+                builder.db_name = "sitolo".into();
+                builder.db_schema = "sitolo_app".into();
+                builder.db_user = "app_runtime".into();
+                builder.oidc_issuer =
+                    Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
+                builder.oidc_client_id = Some("client-id".into());
+                builder.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
+                builder.oidc_redirect_uri = Some("https://app.example.com/callback".into());
             }
             builder.otel_endpoint = Some(endpoint.into());
             assert_eq!(
@@ -224,6 +263,35 @@ mod contract_tests {
         catalogue_keys.sort_unstable();
         parser_keys.sort_unstable();
         assert_eq!(catalogue_keys, parser_keys);
+    }
+
+    #[test]
+    fn database_schema_is_a_bounded_identifier_and_is_required_outside_development() {
+        let mut staging = defaults::Builder::staging();
+        staging.db_host = "db.internal".into();
+        staging.db_name = "sitolo".into();
+        staging.db_user = "app_runtime".into();
+        staging.db_schema = "sitolo_app".into();
+        staging.db_password_ref = Some(
+            SecretRef::new(SecretClass::Database, "staging/sitolo/db")
+                .expect("static test reference is valid"),
+        );
+        staging.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
+        staging.oidc_client_id = Some("client-id".into());
+        staging.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
+        staging.oidc_redirect_uri = Some("https://app.example.com/callback".into());
+        assert!(validate(staging.clone()).is_ok());
+
+        for schema in ["", "Upper", "a-b", "0prefix", &"a".repeat(64)] {
+            let mut invalid = staging.clone();
+            invalid.db_schema = schema.to_owned();
+            assert!(validate(invalid).is_err(), "schema={schema:?}");
+        }
+
+        let runtime = validate(staging)
+            .expect("explicit staging database config validates")
+            .database_runtime();
+        assert_eq!(runtime.schema, "sitolo_app");
     }
 
     #[test]

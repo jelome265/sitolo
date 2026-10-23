@@ -195,6 +195,12 @@ impl CognitoOidcProvider {
     /// Constructs the provider using TLS certificate verification and a
     /// bounded request timeout. Redirect following is disabled.
     pub fn new(config: CognitoOidcConfig) -> Result<Self, AuthError> {
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        }
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            return Err(AuthError::ConfigurationInvalid);
+        }
         let connector = HttpsConnectorBuilder::new()
             .with_native_roots()
             .map_err(|_| AuthError::ConfigurationInvalid)?
@@ -211,6 +217,17 @@ impl CognitoOidcProvider {
             jwks: RwLock::new(None),
             refresh_lock: Mutex::new(()),
         })
+    }
+
+    /// Fetches and validates the trusted issuer's signing keys for startup
+    /// readiness. The URL is derived from the validated issuer and redirects
+    /// remain disabled by the existing HTTPS client.
+    ///
+    /// # Errors
+    /// Returns an identity-provider error if the JWKS endpoint is unavailable
+    /// or its bounded document is invalid.
+    pub async fn probe(&self) -> Result<(), AuthError> {
+        self.refresh_jwks().await
     }
 
     async fn decoding_key(&self, kid: &str) -> Result<DecodingKey, AuthError> {

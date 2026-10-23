@@ -24,7 +24,7 @@ pub mod ceilings {
     /// (Phase 2 §47: bounded validation failure, never a parser blowup).
     pub const MAX_BOUNDED_STRING_BYTES: usize = 512;
     /// Schema version handled by this build.
-    pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+    pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 }
 
 /// Deployment environment for a process.
@@ -107,9 +107,19 @@ pub struct AppConfig {
     pub db_host: String,
     pub db_port: u16,
     pub db_name: String,
+    /// PostgreSQL schema pinned as the runtime connection search path.
+    pub db_schema: String,
     pub db_user: String,
     /// Secret reference; a raw database password is prohibited (Appendix A).
     pub db_password_ref: SecretRef,
+    /// Trusted Cognito OIDC issuer used by the process runtime.
+    pub oidc_issuer: Option<String>,
+    /// Cognito public app-client identifier.
+    pub oidc_client_id: Option<String>,
+    /// OAuth token endpoint for authorization-code exchange.
+    pub oidc_token_endpoint: Option<String>,
+    /// Registered callback URI used for authorization-code exchange.
+    pub oidc_redirect_uri: Option<String>,
     pub db_pool_min: u32,
     pub db_pool_max: u32,
     pub db_acquire_timeout_ms: u64,
@@ -142,6 +152,7 @@ pub struct DatabaseRuntimeConfig {
     pub host: String,
     pub port: u16,
     pub database: String,
+    pub schema: String,
     pub username: String,
     pub password_ref: SecretRef,
     pub pool_min: u32,
@@ -176,6 +187,7 @@ impl AppConfig {
             host: self.db_host.clone(),
             port: self.db_port,
             database: self.db_name.clone(),
+            schema: self.db_schema.clone(),
             username: self.db_user.clone(),
             password_ref: self.db_password_ref.clone(),
             pool_min: self.db_pool_min,
@@ -222,7 +234,12 @@ pub mod defaults {
         pub db_host: String,
         pub db_port: u16,
         pub db_name: String,
+        pub db_schema: String,
         pub db_user: String,
+        pub oidc_issuer: Option<String>,
+        pub oidc_client_id: Option<String>,
+        pub oidc_token_endpoint: Option<String>,
+        pub oidc_redirect_uri: Option<String>,
         pub db_pool_min: u32,
         pub db_pool_max: u32,
         pub db_acquire_timeout_ms: u64,
@@ -256,7 +273,12 @@ pub mod defaults {
                 db_host: "localhost".to_string(),
                 db_port: 5432,
                 db_name: "sitolo".to_string(),
+                db_schema: "public".to_string(),
                 db_user: "sitolo_api".to_string(),
+                oidc_issuer: None,
+                oidc_client_id: None,
+                oidc_token_endpoint: None,
+                oidc_redirect_uri: None,
                 db_pool_min: 5,
                 db_pool_max: 20,
                 db_acquire_timeout_ms: 2_000,
@@ -302,6 +324,7 @@ pub mod defaults {
                 otel_endpoint: None,
                 db_host: String::new(),
                 db_name: String::new(),
+                db_schema: String::new(),
                 db_user: String::new(),
                 db_password_ref: None,
                 ..Builder::default()
@@ -321,6 +344,7 @@ pub mod defaults {
                 otel_endpoint: Some("https://collector.sitolo.internal".to_string()),
                 db_host: String::new(),
                 db_name: String::new(),
+                db_schema: String::new(),
                 db_user: String::new(),
                 db_password_ref: None,
                 ..Builder::default()

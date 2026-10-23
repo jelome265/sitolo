@@ -117,8 +117,22 @@ async fn staging_boots_with_explicit_database_identity() {
             pair("DATABASE__HOST", "db.internal"),
             pair("DATABASE__PORT", "5432"),
             pair("DATABASE__NAME", "sitolo"),
-            pair("DATABASE__USER", "sitolo_api"),
+            pair("DATABASE__SCHEMA", "sitolo_app"),
+            pair("DATABASE__USER", "app_runtime"),
             pair("DATABASE__PASSWORD_REF", "staging/sitolo/db"),
+            pair(
+                "IDENTITY__OIDC__ISSUER",
+                "https://cognito-idp.af-south-1.amazonaws.com/pool",
+            ),
+            pair("IDENTITY__OIDC__CLIENT_ID", "client-id"),
+            pair(
+                "IDENTITY__OIDC__TOKEN_ENDPOINT",
+                "https://auth.example.com/oauth2/token",
+            ),
+            pair(
+                "IDENTITY__OIDC__REDIRECT_URI",
+                "https://app.example.com/callback",
+            ),
         ],
         stub(),
     )
@@ -137,8 +151,22 @@ async fn injected_production_bootstrap_without_provider_fails_closed() {
         pair("DATABASE__HOST", "db.internal"),
         pair("DATABASE__PORT", "5432"),
         pair("DATABASE__NAME", "sitolo"),
-        pair("DATABASE__USER", "sitolo_api"),
+        pair("DATABASE__SCHEMA", "sitolo_app"),
+        pair("DATABASE__USER", "app_runtime"),
         pair("DATABASE__PASSWORD_REF", "production/sitolo/db"),
+        pair(
+            "IDENTITY__OIDC__ISSUER",
+            "https://cognito-idp.af-south-1.amazonaws.com/pool",
+        ),
+        pair("IDENTITY__OIDC__CLIENT_ID", "client-id"),
+        pair(
+            "IDENTITY__OIDC__TOKEN_ENDPOINT",
+            "https://auth.example.com/oauth2/token",
+        ),
+        pair(
+            "IDENTITY__OIDC__REDIRECT_URI",
+            "https://app.example.com/callback",
+        ),
         pair("SECRETS__ALLOW_LOCAL_PROVIDER", "false"),
     ])
     .await;
@@ -158,8 +186,22 @@ async fn explicit_provider_is_honored_in_production() {
             pair("DATABASE__HOST", "db.internal"),
             pair("DATABASE__PORT", "5432"),
             pair("DATABASE__NAME", "sitolo"),
-            pair("DATABASE__USER", "sitolo_api"),
+            pair("DATABASE__SCHEMA", "sitolo_app"),
+            pair("DATABASE__USER", "app_runtime"),
             pair("DATABASE__PASSWORD_REF", "production/sitolo/db"),
+            pair(
+                "IDENTITY__OIDC__ISSUER",
+                "https://cognito-idp.af-south-1.amazonaws.com/pool",
+            ),
+            pair("IDENTITY__OIDC__CLIENT_ID", "client-id"),
+            pair(
+                "IDENTITY__OIDC__TOKEN_ENDPOINT",
+                "https://auth.example.com/oauth2/token",
+            ),
+            pair(
+                "IDENTITY__OIDC__REDIRECT_URI",
+                "https://app.example.com/callback",
+            ),
             pair("SECRETS__ALLOW_LOCAL_PROVIDER", "false"),
         ],
         stub(),

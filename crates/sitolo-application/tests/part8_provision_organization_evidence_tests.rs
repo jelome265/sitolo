@@ -3,10 +3,10 @@
 //!
 //! Exercises the audit+outbox atomicity slice described in
 //! `crates/sitolo-application/src/tenancy.rs` module docs and required by
-//! `docs/phase4_part8_audit_outbox_implementation_contract.md` §29
-//! (atomicity matrix) and §61 (required atomicity tests).
+//! `docs/phase4_part8_audit_outbox_implementation_contract.md` Â§29
+//! (atomicity matrix) and Â§61 (required atomicity tests).
 //!
-//! Requires a real PostgreSQL instance (contract §59: "No security test may
+//! Requires a real PostgreSQL instance (contract Â§59: "No security test may
 //! silently skip because PostgreSQL is unavailable"). Set
 //! `ADMIN_DATABASE_URL` to a database the connecting
 //! role can create/drop schemas in. These tests intentionally panic rather
@@ -43,7 +43,7 @@ struct TestContext {
 async fn setup() -> TestContext {
     let admin_url = env::var("ADMIN_DATABASE_URL").expect(
         "ADMIN_DATABASE_URL must be set to run Part 8 PostgreSQL integration \
-         tests; these tests do not skip silently (contract §59)",
+         tests; these tests do not skip silently (contract Â§59)",
     );
 
     let schema_name = format!("test_part8_app_{}", Uuid::new_v4().simple());
@@ -65,15 +65,17 @@ async fn setup() -> TestContext {
         .await
         .expect("connect to Postgres");
 
-    raw_sql(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""))
-        .execute(&admin_pool)
-        .await
-        .expect("create test schema");
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""
+    )))
+    .execute(&admin_pool)
+    .await
+    .expect("create test schema");
 
     let schema_sql =
         include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
             .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(&schema_sql)
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
         .execute(&admin_pool)
         .await
         .expect("apply Part 8 audit/outbox schema fixture");
@@ -119,10 +121,10 @@ async fn setup() -> TestContext {
 }
 
 async fn teardown(ctx: &TestContext) {
-    let _ = raw_sql(&format!(
+    let _ = raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
-    ))
+    )))
     .execute(&ctx.admin_pool)
     .await;
 }
@@ -135,9 +137,9 @@ fn service_with_evidence(pool: PgPool) -> TenancyService {
 }
 
 async fn row_count(pool: &PgPool, table: &str, org_id: &str) -> i64 {
-    query_scalar(&format!(
+    query_scalar(sqlx_core::sql_str::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM {table} WHERE organization_id = $1"
-    ))
+    )))
     .bind(org_id)
     .fetch_one(pool)
     .await
@@ -184,9 +186,9 @@ async fn seed_invited_member(ctx: &TestContext, args: &ProvisionArgs) -> Members
     member_id
 }
 
-/// Test C (§61): all writes succeed -> business, audit, and outbox present;
+/// Test C (Â§61): all writes succeed -> business, audit, and outbox present;
 /// exactly one audit event and one outbox event per successful command
-/// (§38 — no duplicate semantic events for one command).
+/// (Â§38 â€” no duplicate semantic events for one command).
 #[tokio::test]
 async fn provision_organization_emits_audit_and_outbox_on_success() {
     let ctx = setup().await;
@@ -225,11 +227,11 @@ async fn provision_organization_emits_audit_and_outbox_on_success() {
     assert_eq!(branch_count, 1);
     assert_eq!(
         audit_count, 1,
-        "exactly one audit event for one successful command (§38)"
+        "exactly one audit event for one successful command (Â§38)"
     );
     assert_eq!(
         outbox_count, 1,
-        "exactly one outbox event for one successful command (§38)"
+        "exactly one outbox event for one successful command (Â§38)"
     );
 }
 
@@ -680,7 +682,7 @@ async fn provision_organization_concurrent_same_payload_is_idempotent() {
     assert_eq!(outbox_count, 1);
 }
 
-/// Test A (§61): outbox failure rolls back business and audit rows already
+/// Test A (Â§61): outbox failure rolls back business and audit rows already
 /// staged in the same transaction.
 #[tokio::test]
 async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
@@ -728,7 +730,7 @@ async fn provision_organization_rolls_back_audit_when_outbox_write_fails() {
     );
     assert_eq!(
         audit_count, 0,
-        "audit insert must roll back with the outbox insert in the same transaction (§5, §29)"
+        "audit insert must roll back with the outbox insert in the same transaction (Â§5, Â§29)"
     );
     assert_eq!(organization_count, 0, "business row must roll back");
     assert_eq!(membership_count, 0, "business row must roll back");
@@ -800,10 +802,10 @@ async fn part8_verifier_rejects_select_policies_without_tenant_context() {
         ),
     ] {
         let ctx = setup().await;
-        raw_sql(&format!(
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
             "DROP POLICY {policy} ON {table}; \
              CREATE POLICY {policy} ON {table} FOR SELECT TO app_runtime USING ({expression})"
-        ))
+        )))
         .execute(&ctx.admin_pool)
         .await
         .expect("replace the SELECT policy with a tenant-blind expression");
@@ -841,10 +843,10 @@ async fn part8_verifier_rejects_insert_policies_without_tenant_context() {
         ),
     ] {
         let ctx = setup().await;
-        raw_sql(&format!(
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
             "DROP POLICY {policy} ON {table}; \
              CREATE POLICY {policy} ON {table} FOR INSERT TO app_runtime WITH CHECK ({expression})"
-        ))
+        )))
         .execute(&ctx.admin_pool)
         .await
         .expect("replace the INSERT policy with a tenant-blind expression");

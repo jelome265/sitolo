@@ -203,7 +203,9 @@ struct SchemaGuard {
 impl SchemaGuard {
     async fn teardown(&self) -> Result<(), PgAuthorityError> {
         let drop_sql = format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema_name);
-        raw_sql(&drop_sql).execute(&self.admin_pool).await?;
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(drop_sql.as_str()))
+            .execute(&self.admin_pool)
+            .await?;
         Ok(())
     }
 }
@@ -334,7 +336,11 @@ async fn setup_test_context(
 
     // Create isolated schema
     let create_schema_sql = format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"");
-    raw_sql(&create_schema_sql).execute(&admin_pool).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(
+        create_schema_sql.as_str(),
+    ))
+    .execute(&admin_pool)
+    .await?;
 
     let guard = SchemaGuard {
         schema_name: schema_name.clone(),
@@ -370,7 +376,9 @@ async fn setup_test_context_inner(
     let grant_schema_sql = format!(
         "GRANT USAGE ON SCHEMA \"{schema_name}\" TO app_runtime; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"{schema_name}\" TO app_runtime;"
     );
-    raw_sql(&grant_schema_sql).execute(admin_pool).await?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(grant_schema_sql.as_str()))
+        .execute(admin_pool)
+        .await?;
 
     let pools = PgAuthorityPools::connect_options(admin_opts.clone(), runtime_opts.clone()).await?;
 
