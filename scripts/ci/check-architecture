@@ -42,4 +42,7 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
+echo "==> Crate boundary contract"
+python3 scripts/ci/check-crate-boundaries.py
+
 echo "Architecture check PASSED"
