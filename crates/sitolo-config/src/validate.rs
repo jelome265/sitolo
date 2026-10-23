@@ -229,7 +229,7 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
     }
     if b.relay_aws_region.as_ref().is_some_and(|region| {
         region.is_empty()
-            || region.len() > 64
+            || region.len() > 32
             || !region
                 .bytes()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
@@ -246,6 +246,7 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             || parts[0] != "arn"
             || parts[1] != "aws"
             || parts[2] != "sns"
+            || b.relay_aws_region.as_deref() != Some(parts[3])
             || parts[4].len() != 12
             || !parts[4].bytes().all(|c| c.is_ascii_digit())
             || !parts[5].ends_with(".fifo")

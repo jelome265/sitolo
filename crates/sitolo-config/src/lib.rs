@@ -265,5 +265,18 @@ mod contract_tests {
         )])
         .unwrap();
         assert!(validate(incomplete).is_err());
+
+        let mismatched = EnvLoader::from_pairs([
+            (
+                "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
+                "af-south-1".into(),
+            ),
+            (
+                "SITOLO__EVENTS__RELAY__SNS_TOPIC_ARN".into(),
+                "arn:aws:sns:eu-west-1:123456789012:sitolo-iam-events-prod.fifo".into(),
+            ),
+        ])
+        .unwrap();
+        assert!(validate(mismatched).is_err());
     }
 }
