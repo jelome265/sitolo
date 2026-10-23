@@ -46,6 +46,8 @@ pub struct TrustedOrganizationId(pub OrganizationId);
 /// registry) so tenant existence is never enumerable.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ScopeError {
+    #[error("authoritative tenancy records are unavailable")]
+    AuthorityUnavailable,
     #[error("no authority for the requested organization")]
     OrganizationDenied,
     #[error("no authority for the requested branch")]

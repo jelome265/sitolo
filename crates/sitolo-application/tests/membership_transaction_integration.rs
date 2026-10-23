@@ -127,6 +127,96 @@ async fn seed_provisioning_branch(
     Ok(())
 }
 
+#[tokio::test]
+async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() {
+    let db = test_db().await.unwrap();
+    let organization_id = OrganizationId::new("org-authority-read").unwrap();
+    let membership_id = "member-authority-read";
+    seed_active_membership(&db, organization_id.as_str(), membership_id)
+        .await
+        .unwrap();
+    seed_active_branch(&db, organization_id.as_str(), "branch-authority-main")
+        .await
+        .unwrap();
+    seed_active_branch(&db, organization_id.as_str(), "branch-authority-other")
+        .await
+        .unwrap();
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-authority-read', $1, $2, 'CASHIER', 'EFFECTIVE', 1)")
+        .bind(organization_id.as_str())
+        .bind(membership_id)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    query("INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ('scope-authority-read', $1, $2, 'BRANCH', 'branch-authority-main', 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .bind(membership_id)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+
+    // The reference store is deliberately empty. A successful result proves
+    // the request authorization path reads the same PostgreSQL authority that
+    // owns the mutation and evidence records.
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let user_id = sitolo_domain::tenancy::TenantUserId::new("user-1").unwrap();
+    let main_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-main").unwrap();
+    let other_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-other").unwrap();
+    let authorized = tenancy
+        .authorize_user_operation(
+            &user_id,
+            &organization_id,
+            Some(&main_branch),
+            sitolo_authz::Permission::SaleCreate,
+        )
+        .await
+        .unwrap();
+    assert_eq!(authorized.membership_id.as_str(), membership_id);
+    assert_eq!(
+        tenancy
+            .authorize_user_operation(
+                &user_id,
+                &organization_id,
+                Some(&main_branch),
+                sitolo_authz::Permission::SaleVoid,
+            )
+            .await,
+        Err(sitolo_tenancy::ScopeError::PermissionDenied)
+    );
+    assert_eq!(
+        tenancy
+            .authorize_user_operation(
+                &user_id,
+                &organization_id,
+                Some(&other_branch),
+                sitolo_authz::Permission::SaleCreate,
+            )
+            .await,
+        Err(sitolo_tenancy::ScopeError::ScopeDenied)
+    );
+
+    query("UPDATE organization_memberships SET state = 'SUSPENDED' WHERE organization_id = $1 AND id = $2")
+        .bind(organization_id.as_str())
+        .bind(membership_id)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    assert_eq!(
+        tenancy
+            .authorize_user_operation(
+                &user_id,
+                &organization_id,
+                Some(&main_branch),
+                sitolo_authz::Permission::SaleCreate,
+            )
+            .await,
+        Err(sitolo_tenancy::ScopeError::MembershipNotActive)
+    );
+    raw_sql(&format!("DROP SCHEMA \"{}\" CASCADE", db.schema))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+}
+
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     let outbox = Arc::new(PostgresOutboxRepository::new(db.runtime.clone()));
     TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())

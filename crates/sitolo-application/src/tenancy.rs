@@ -3283,6 +3283,26 @@ impl TenancyService {
         membership_id: &MembershipId,
         branch_id: Option<&BranchId>,
     ) -> Result<EffectiveScope, ScopeError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            let mut tx = sink
+                .pool
+                .begin()
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            establish_scope_transaction(&mut tx, organization_id).await?;
+            let scope = load_effective_scope(
+                &mut tx,
+                organization_id,
+                MembershipSelector::Id(membership_id),
+                branch_id,
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            return Ok(scope);
+        }
+
         let organization = self
             .db
             .organization_snapshot(organization_id)
@@ -3329,6 +3349,17 @@ impl TenancyService {
         branch_id: Option<&BranchId>,
         permission: Permission,
     ) -> Result<EffectiveScope, ScopeError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            return authorize_postgres_operation(
+                &sink.pool,
+                organization_id,
+                MembershipSelector::Id(membership_id),
+                branch_id,
+                permission,
+            )
+            .await;
+        }
+
         let mut scope = self
             .effective_scope(organization_id, membership_id, branch_id)
             .await?;
@@ -3359,6 +3390,280 @@ impl TenancyService {
         scope.permissions = permissions;
         Ok(scope)
     }
+
+    /// Resolves and authorizes an operation from the authenticated Sitolo user
+    /// ID. The organization and branch values are selectors only; membership,
+    /// operating state, role permissions, and scope grants are loaded from the
+    /// configured authority store.
+    ///
+    /// # Errors
+    /// Returns a scope denial when no active membership or permission covers
+    /// the request, or [`ScopeError::AuthorityUnavailable`] when the durable
+    /// authority cannot be read.
+    pub async fn authorize_user_operation(
+        &self,
+        user_id: &TenantUserId,
+        organization_id: &OrganizationId,
+        branch_id: Option<&BranchId>,
+        permission: Permission,
+    ) -> Result<EffectiveScope, ScopeError> {
+        if let Some(sink) = self.evidence.as_ref() {
+            return authorize_postgres_operation(
+                &sink.pool,
+                organization_id,
+                MembershipSelector::User(user_id),
+                branch_id,
+                permission,
+            )
+            .await;
+        }
+
+        let membership = self
+            .db
+            .membership_for_user(organization_id, user_id)
+            .await
+            .ok_or(ScopeError::MembershipNotActive)?;
+        self.authorize_operation(organization_id, &membership.id, branch_id, permission)
+            .await
+    }
+}
+
+enum MembershipSelector<'a> {
+    Id(&'a MembershipId),
+    User(&'a TenantUserId),
+}
+
+type PersistedScopeRow = (
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
+async fn establish_scope_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+) -> Result<(), ScopeError> {
+    query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    query("SELECT set_config('app.organization_id', $1, true)")
+        .bind(organization_id.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(())
+}
+
+async fn load_effective_scope(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+    selector: MembershipSelector<'_>,
+    branch_id: Option<&BranchId>,
+) -> Result<EffectiveScope, ScopeError> {
+    let (membership_id, user_id) = match selector {
+        MembershipSelector::Id(id) => (Some(id.as_str()), None),
+        MembershipSelector::User(id) => (None, Some(id.as_str())),
+    };
+    let row: Option<PersistedScopeRow> = sqlx_core::query_as::query_as(
+        "SELECT o.name, o.state, o.state_version, m.id, m.user_id, m.state, m.state_version, \
+         b.id, b.name, b.state, b.state_version \
+         FROM organizations o \
+         JOIN organization_memberships m ON m.organization_id = o.id \
+         LEFT JOIN branches b ON b.organization_id = o.id AND b.id = $3 \
+         WHERE o.id = $1 AND \
+         (($2::TEXT IS NOT NULL AND m.id = $2) OR ($4::TEXT IS NOT NULL AND m.user_id = $4))",
+    )
+    .bind(organization_id.as_str())
+    .bind(membership_id)
+    .bind(branch_id.map(BranchId::as_str))
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    let Some((
+        organization_name,
+        organization_state,
+        organization_version,
+        membership_id,
+        membership_user_id,
+        membership_state,
+        membership_version,
+        branch_id_raw,
+        branch_name,
+        branch_state,
+        branch_version,
+    )) = row
+    else {
+        return Err(ScopeError::OrganizationDenied);
+    };
+
+    let organization = Organization {
+        id: organization_id.clone(),
+        name: organization_name,
+        state: match organization_state.as_str() {
+            "PROVISIONING" => OrganizationState::Provisioning,
+            "ACTIVE" => OrganizationState::Active,
+            "SUSPENDED" => OrganizationState::Suspended,
+            "CLOSING" => OrganizationState::Closing,
+            "CLOSED" => OrganizationState::Closed,
+            _ => return Err(ScopeError::AuthorityUnavailable),
+        },
+        state_version: u64::try_from(organization_version)
+            .map_err(|_| ScopeError::AuthorityUnavailable)?,
+    };
+    let membership = Membership {
+        id: MembershipId::new(membership_id).map_err(|_| ScopeError::AuthorityUnavailable)?,
+        organization_id: organization_id.clone(),
+        user_id: TenantUserId::new(membership_user_id)
+            .map_err(|_| ScopeError::AuthorityUnavailable)?,
+        state: match membership_state.as_str() {
+            "INVITED" => MembershipState::Invited,
+            "PENDING_ACCEPTANCE" => MembershipState::PendingAcceptance,
+            "EXPIRED" => MembershipState::Expired,
+            "ACTIVE" => MembershipState::Active,
+            "SUSPENDED" => MembershipState::Suspended,
+            "REVOKED" => MembershipState::Revoked,
+            _ => return Err(ScopeError::AuthorityUnavailable),
+        },
+        state_version: u64::try_from(membership_version)
+            .map_err(|_| ScopeError::AuthorityUnavailable)?,
+    };
+    let branch = match (
+        branch_id,
+        branch_id_raw,
+        branch_name,
+        branch_state,
+        branch_version,
+    ) {
+        (None, None, None, None, None) => None,
+        (Some(_), Some(id), Some(name), Some(state), Some(version)) => Some(Branch {
+            id: BranchId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?,
+            organization_id: organization_id.clone(),
+            name,
+            state: match state.as_str() {
+                "PROVISIONING" => BranchState::Provisioning,
+                "ACTIVE" => BranchState::Active,
+                "SUSPENDED" => BranchState::Suspended,
+                "CLOSING" => BranchState::Closing,
+                "CLOSED" => BranchState::Closed,
+                _ => return Err(ScopeError::AuthorityUnavailable),
+            },
+            state_version: u64::try_from(version).map_err(|_| ScopeError::AuthorityUnavailable)?,
+        }),
+        (Some(_), None, None, None, None) => return Err(ScopeError::BranchDenied),
+        _ => return Err(ScopeError::AuthorityUnavailable),
+    };
+    resolve_effective_scope(&membership, &organization, branch.as_ref())
+}
+
+async fn authorize_postgres_operation(
+    pool: &PgPool,
+    organization_id: &OrganizationId,
+    selector: MembershipSelector<'_>,
+    branch_id: Option<&BranchId>,
+    permission: Permission,
+) -> Result<EffectiveScope, ScopeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    establish_scope_transaction(&mut tx, organization_id).await?;
+    let mut scope = load_effective_scope(&mut tx, organization_id, selector, branch_id).await?;
+    let assignments: Vec<(String, String, i64)> = sqlx_core::query_as::query_as(
+        "SELECT id, role, state_version FROM role_assignments \
+         WHERE organization_id = $1 AND membership_id = $2 AND state = 'EFFECTIVE'",
+    )
+    .bind(organization_id.as_str())
+    .bind(scope.membership_id.as_str())
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    let assignments = assignments
+        .into_iter()
+        .map(|(id, role, state_version)| {
+            let id = RoleAssignmentId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let role = Role::all()
+                .iter()
+                .copied()
+                .find(|candidate| candidate.as_str() == role)
+                .ok_or(ScopeError::AuthorityUnavailable)?;
+            let state_version =
+                u64::try_from(state_version).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            Ok(RoleAssignment {
+                id,
+                organization_id: organization_id.clone(),
+                membership_id: scope.membership_id.clone(),
+                role,
+                state: RoleAssignmentState::Effective,
+                state_version,
+            })
+        })
+        .collect::<Result<Vec<_>, ScopeError>>()?;
+    let permissions = resolve_permissions(&assignments);
+    if !permissions.contains(&permission) {
+        return Err(ScopeError::PermissionDenied);
+    }
+
+    let grants: Vec<(String, String, Option<String>, i64)> = sqlx_core::query_as::query_as(
+        "SELECT id, scope_kind, branch_id, state_version FROM scope_grants \
+         WHERE organization_id = $1 AND membership_id = $2 AND state = 'ACTIVE'",
+    )
+    .bind(organization_id.as_str())
+    .bind(scope.membership_id.as_str())
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    let grants = grants
+        .into_iter()
+        .map(|(id, scope_kind, branch, state_version)| {
+            let id = ScopeGrantId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let grant_scope = match (scope_kind.as_str(), branch) {
+                ("ORGANIZATION", None) => Scope::Organization {
+                    organization_id: organization_id.clone(),
+                },
+                ("BRANCH", Some(id)) => Scope::Branch {
+                    organization_id: organization_id.clone(),
+                    branch_id: BranchId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?,
+                },
+                _ => return Err(ScopeError::AuthorityUnavailable),
+            };
+            Ok(ScopeGrant {
+                id,
+                organization_id: organization_id.clone(),
+                membership_id: scope.membership_id.clone(),
+                scope: grant_scope,
+                state: ScopeGrantState::Active,
+                state_version: u64::try_from(state_version)
+                    .map_err(|_| ScopeError::AuthorityUnavailable)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ScopeError>>()?;
+    let requested_scope = match &scope.branch_id {
+        Some(branch_id) => Scope::Branch {
+            organization_id: organization_id.clone(),
+            branch_id: branch_id.clone(),
+        },
+        None => Scope::Organization {
+            organization_id: organization_id.clone(),
+        },
+    };
+    if !authorize_scope(&grants, &requested_scope) {
+        return Err(ScopeError::ScopeDenied);
+    }
+    scope.permissions = permissions;
+    tx.commit()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(scope)
 }
 
 #[cfg(test)]
