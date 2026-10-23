@@ -1956,13 +1956,15 @@ impl TenancyService {
             Permission::BranchUpdate,
         )
         .await?;
+        // Route through the owner-owned SECURITY DEFINER transition function:
+        // app_runtime holds no direct UPDATE privilege on `branches`, and the
+        // function re-applies the tenant predicate plus the advisory lock.
         let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
-            "UPDATE branches SET state = 'ACTIVE', state_version = state_version + 1 \
-             WHERE organization_id = $1 AND id = $2 AND state = 'PROVISIONING' \
-             RETURNING name, state_version",
+            "SELECT name, state_version FROM transition_branch_state($1, $2, $3)",
         )
-        .bind(organization_id.as_str())
         .bind(branch_id.as_str())
+        .bind("PROVISIONING")
+        .bind("ACTIVE")
         .fetch_optional(&mut *tx)
         .await
         .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
