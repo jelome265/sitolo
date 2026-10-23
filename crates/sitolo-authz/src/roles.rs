@@ -34,37 +34,69 @@ pub const ROLE_DEFINITION_VERSION: u32 = 1;
 /// on string comparisons scattered through handlers (section 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Permission {
+    /// View the organization profile and settings.
     OrgView,
+    /// Update the organization profile and settings.
     OrgUpdate,
+    /// Close the organization; terminal and owner-only.
     OrgClose,
+    /// View memberships.
     MembershipView,
+    /// Invite people to become members.
     MembershipInvite,
+    /// Suspend a membership.
     MembershipSuspend,
+    /// Revoke a membership permanently.
     MembershipRevoke,
+    /// Assign or change roles.
     RoleAssign,
+    /// Grant, narrow, or revoke scope grants.
     ScopeGrant,
+    /// Create a branch.
     BranchCreate,
+    /// Update a branch.
     BranchUpdate,
+    /// Archive a branch.
     BranchArchive,
+    /// Create a warehouse.
     WarehouseCreate,
+    /// Create a point-of-sale register.
     RegisterCreate,
+    /// Register a device.
     DeviceRegister,
+    /// Revoke a device.
     DeviceRevoke,
+    /// Create a sale.
     SaleCreate,
+    /// View sales.
     SaleView,
+    /// Void a sale.
     SaleVoid,
+    /// Create a refund.
     RefundCreate,
+    /// Approve a refund.
     RefundApprove,
+    /// View inventory.
     InventoryView,
+    /// Adjust inventory quantities.
     InventoryAdjust,
+    /// Approve an inventory adjustment.
     InventoryAdjustApprove,
+    /// Transfer inventory between locations.
     InventoryTransfer,
+    /// View reports.
     ReportView,
+    /// Create an export.
     ExportCreate,
+    /// View the audit trail.
     AuditView,
+    /// View payments.
     PaymentView,
+    /// Reconcile payments.
     PaymentReconcile,
+    /// Submit fiscal documents to the revenue authority.
     EisSubmit,
+    /// Configure the fiscal integration.
     EisConfigure,
 }
 
@@ -153,18 +185,28 @@ impl Permission {
 /// additionally requires scope, state, assurance, and policy checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
+    /// Holds every permission, including organization closure.
     Owner,
+    /// Delegates everything except organization closure.
     OrgAdmin,
+    /// Runs day-to-day branch operations.
     BranchManager,
+    /// Sells at the point of sale.
     Cashier,
+    /// Moves and adjusts stock.
     InventoryClerk,
+    /// Read access until procurement workflows define dedicated capabilities.
     ProcurementClerk,
+    /// Reconciles payments and produces reports.
     AccountingUser,
+    /// Read-only access.
     Viewer,
+    /// Read-only access plus audit exports.
     Auditor,
 }
 
 impl Role {
+    /// Stable machine-readable code from the specification vocabulary.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -180,6 +222,7 @@ impl Role {
         }
     }
 
+    /// Every built-in role, in canonical order.
     #[must_use]
     pub fn all() -> &'static [Role] {
         &[
@@ -306,8 +349,10 @@ impl Role {
 /// Failures for role-assignment transitions.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AssignmentError {
+    /// The assignment is not in the state the requested transition requires.
     #[error("invalid assignment transition")]
     InvalidTransition,
+    /// The assignment is terminal and accepts no further transitions.
     #[error("assignment is in a terminal state")]
     TerminalState,
 }
@@ -324,16 +369,27 @@ impl From<AssignmentError> for TenancyError {
 /// Role-assignment lifecycle (Phase 4 section 19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RoleAssignmentState {
+    /// Submitted but not yet validated.
     Requested,
+    /// Under validation of membership state, catalog validity, and issuer
+    /// authority.
     Validating,
+    /// Terminal refusal, preserved as evidence.
     Rejected,
+    /// High-risk grant waiting for step-up approval owned by Phase 6.
     ApprovalRequired,
+    /// Approval satisfied; the grant may become effective.
     Approved,
+    /// The assignment contributes authority.
     Effective,
+    /// Terminal; the assignment no longer contributes authority.
     Revoked,
 }
 
 impl RoleAssignmentState {
+    /// Returns `true` when the assignment is [`RoleAssignmentState::Rejected`]
+    /// or [`RoleAssignmentState::Revoked`] and accepts no further
+    /// transitions.
     #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(
@@ -354,17 +410,24 @@ impl RoleAssignmentState {
 /// Phase 4 section 8.1.10) and re-granting creates a new record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoleAssignment {
+    /// Stable identifier of this assignment record.
     pub id: RoleAssignmentId,
+    /// Organization the role is held in.
     pub organization_id: OrganizationId,
+    /// Membership that holds the role.
     pub membership_id: MembershipId,
+    /// Role granted by this assignment.
     pub role: Role,
+    /// Lifecycle state of the assignment.
     pub state: RoleAssignmentState,
+    /// Monotonic version, incremented on every accepted transition.
     pub state_version: u64,
 }
 
 impl RoleAssignment {
     /// Begins an assignment in state `Requested`. Validation, approval, and
     /// activation are separate explicit transitions below.
+    #[must_use]
     pub fn request(
         id: RoleAssignmentId,
         organization_id: OrganizationId,
@@ -399,6 +462,12 @@ impl RoleAssignment {
 
     /// `REQUESTED -> VALIDATING`: the grant is checked against membership
     /// state, catalog validity, and (later) issuer authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::Requested`].
     pub fn begin_validation(&mut self) -> Result<(), AssignmentError> {
         self.transition(
             RoleAssignmentState::Requested,
@@ -407,6 +476,12 @@ impl RoleAssignment {
     }
 
     /// `VALIDATING -> REJECTED`: terminal refusal, preserved as evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::Validating`].
     pub fn reject(&mut self) -> Result<(), AssignmentError> {
         self.transition(
             RoleAssignmentState::Validating,
@@ -416,6 +491,12 @@ impl RoleAssignment {
 
     /// `VALIDATING -> APPROVAL_REQUIRED`: high-risk grants wait for step-up
     /// approval owned by Phase 6.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::Validating`].
     pub fn require_approval(&mut self) -> Result<(), AssignmentError> {
         self.transition(
             RoleAssignmentState::Validating,
@@ -424,6 +505,12 @@ impl RoleAssignment {
     }
 
     /// `APPROVAL_REQUIRED -> APPROVED`: the required assurance was met.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::ApprovalRequired`].
     pub fn approve(&mut self) -> Result<(), AssignmentError> {
         self.transition(
             RoleAssignmentState::ApprovalRequired,
@@ -434,6 +521,13 @@ impl RoleAssignment {
     /// `VALIDATING|APPROVED -> EFFECTIVE`: the grant contributes authority.
     /// Low-risk grants transition straight from validation; approved grants
     /// complete the approval branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::Validating`] or
+    /// [`RoleAssignmentState::Approved`].
     pub fn mark_effective(&mut self) -> Result<(), AssignmentError> {
         if self.state.is_terminal() {
             return Err(AssignmentError::TerminalState);
@@ -444,12 +538,22 @@ impl RoleAssignment {
                 self.state_version = self.state_version.saturating_add(1);
                 Ok(())
             }
-            _ => Err(AssignmentError::InvalidTransition),
+            RoleAssignmentState::Requested
+            | RoleAssignmentState::Rejected
+            | RoleAssignmentState::ApprovalRequired
+            | RoleAssignmentState::Effective
+            | RoleAssignmentState::Revoked => Err(AssignmentError::InvalidTransition),
         }
     }
 
     /// `EFFECTIVE -> REVOKED`: terminal. Re-granting the same role creates a
     /// new record rather than reviving this one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignmentError::TerminalState`] when the assignment is
+    /// already rejected or revoked, and [`AssignmentError::InvalidTransition`]
+    /// when it is not [`RoleAssignmentState::Effective`].
     pub fn revoke(&mut self) -> Result<(), AssignmentError> {
         self.transition(RoleAssignmentState::Effective, RoleAssignmentState::Revoked)
     }
