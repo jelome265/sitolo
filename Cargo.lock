@@ -1922,6 +1922,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "rustls",
+ "tracing",
  "serde_json",
  "sha2",
  "sitolo-audit",
