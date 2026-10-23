@@ -160,37 +160,42 @@ mod tests {
     use super::{SecretsManagerInitError, resolve_secret_value, validate_provider_configuration};
     use std::time::Duration;
 
-    fn runtime_database_ref() -> SecretRef {
-        SecretRef::new(SecretClass::Database, "prod/sitolo/api/runtime-db-password")
-            .expect("test reference is valid")
+    fn runtime_database_ref() -> Result<SecretRef, Box<dyn std::error::Error>> {
+        Ok(SecretRef::new(
+            SecretClass::Database,
+            "prod/sitolo/api/runtime-db-password",
+        )?)
     }
 
     #[test]
-    fn accepts_only_the_exact_configured_database_secret_reference() {
-        let allowed = runtime_database_ref();
-        let value = resolve_secret_value(&allowed, &allowed, Some("test-secret"))
-            .expect("the configured secret should resolve");
+    fn accepts_only_the_exact_configured_database_secret_reference()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let allowed = runtime_database_ref()?;
+        let value = resolve_secret_value(&allowed, &allowed, Some("test-secret"))?;
         assert_eq!(value.into_string(), "test-secret");
 
         let another_database_ref = SecretRef::new(
             SecretClass::Database,
             "prod/sitolo/migrations/admin-db-credential",
-        )
-        .expect("test reference is valid");
+        )?;
         assert!(resolve_secret_value(&allowed, &another_database_ref, Some("wrong")).is_err());
+        Ok(())
     }
 
     #[test]
-    fn missing_empty_and_oversized_secret_values_fail_closed() {
-        let allowed = runtime_database_ref();
+    fn missing_empty_and_oversized_secret_values_fail_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let allowed = runtime_database_ref()?;
         assert!(resolve_secret_value(&allowed, &allowed, None).is_err());
         assert!(resolve_secret_value(&allowed, &allowed, Some("")).is_err());
         assert!(resolve_secret_value(&allowed, &allowed, Some(&"x".repeat(65_537))).is_err());
+        Ok(())
     }
 
     #[test]
-    fn provider_requires_a_bounded_region_database_reference_and_timeout() {
-        let allowed = runtime_database_ref();
+    fn provider_requires_a_bounded_region_database_reference_and_timeout()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let allowed = runtime_database_ref()?;
         assert!(
             validate_provider_configuration("af-south-1", &allowed, Duration::from_secs(5)).is_ok()
         );
@@ -200,11 +205,11 @@ mod tests {
             validate_provider_configuration("af-south-1", &allowed, Duration::from_secs(11))
                 .is_err()
         );
-        let identity_ref =
-            SecretRef::new(SecretClass::Identity, "prod/sitolo/oidc/client").unwrap();
+        let identity_ref = SecretRef::new(SecretClass::Identity, "prod/sitolo/oidc/client")?;
         assert_eq!(
             validate_provider_configuration("af-south-1", &identity_ref, Duration::from_secs(5)),
             Err(SecretsManagerInitError::InvalidConfiguration)
         );
+        Ok(())
     }
 }

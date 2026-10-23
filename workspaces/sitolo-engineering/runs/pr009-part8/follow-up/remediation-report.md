@@ -1,5 +1,15 @@
 # Remediation Report — PR #49 / Phase 4 Part 8
 
+## Current worktree status — 2026-10-23
+
+The checked-out branch is `feat/phase4-pr009-audit-outbox` at base `62eeae6ad17a78ccb062a1ab9445f5ac8e92c132`. The remediation source changes described in the working-tree sections below remain uncommitted; this base SHA is not their candidate source SHA. Earlier exact-head sections record historical CI results for their named commits only and do not verify this working tree.
+
+Since the older exact-head snapshots, the live Axum path now includes contract-listed authenticated branch create/activate and membership suspend/revoke routes. The membership lifecycle commands authorize from persisted membership/permission state in the same PostgreSQL transaction as business, audit, and outbox writes. The latest uncommitted regression adds authenticated suspend/revoke audit/outbox failure rollback coverage, while HTTP/PostgreSQL target tests cover anonymous denial, authorized mutation and actor attribution, same-tenant insufficient permission, and cross-tenant denial. Role/scope authenticated commands exist at the application layer but still lack live HTTP routes; organization lifecycle beyond organization creation and authenticated invitation issue/withdraw commands remain unavailable or fail-closed.
+
+Local evidence on the current worktree: event schema tests passed (12), worker tests passed (17), application tests passed (13), API binary unit tests passed (6); workspace Clippy, workspace/all-target checks, formatting, and diff checks passed in the corresponding recent updates. PostgreSQL integration targets were compiled but not run locally under the no-local-PostgreSQL requirement. Current-candidate GitHub Actions, live AWS delivery, independent Stage 06 audit, and human review are not available. PR #49 remains open and unmerged. This current-status section supersedes older status statements below where they conflict; older SHA-specific evidence remains historical.
+
+The fetched PR head `62eeae6ad17a78ccb062a1ab9445f5ac8e92c132` is still the remote branch head and is distinct from this dirty worktree. GitHub reports all ten checks successful on that pushed head: [PostgreSQL app/contract integration](https://github.com/jelome265/sitolo/actions/runs/39914555316), [Rust verification/toolchain](https://github.com/jelome265/sitolo/actions/runs/39914555327), [policy](https://github.com/jelome265/sitolo/actions/runs/39914555383), [security, dependency policy, advisories, secrets and offensive regression](https://github.com/jelome265/sitolo/actions/runs/39914555340), plus [standalone CodeQL](https://github.com/jelome265/sitolo/runs/120286799008). These checks establish the remote base SHA only; they do not validate any uncommitted working-tree change described below.
+
 ## Latest exact-head update — `fae7c4c6973cd55e6a4f95bb8c394301f11aa6d9` (2026-10-23)
 
 This section supersedes older status statements where they conflict. Added the five owner-approved SNS relay environment keys to the strict `sitolo-config` catalogue/parser, typed effective config and fingerprint. Region and topic ARN must be configured together and their regions must match; the ARN must identify an SNS FIFO topic; batch size, attempt count and maximum backoff are bounded by the approved contract. Config tests cover parsing, defaults, constraints, region mismatch and fingerprint inclusion. The concrete ECS-task-role SNS FIFO publisher was added in source commit `4e3a530f46cd6dfd06ee37ac93677936bcaa54c1`; the worker executable still refuses startup because production DB composition and publisher wiring are absent.
@@ -183,3 +193,102 @@ The exact-head PostgreSQL integration, canonical verification, policy, toolchain
 Targeted local checks passed for API/application library tests, workspace formatting, API/application Clippy, workspace library tests, and workspace Clippy. The PostgreSQL integration target compiled locally; database execution was performed by GitHub Actions.
 
 **Release gaps remain:** the live route does not compose `new_postgres`, call the tenant authorizer, or invoke a protected command; reference constructors remain publicly available and must not be used by a serving runtime; most mutation methods still accept caller-supplied `ActorRef`; full actor-authority and mutation matrix review is incomplete; no SNS/SQS adapter, durable consumer inbox, production secret/database composition, real readiness, independent Stage 06 audit, or human review is complete. PR #49 remains open and unmerged.
+
+## Continuing working-tree update — 2026-10-23
+
+The approved AWS delivery decision is now represented by concrete worker adapters in the uncommitted candidate: the worker composes a PostgreSQL runtime under a restricted `app_worker` role, resolves its database password from the configured Secrets Manager reference using the ECS task role, runs the SNS FIFO relay publisher using the ECS role, and has an SQS FIFO consumer transport with explicit source and quarantine queue URLs. The consumer inbox uses the configured PostgreSQL persistence boundary and business effects remain an owner-supplied port; no product-specific side effect is fabricated. SQS receive returns stable source message IDs, and quarantine sends the original body to the configured FIFO queue with source message group and error class before deleting the source receipt. Quarantine deduplication uses the source message ID and rejection class so retrying one source message is idempotent without conflating distinct messages with identical bodies. The processor exposes sequential batch handling and stops at the first failure to preserve returned FIFO ordering.
+
+This is adapter and composition progress, not AUD-01 closure: real queue URLs/ARNs, AWS account/IAM provisioning, SNS subscription fanout, consumer-effect owner implementation, live broker tests, and operational redrive/quarantine runbooks remain external or incomplete. AUD-02/AUD-03 remain open for route authorization and complete mutation/actor-provenance transaction coverage. AUD-04 still requires independent Stage 06 audit. AUD-05 still needs exact-candidate CI, provisioned runtime evidence, production readiness probes and operational proof. The source is an uncommitted working-tree candidate; current `HEAD` does not identify these edits, so no prior exact-head CI or audit result applies. No local PostgreSQL was started or used, and PR #49 remains open and unmerged.
+
+**Local checks for this working-tree update:** `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --locked`, `cargo test -p sitolo-worker-bin --lib --locked` (17 passed), `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, and `git diff --check` passed. These checks validate the present working tree only; database-backed integration tests were not run locally.
+
+## Candidate status snapshot — 2026-10-23
+
+### Implemented
+
+- The root workspace denies Clippy `unwrap_used`, `expect_used`, `panic`, `unimplemented`, `todo`, and `unreachable`; all workspace member manifests inherit workspace lints. The all-target, all-feature Clippy gate passes on the current working tree.
+- The current worker source includes the approved SNS FIFO publisher, outbox relay integration, explicit SQS FIFO source/quarantine configuration, durable consumer inbox boundary, event envelope and lifecycle payload validation, ECS task-role adapters, sequential FIFO batch processing, and transfer-before-delete quarantine behavior.
+- Production API bootstrap composes a managed secret provider, PostgreSQL runtime pool, persistent identity/session authority, Cognito OIDC provider, and PostgreSQL-backed tenancy service; readiness is set only after startup dependency probes succeed.
+- HTTP tests cover missing and malformed credentials, invalid external identity, session ownership denial, organization owner/actor spoof rejection, and PostgreSQL-backed branch authorization, cross-tenant denial, authority spoof rejection, and no-write denial evidence.
+
+### Verified
+
+- Current uncommitted working tree: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --locked`, `cargo test -p sitolo-worker-bin --lib --locked` (17 passed), `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, and `git diff --check` passed.
+- There is no candidate source SHA because these edits are uncommitted. Exact-head GitHub Actions results and independent Stage 06 audit for this candidate are therefore **not available**. Prior SHA-specific CI links above apply only to their named historical commits.
+
+### External dependencies
+
+1. Consumer business effect and exact source/quarantine queue URLs and deployment-specific FIFO configuration remain owner/platform inputs. No AWS identifiers or product effect are invented.
+2. Production migration/release ownership and execution contract remain external; no migration owner or deployment identity is assigned here.
+3. An independent Stage 06 auditor has not been assigned or run.
+4. A human PR reviewer and merge authority have not reviewed this candidate.
+
+### Not claimed
+
+No production deployment, live AWS delivery, local PostgreSQL run, exact-candidate CI pass, independent audit, human review, or merge is claimed. PR #49 remains open and unmerged. The implementation is not ready for Stage 06 because broad mutation/actor-provenance coverage and authenticated invitation issue/withdraw paths still require review and completion.
+
+The consumer transport/processor are now joined by `ConsumerProcessor::run_until_shutdown`: it long-polls through the transport port, processes each returned batch serially, leaves failed messages unacknowledged, applies capped exponential backoff to receive/process failures, and observes the shutdown watch channel. The consumer remains externally composable and is not started by the relay-only executable until an approved business effect and exact queue configuration are supplied. After this addition, `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --locked`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test -p sitolo-worker-bin --lib --locked` (17 passed), and `git diff --check` passed. These remain local checks against the uncommitted candidate, not CI or AWS/PostgreSQL execution evidence.
+
+## Authenticated membership mutation slice — 2026-10-23
+
+Added `TenancyService::suspend_member_for_authenticated_user`. It resolves the actor from `SecurityContext`, obtains the current organization lock, checks persisted `MEMBERSHIP_SUSPEND` authority inside the mutation transaction, and commits the membership state change with audit and outbox evidence. The generic `suspend_member(..., ActorRef)` remains a lower-level reference/evidence API and must not be connected directly to production HTTP. Added a PostgreSQL integration regression that covers authorized suspension and server-derived audit actor attribution, and denied suspension with no domain/evidence writes. The integration target compiles locally but was not executed because PostgreSQL execution belongs to GitHub Actions.
+
+Local checks after the change: formatting, workspace all-target check, workspace all-target/all-feature Clippy with warnings denied, and `git diff --check` passed. The source remains uncommitted; these results do not replace exact-candidate CI or independent Stage 06 audit.
+
+`cargo test -p sitolo-application --lib --locked` passed (13 tests). `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked` compiled the PostgreSQL integration target; the target was not run locally.
+
+## Authenticated branch activation slice — 2026-10-23
+
+Wired the already-inventoried `POST /v1/organizations/{organization_id}/branches/{branch_id}/activate` route through bearer/session authentication and added `activate_branch_for_authenticated_user`. It checks persisted `BRANCH_UPDATE` authority in the PostgreSQL mutation transaction, allows only the existing `PROVISIONING -> ACTIVE` transition, derives audit actor from the authenticated principal, and commits domain, audit, and outbox writes together. Added an HTTP/PostgreSQL integration regression for anonymous denial and authorized transition/evidence attribution. The API integration test target compiled locally; its database execution is deferred to GitHub Actions under the no-local-PostgreSQL constraint.
+
+`cargo clippy -p sitolo-application -p sitolo-api-bin --all-targets --all-features --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` passed after the route change. The broader generic actor-taking APIs remain present and must not be wired into production HTTP; organization lifecycle and other protected route commands still require authoritative implementation or remain fail-closed. No exact-source CI/audit result applies to this uncommitted candidate.
+
+The branch activation regression now exercises both the successful authenticated OWNER path and an authenticated CASHIER without `BRANCH_UPDATE`: the latter must receive HTTP 403 and leave the branch in `PROVISIONING` with no matching audit/outbox evidence. Both the API and application PostgreSQL integration targets compile locally; neither database-backed target has been executed locally. Latest workspace checks passed: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo check --workspace --all-targets --locked`, `cargo fmt --all -- --check`, and `git diff --check`.
+
+## Live readiness probe slice — 2026-10-23
+
+Readiness previously depended only on a startup-time boolean. `PgRuntimePool` now retains its validated schema and exposes a one-second-bounded read-only probe that rechecks connection identity (`app_runtime`), restrictive role flags/memberships, required Phase 4 tables and functions, and schema availability. `AppState` retains the verified runtime pool and reports ready only when composition is present and the live probe succeeds; the public readiness route now awaits that check. OIDC discovery/signing configuration is still probed during startup and the provider must be composed. A persistence unit regression verifies a closed pool yields a not-ready probe without contacting PostgreSQL.
+
+Verification: `cargo test -p sitolo-persistence --lib --locked` passed (37 tests); workspace `cargo check --workspace --all-targets --locked`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, formatting, and `git diff --check` passed. No PostgreSQL integration test or live production dependency was run. These are local checks on the uncommitted candidate, not exact-head CI evidence.
+
+## Authenticated role assignment slice — 2026-10-23
+
+Added `assign_role_for_authenticated_user`, which resolves the actor from `SecurityContext` and checks the persisted `ROLE_ASSIGN` permission after acquiring the organization mutation lock and inside the same PostgreSQL transaction as assignment/idempotency reads, state mutation, audit, and outbox. The caller-supplied-actor `assign_role` method is documented as a low-level reference/evidence API and must not be wired to production requests. Added a PostgreSQL integration regression for authorized assignment and derived audit actor, plus denied assignment with no assignment/evidence write. The target compiles locally; DB execution is deferred to GitHub Actions.
+
+`cargo test -p sitolo-application --lib --locked` passed (13 tests), and `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked` compiled the database test target. Workspace Clippy, check, formatting, and `git diff --check` passed. The uncommitted candidate still needs exact-head CI, including PostgreSQL integration, and the remaining role revocation/scope-grant authenticated mutation coverage.
+
+## Authenticated role and scope mutation slice — 2026-10-23
+
+Completed authenticated command boundaries for role revocation, scope grant, and scope revocation. Each resolves its audit actor from `SecurityContext` and checks persisted `ROLE_ASSIGN` or `SCOPE_GRANT` authority in the same organization-locked PostgreSQL transaction as the domain mutation and audit/outbox writes. The generic `ActorRef` methods are now explicitly documented as low-level reference/evidence APIs, not production request entry points. The membership transaction integration test now covers owner-authorized assignment/revocation and branch scope grant/revocation, plus denied role assignment and denied scope grant with no writes. Its PostgreSQL target compiles locally but has not been run locally.
+
+Verification on the uncommitted candidate: `cargo test -p sitolo-application --lib --locked` passed (13 tests); workspace all-target/all-feature Clippy with warnings denied, workspace check, formatting, and `git diff --check` passed. Exact-source PostgreSQL CI, Stage 06 re-audit, and human review remain outstanding.
+
+## Authenticated membership revocation slice — 2026-10-23
+
+Added `revoke_member_for_authenticated_user`. It checks persisted `MEMBERSHIP_REVOKE` authority after taking the organization mutation lock and within the same PostgreSQL transaction as the `ACTIVE -> REVOKED` state change, audit insert, and outbox insert. Audit actor identity and membership provenance come from the verified `SecurityContext` and resolved authorized scope. Added a PostgreSQL integration regression for permitted revocation and server actor attribution, plus denied revocation with unchanged membership and no audit/outbox rows.
+
+Local verification on the uncommitted candidate: `cargo fmt --all -- --check`, `cargo check -p sitolo-application --all-targets --locked`, `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check` passed. PostgreSQL integration execution remains deferred to GitHub Actions; no local PostgreSQL was started. Exact-candidate CI, Stage 06 re-audit, and human review remain outstanding.
+
+## Authenticated membership revocation HTTP slice — 2026-10-23
+
+Wired the contract-listed `POST /v1/organizations/{organization_id}/members/{membership_id}/revoke` route through the live Axum router, bearer/session authentication middleware, and `revoke_member_for_authenticated_user`. Success returns `204`; persisted permission denial and cross-tenant access return `403`. The HTTP/PostgreSQL regression covers anonymous rejection, owner-authorized revocation, server-derived audit actor and matching audit/outbox rows, same-tenant cashier denial with no writes, and cross-tenant denial with unchanged target state.
+
+Local verification: `cargo check -p sitolo-api-bin --all-targets --locked`, `cargo test -p sitolo-api-bin --test tenancy_api --no-run --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` passed. The PostgreSQL HTTP test was only compiled, not executed locally; it must run in GitHub Actions. The candidate remains uncommitted and still requires exact-head CI, Stage 06 re-audit, and human review.
+
+The same live route inventory now includes the contract-listed `POST /v1/organizations/{organization_id}/members/{membership_id}/suspend`, wired to `suspend_member_for_authenticated_user`. The PostgreSQL HTTP regression also verifies owner-authorized suspension and matching audit/outbox evidence attributed to the authenticated subject. The API integration target compiles locally; database execution remains pending GitHub Actions. Formatting, API all-target check, workspace Clippy with warnings denied, `cargo test -p sitolo-api-bin --lib --locked` (6 passed, including the route inventory snapshot), and `git diff --check` pass on this update.
+
+## Authenticated membership transaction failure coverage — 2026-10-23
+
+Extended the PostgreSQL membership integration suite with a four-case regression covering authenticated suspend and revoke, each with injected audit-writer and outbox-writer failure. The regression asserts the target membership remains `ACTIVE` and no audit or outbox evidence persists in every failure case. This directly exercises the same authenticated methods now used by the live HTTP routes.
+
+Local verification: `cargo check -p sitolo-application --all-targets --locked`, `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked`, workspace Clippy with warnings denied, formatting, and `git diff --check` passed. PostgreSQL execution is still deferred to GitHub Actions; no local database was started. Candidate remains uncommitted and lacks exact-head CI and independent Stage 06 audit.
+
+## Lifecycle schema and relay verification — 2026-10-23
+
+Re-ran database-free tests for the approved five lifecycle event schemas and their worker path: `cargo test -p sitolo-events --lib --locked` passed (12), `cargo test -p sitolo-worker-bin --lib --locked` passed (17), and `cargo test -p sitolo-application --lib --locked` passed (13). This verifies v1 payload shape and transition checks, rejects sensitive extra fields and unsupported versions, and exercises relay rejection/quarantine plus consumer envelope validation. These tests do not prove the PostgreSQL transition/evidence transactions or real AWS delivery; PostgreSQL database tests remain delegated to GitHub Actions, and live AWS delivery remains unverified.
+
+## Dynamic identity-provider readiness update — 2026-10-23
+
+Closed the remaining runtime readiness gap for the current API composition: `IdentityProviderPort` now exposes a bounded readiness probe, Cognito OIDC reuses non-empty unexpired JWKS material or refreshes it when expired/missing, and `AppState::runtime_ready()` checks database/schema health and identity readiness concurrently. The identity check has a 900 ms deadline and fails closed on provider errors or timeout. Startup still performs its initial OIDC probe before serving. The readiness unit regression covers ready, unavailable, and pending providers; the OIDC regression confirms valid cached JWKS can satisfy readiness without an unnecessary network call.
+
+Local verification on this uncommitted worktree: `cargo fmt --all -- --check`, `cargo check -p sitolo-api-bin --all-targets --locked`, `cargo test -p sitolo-auth --lib --locked` (53 passed), `cargo test -p sitolo-integrations --lib --locked` (12 passed), `cargo test -p sitolo-api-bin --lib --locked` (7 passed), `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `git diff --check` passed. No local PostgreSQL or live identity provider was used. This change modifies the identity-provider port and remains subject to the required Stage 06 re-audit; these local checks do not establish exact-candidate CI evidence. PR #49 remains open and unmerged.

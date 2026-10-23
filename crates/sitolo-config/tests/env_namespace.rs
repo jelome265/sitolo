@@ -82,7 +82,7 @@ impl Drop for EnvSnapshot {
 
 /// Minimal single-poll executor. Provider futures complete without yielding,
 /// so a noop waker suffices and no async runtime dependency is introduced.
-fn block_on<F: Future>(mut future: F) -> F::Output {
+fn block_on<F: Future>(mut future: F) -> Result<F::Output, std::io::Error> {
     unsafe fn clone(_: *const ()) -> RawWaker {
         raw_waker()
     }
@@ -100,13 +100,15 @@ fn block_on<F: Future>(mut future: F) -> F::Output {
     // completion on this stack before this function returns.
     let mut pinned = unsafe { Pin::new_unchecked(&mut future) };
     match pinned.as_mut().poll(&mut context) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("test provider future must resolve without yielding"),
+        Poll::Ready(output) => Ok(output),
+        Poll::Pending => Err(std::io::Error::other(
+            "test provider future yielded unexpectedly",
+        )),
     }
 }
 
 #[test]
-fn configuration_and_secret_value_namespaces_coexist() {
+fn configuration_and_secret_value_namespaces_coexist() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
     let _snapshot = unsafe { EnvSnapshot::isolate() };
     // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
@@ -117,18 +119,18 @@ fn configuration_and_secret_value_namespaces_coexist() {
         std::env::set_var(SECRET_VAR, SENTINEL);
     }
 
-    let builder = EnvLoader::load().expect("configuration plus a secret value must parse");
+    let builder = EnvLoader::load().map_err(|error| std::io::Error::other(error.0))?;
     assert_eq!(builder.environment, Environment::Development);
     assert_eq!(builder.db_host, "127.0.0.1");
 
-    let config = validate(builder).expect("configuration must validate");
-    let secret = block_on(EnvSecretProvider::new(false).get(config.db_secret_ref()))
-        .expect("the development provider must resolve the secret namespace");
+    let config = validate(builder)?;
+    let secret = block_on(EnvSecretProvider::new(false).get(config.db_secret_ref()))??;
     assert_eq!(secret.into_string(), SENTINEL);
+    Ok(())
 }
 
 #[test]
-fn unknown_configuration_key_still_fails_closed() {
+fn unknown_configuration_key_still_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
     let _snapshot = unsafe { EnvSnapshot::isolate() };
     // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
@@ -138,8 +140,10 @@ fn unknown_configuration_key_still_fails_closed() {
         std::env::set_var(CONFIG_VAR, SENTINEL);
     }
 
-    let error: UnknownKey = EnvLoader::load()
-        .err()
-        .expect("the former password key must still be rejected");
+    let error: UnknownKey = match EnvLoader::load() {
+        Err(error) => error,
+        Ok(_) => return Err(std::io::Error::other("unknown key was accepted").into()),
+    };
     assert_eq!(error.0, "DATABASE__PASSWORD");
+    Ok(())
 }

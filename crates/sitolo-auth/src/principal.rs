@@ -113,11 +113,11 @@ mod tests {
     use crate::id::{AuthenticationMethod, SessionClass};
 
     #[test]
-    fn security_context_construction() {
+    fn security_context_construction() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let mut session = Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
             None,
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -142,19 +142,19 @@ mod tests {
             now,
             request_id.clone(),
             None,
-        )
-        .unwrap();
-        assert_eq!(ctx.principal.subject_id, UserId::new("user-1").unwrap());
+        )?;
+        assert_eq!(ctx.principal.subject_id, UserId::new("user-1")?);
         assert_eq!(ctx.assurance, Assurance::A1);
         assert_eq!(ctx.request_id, request_id);
+        Ok(())
     }
 
     #[test]
-    fn security_version_mismatch_denies() {
+    fn security_version_mismatch_denies() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let mut session = Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
             None,
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -171,16 +171,18 @@ mod tests {
             absolute: Duration::from_secs(60),
         };
         let request_id = RequestId::new_server();
-        let err = SecurityContext::establish(
-            &mut session,
-            None,
-            SecurityVersion(2),
-            lifetime,
-            now,
-            request_id,
-            None,
-        )
-        .unwrap_err();
-        assert_eq!(err, AuthError::SecurityVersionMismatch);
+        assert!(matches!(
+            SecurityContext::establish(
+                &mut session,
+                None,
+                SecurityVersion(2),
+                lifetime,
+                now,
+                request_id,
+                None,
+            ),
+            Err(AuthError::SecurityVersionMismatch)
+        ));
+        Ok(())
     }
 }

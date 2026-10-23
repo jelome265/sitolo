@@ -112,10 +112,24 @@ const ROUTES: &[RouteSpec] = &[
         body_limit: MAX_PROBE_BODY_BYTES,
         timeout: REQUEST_TIMEOUT,
     },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
+        access: Access::Permission("membership.revoke"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
+        access: Access::Permission("membership.suspend"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
 ];
 
 /// Reviewed route snapshot. Update only with an intentional route change and its tests.
-pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/activate access=perm(organization.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms";
+pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/activate access=perm(organization.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
 
 /// Errors returned while validating the static route inventory or serving HTTP.
 #[derive(Debug, Error)]
@@ -180,6 +194,48 @@ pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
             ) => router.route(
                 spec.path,
                 post(create_branch_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout)
+                    .route_layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        authenticate_protected_request,
+                    )),
+            ),
+            (
+                Method::Post,
+                "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
+                Access::Permission(_),
+            ) => router.route(
+                spec.path,
+                post(activate_branch_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout)
+                    .route_layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        authenticate_protected_request,
+                    )),
+            ),
+            (
+                Method::Post,
+                "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
+                Access::Permission(_),
+            ) => router.route(
+                spec.path,
+                post(revoke_member_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout)
+                    .route_layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        authenticate_protected_request,
+                    )),
+            ),
+            (
+                Method::Post,
+                "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
+                Access::Permission(_),
+            ) => router.route(
+                spec.path,
+                post(suspend_member_route)
                     .layer::<_, Infallible>(body_limit)
                     .layer::<_, Infallible>(timeout)
                     .route_layer(middleware::from_fn_with_state(
@@ -285,7 +341,7 @@ async fn liveness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn readiness(State(state): State<Arc<AppState>>) -> Response {
-    if state.runtime_ready() {
+    if state.runtime_ready().await {
         (StatusCode::OK, Json(json!({"status": "ready"}))).into_response()
     } else {
         (
@@ -426,6 +482,81 @@ async fn create_branch_route(
     }
 }
 
+async fn activate_branch_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, branch_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(AppError::DependencyUnavailable);
+    };
+    match service
+        .activate_branch_for_authenticated_user(&security_context, organization_id, branch_id)
+        .await
+    {
+        Ok(branch) => axum::Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+    }
+}
+
+async fn revoke_member_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, membership_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let membership_id = match MembershipId::new(membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(AppError::DependencyUnavailable);
+    };
+    match service
+        .revoke_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
+        .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+    }
+}
+
+async fn suspend_member_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, membership_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let membership_id = match MembershipId::new(membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(AppError::DependencyUnavailable);
+    };
+    match service
+        .suspend_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
+        .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+    }
+}
+
 fn header_text(headers: &HeaderMap, name: impl axum::http::header::AsHeaderName) -> Option<&str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
@@ -456,10 +587,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn route_inventory_matches_reviewed_snapshot() {
-        assert_eq!(
-            validate_route_inventory().expect("route inventory validates"),
-            ROUTE_INVENTORY_SNAPSHOT
-        );
+    fn route_inventory_matches_reviewed_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(validate_route_inventory()?, ROUTE_INVENTORY_SNAPSHOT);
+        Ok(())
     }
 }

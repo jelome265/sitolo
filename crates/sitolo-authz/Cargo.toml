@@ -9,3 +9,5 @@ license.workspace = true
 sha2.workspace = true
 sitolo-domain = { path = "../sitolo-domain" }
 thiserror.workspace = true
+[lints]
+workspace = true

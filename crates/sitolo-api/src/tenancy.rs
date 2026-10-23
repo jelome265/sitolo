@@ -402,6 +402,10 @@ async fn handle_resume_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn successful<T>(result: Result<T, AppError>) -> Result<T, std::io::Error> {
+        result.map_err(|error| std::io::Error::other(format!("handler failed: {error:?}")))
+    }
     use sitolo_domain::tenancy::TenancyError;
 
     #[test]
@@ -584,7 +588,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handlers_execute_successfully_and_map_errors() {
+    async fn handlers_execute_successfully_and_map_errors() -> Result<(), Box<dyn std::error::Error>>
+    {
         use sitolo_application::TenancyService;
         use sitolo_persistence::TenancyDatabase;
         use std::sync::Arc;
@@ -600,7 +605,7 @@ mod tests {
             default_branch_id: "br-100".into(),
             default_branch_name: "Default Branch".into(),
         };
-        let provisioned = handle_provision_organization(&service, req).await.unwrap();
+        let provisioned = successful(handle_provision_organization(&service, req).await)?;
         assert_eq!(provisioned.organization.id, "org-100");
         assert_eq!(provisioned.organization.state, "ACTIVE");
 
@@ -609,36 +614,26 @@ mod tests {
             branch_id: "br-101".into(),
             name: "Second Branch".into(),
         };
-        let branch_res = handle_create_branch(&service, "org-100", branch_req)
-            .await
-            .unwrap();
+        let branch_res = successful(handle_create_branch(&service, "org-100", branch_req).await)?;
         assert_eq!(branch_res.id, "br-101");
         assert_eq!(branch_res.organization_id, "org-100");
 
         // Suspend & Resume organization
-        let suspended = handle_suspend_organization(&service, "org-100")
-            .await
-            .unwrap();
+        let suspended = successful(handle_suspend_organization(&service, "org-100").await)?;
         assert_eq!(suspended.state, "SUSPENDED");
-        let resumed = handle_resume_organization(&service, "org-100")
-            .await
-            .unwrap();
+        let resumed = successful(handle_resume_organization(&service, "org-100").await)?;
         assert_eq!(resumed.state, "ACTIVE");
 
         // Activate branch
-        let activated_branch = handle_activate_branch(&service, "org-100", "br-101")
-            .await
-            .unwrap();
+        let activated_branch =
+            successful(handle_activate_branch(&service, "org-100", "br-101").await)?;
         assert_eq!(activated_branch.state, "ACTIVE");
 
         // Suspend & Resume branch
-        let suspended_branch = handle_suspend_branch(&service, "org-100", "br-101")
-            .await
-            .unwrap();
+        let suspended_branch =
+            successful(handle_suspend_branch(&service, "org-100", "br-101").await)?;
         assert_eq!(suspended_branch.state, "SUSPENDED");
-        let resumed_branch = handle_resume_branch(&service, "org-100", "br-101")
-            .await
-            .unwrap();
+        let resumed_branch = successful(handle_resume_branch(&service, "org-100", "br-101").await)?;
         assert_eq!(resumed_branch.state, "ACTIVE");
 
         // Non-existent organization operations return 404 NotFound
@@ -652,18 +647,15 @@ mod tests {
         );
 
         // Invalid lifecycle transition maps to 409 Conflict
-        let closed_org = handle_begin_close_organization(&service, "org-100")
-            .await
-            .unwrap();
+        let closed_org = successful(handle_begin_close_organization(&service, "org-100").await)?;
         assert_eq!(closed_org.state, "CLOSING");
-        let final_closed = handle_close_organization(&service, "org-100")
-            .await
-            .unwrap();
+        let final_closed = successful(handle_close_organization(&service, "org-100").await)?;
         assert_eq!(final_closed.state, "CLOSED");
 
         assert_eq!(
             handle_suspend_organization(&service, "org-100").await,
             Err(AppError::Conflict)
         );
+        Ok(())
     }
 }

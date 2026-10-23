@@ -25,3 +25,12 @@ step. The API checks for the complete set of identity, tenancy, audit, outbox,
 and session functions at startup. This repository does not yet contain a
 production migration runner or a versioned canonical Phase 5 migration bundle;
 an operator must not point the runtime at a partially provisioned schema.
+
+`consumer_inbox.sql` adds the consumer-side durable idempotency table. It
+grants only SELECT and INSERT on that table to the existing restricted
+`app_worker` role and applies forced tenant RLS; the consumer transaction sets
+the organization context locally, inserts an uncommitted marker, applies its
+approved business effect, and commits both together. The file is a schema
+artifact only. It must be included in the externally controlled migration
+release after the consumer role/schema contract is confirmed; no production
+migration owner or deployment mechanism is defined here.

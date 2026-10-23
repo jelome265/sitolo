@@ -126,15 +126,16 @@ mod tests {
     }
 
     #[test]
-    fn authorization_transaction_single_use() {
+    fn authorization_transaction_single_use() -> Result<(), AuthError> {
         let rng = DeterministicRandom::test_only([2u8; 32]);
         let mut log = AuthorizationTransactionLog::new();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let txn = log.begin(&rng, "challenge".into(), now, Duration::from_secs(60));
-        let completed = log.complete(&txn.state, now).unwrap();
+        let completed = log.complete(&txn.state, now)?;
         assert!(completed.completed);
         // Replay rejected.
         assert!(log.complete(&txn.state, now).is_err());
+        Ok(())
     }
 
     #[test]

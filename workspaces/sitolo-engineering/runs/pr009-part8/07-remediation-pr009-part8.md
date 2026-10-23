@@ -41,6 +41,52 @@ Stage 08 exact-head verification confirmed the database transaction and concurre
 
 The worker engine changes are included in pushed exact head `862775c`. After the worker change, local format, worker/audit tests (7 + 3), targeted clippy, workspace all-target check, and diff checks pass; the exact-head `verify` job also ran the worker tests and all PostgreSQL suites. These checks do not replace a real destination adapter or consumer/database integration evidence for delivery. Since only destination-neutral work is possible without the missing contract, no further safe code change can complete F-03. Merge readiness remains blocked.
 
+## Follow-on remediation — 2026-10-23 (working tree)
+
+This section records the currently uncommitted continuation from repository `HEAD` `62eeae6ad17a78ccb062a1ab9445f5ac8e92c132`. The working tree is the candidate under review; that HEAD does not identify these uncommitted changes and is not represented as their final source SHA.
+
+### Implemented in this working tree
+
+- Added an explicit SNS FIFO publisher implementation in `apps/worker/src/sns.rs`. Its destination region and FIFO topic ARN are injected and validated; it retains event identity, type/version, organization/branch scope, aggregate sequence, and payload; derives FIFO grouping from tenant and aggregate identity; uses the event ID for deterministic deduplication; bounds the request timeout; and classifies retryable, terminal, and destination-unavailable errors. It does not invent a production topic ARN.
+- Expanded API startup/authentication regression coverage and propagated persistence test setup/teardown failures. Readiness now additionally requires an explicitly composed tenancy service, along with a connected runtime database and identity/session dependencies.
+- Tightened `PgRuntimePool` schema readiness to require the PostgreSQL organization/branch lifecycle and invitation-resolution functions used by the live tenancy command path.
+- Added workspace Clippy denials for `unwrap_used`, `expect_used`, `panic`, `unimplemented`, `todo`, and `unreachable`, and enabled inherited workspace lints in member crates.
+- Converted the RLS harness to propagate setup, test, and teardown failures instead of hiding them behind panics. PostgreSQL-backed execution was not performed locally.
+- Added a validated consumer envelope parser and `ConsumerProcessor` ports for SQS-compatible delivery, an owner-supplied transactional business effect, and quarantine. The processor commits the effect and inbox marker together, acknowledges only after commit, leaves retryable failures unacknowledged, and routes invalid/permanent failures through the injected quarantine port. No queue URL, queue policy, or business effect is supplied.
+- Added `PostgresConsumerInbox` and `consumer_inbox.sql`: event identity and SHA-256 payload metadata are recorded under a unique consumer/event key, duplicate content is safe, event-id reuse with different content fails closed, and RLS scopes rows by organization. A PostgreSQL integration case covers rollback, duplicate, conflicting payload, and cross-tenant visibility.
+- Wired the relay binary to load validated configuration, retrieve a distinct worker database credential, verify a direct `app_worker` PostgreSQL login and required outbox functions, then run `RelayWorker` with the SNS FIFO publisher. Added `SITOLO__WORKER__DATABASE__PASSWORD_REF`; it must be configured together with the SNS relay destination. Production resolves it through ECS task-role Secrets Manager, while non-production uses the existing environment secret provider. Shutdown signals are forwarded to the relay loop and the worker waits for in-flight processing to finish.
+- Added `PgWorkerPool` startup checks for restricted role attributes, absence of role memberships, schema presence, and the exact outbox functions required by the repository. The API runtime pool remains separately authenticated as `app_runtime`.
+
+### Verified locally on the working tree
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `git diff --check` | PASS |
+| `cargo check --workspace --all-targets --locked` | PASS — includes worker executable composition and worker-role pool. |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS — includes newly wired worker executable. |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS |
+| `cargo check --workspace --all-targets --locked` | PASS |
+| `cargo test -p sitolo-worker-bin --lib --all-features --locked` | PASS — 15 relay, SNS publisher, consumer envelope, and no-ack quarantine unit tests. |
+| `cargo test -p sitolo-persistence --test part8_postgres_integration_tests --all-features --locked --no-run` | PASS — integration target including inbox rollback, duplicate, conflict, and tenant isolation compiles; no PostgreSQL execution is claimed locally. |
+| `cargo test --workspace --lib --locked` | PASS — 259 unit tests at the time of that run; one later consumer quarantine test passes in the 15-test worker target. |
+| `cargo test -p sitolo-api-bin --test startup --all-features --locked` | PASS — 4 startup tests. |
+| `cargo test -p sitolo-api-bin --test tenancy_api --all-features --locked --no-run` | PASS — target compiles; its PostgreSQL runtime cases were not executed locally. |
+| `cargo test --workspace --locked` | STARTED, then interrupted after prolonged silence; no passing result is claimed. PostgreSQL service is not available locally. |
+| `cargo deny check` | PASS — advisories, bans, licenses, and sources. |
+| `cargo audit --locked` | NOT RUN — `cargo-audit` is not installed on this host; the prior exact-head audit evidence remains only for `862775c`, not this working tree. |
+| `python scripts/ci/check-doc-references` | FAIL — four ambiguous `AGENTS.md`/`CLAUDE.md` references occur only in the user-supplied untracked `.agents/` skill files; the source tree and remediation report were not the reported locations. |
+| GitHub Actions at the working-tree candidate | NOT RUN; no candidate commit was pushed and no workflow result is available. |
+
+### Remaining gaps and external dependencies
+
+- The relay binary is now source-composed, but no live PostgreSQL/SNS execution or working-tree CI run is available. Runtime execution requires deployment to provision the restricted `app_worker` database identity, supply `SITOLO__WORKER__DATABASE__PASSWORD_REF`, SNS FIFO destination settings, and the managed secret-provider region/permissions. The SQS consumer receive/ack transport adapter, durable inbox schema deployment, and quarantine/DLQ adapter still require deployment composition; inbox behavior has only compile evidence until its PostgreSQL integration test runs in CI. The business effect and exact consumer queue configuration remain owner decisions.
+- The live HTTP authentication path is present, but production tenancy reads and every mandatory organization, branch, membership, invitation, role, and scope mutation are not yet demonstrated to use authoritative PostgreSQL transactions with same-transaction audit and outbox, idempotency, and concurrency evidence. The provision-organization path has prior CI evidence only at `862775c`.
+- The runtime database/session/tenancy composition and readiness gate are incomplete as production evidence: required schema compatibility and all dependency health checks have not been proven at this working-tree candidate. A migration/release interface and production migration ownership contract remain unresolved.
+- Exact-head PostgreSQL evidence for this working tree, all requested GitHub checks, a current-source independent Stage 06 audit, and final human review are pending. No production deployment, human review, or merge is claimed.
+
+The external owner decisions remain: (1) SQS FIFO consumer/business-effect approval and exact queue configuration, (2) production migration/release contract and owner, (3) independent Stage 06 auditor, and (4) human PR reviewer/merge authority. These decisions are not inferred by this implementation.
+
 ## Advisory remediation — 2026-10-21
 
 The RSA advisory was remediated without exception or suppression:

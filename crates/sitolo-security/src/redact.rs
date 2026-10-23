@@ -262,15 +262,21 @@ mod tests {
     }
 
     #[test]
-    fn redacts_exact_secret_sequences() {
+    fn redacts_exact_secret_sequences() -> Result<(), Box<dyn std::error::Error>> {
         let r = redactor();
         let out = match r.redact("connect with TEST_SECRET_DATABASE_001 now") {
             RedactionOutcome::Ok(s) => s,
-            other => panic!("unexpected {other:?}"),
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected redaction outcome: {other:?}"
+                ))
+                .into());
+            }
         };
         assert!(!out.contains("TEST_SECRET_DATABASE_001"));
         assert!(out.contains(REDACTED));
         assert!(out.contains("connect with"));
+        Ok(())
     }
 
     // Phase 3 specification, §40/§78: CI must prove authentication credentials

@@ -249,11 +249,11 @@ mod tests {
     use crate::device::DeviceState;
     use crate::id::AuthenticationMethod;
 
-    fn session(lifetime: SessionLifetime) -> (SystemTime, Session) {
+    fn session(lifetime: SessionLifetime) -> Result<(SystemTime, Session), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let s = Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
             None,
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -262,7 +262,7 @@ mod tests {
             lifetime,
             now,
         );
-        (now, s)
+        Ok((now, s))
     }
 
     fn lifetime() -> SessionLifetime {
@@ -273,56 +273,58 @@ mod tests {
     }
 
     #[test]
-    fn active_session_is_accepted_and_slides() {
-        let (now, mut s) = session(lifetime());
+    fn active_session_is_accepted_and_slides() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
         let later = now + Duration::from_secs(20);
-        assert!(s.accept(later, SecurityVersion(3), None).is_ok());
+        s.accept(later, SecurityVersion(3), None)?;
         s.slide_idle(lifetime(), later);
         assert_eq!(s.last_seen_at, later);
         // Idle expiry must follow the slide, not the original issue time.
-        assert!(
-            s.accept(later + Duration::from_secs(25), SecurityVersion(3), None)
-                .is_ok()
-        );
+        s.accept(later + Duration::from_secs(25), SecurityVersion(3), None)?;
+        Ok(())
     }
 
     #[test]
-    fn idle_timeout_expires_server_side() {
-        let (now, mut s) = session(lifetime());
-        let err = s
-            .accept(now + Duration::from_secs(31), SecurityVersion(3), None)
-            .unwrap_err();
-        assert_eq!(err, AuthError::SessionExpired);
+    fn idle_timeout_expires_server_side() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
+        assert!(matches!(
+            s.accept(now + Duration::from_secs(31), SecurityVersion(3), None),
+            Err(AuthError::SessionExpired)
+        ));
         assert_eq!(s.state, SessionState::IdleExpired);
+        Ok(())
     }
 
     #[test]
-    fn absolute_timeout_wins_over_idle_activity() {
-        let (now, mut s) = session(lifetime());
-        s.accept(now + Duration::from_secs(10), SecurityVersion(3), None)
-            .unwrap();
-        let err = s
-            .accept(now + Duration::from_secs(61), SecurityVersion(3), None)
-            .unwrap_err();
-        assert_eq!(err, AuthError::SessionExpired);
+    fn absolute_timeout_wins_over_idle_activity() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
+        s.accept(now + Duration::from_secs(10), SecurityVersion(3), None)?;
+        assert!(matches!(
+            s.accept(now + Duration::from_secs(61), SecurityVersion(3), None),
+            Err(AuthError::SessionExpired)
+        ));
         assert_eq!(s.state, SessionState::AbsoluteExpired);
+        Ok(())
     }
 
     #[test]
-    fn security_version_mismatch_security_revokes() {
-        let (now, mut s) = session(lifetime());
-        let err = s.accept(now, SecurityVersion(4), None).unwrap_err();
-        assert_eq!(err, AuthError::SecurityVersionMismatch);
+    fn security_version_mismatch_security_revokes() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
+        assert!(matches!(
+            s.accept(now, SecurityVersion(4), None),
+            Err(AuthError::SecurityVersionMismatch)
+        ));
         assert_eq!(s.state, SessionState::SecurityRevoked);
+        Ok(())
     }
 
     #[test]
-    fn revoked_device_blocks_device_bound_session() {
+    fn revoked_device_blocks_device_bound_session() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let mut s = Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
-            Some(DeviceId::new("dev-1").unwrap()),
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
+            Some(DeviceId::new("dev-1")?),
             SessionClass::Merchant,
             AuthenticationMethod::Password,
             Assurance::A1,
@@ -330,23 +332,25 @@ mod tests {
             lifetime(),
             now,
         );
-        let err = s
-            .accept(now, SecurityVersion(1), Some(DeviceState::Revoked))
-            .unwrap_err();
-        assert_eq!(err, AuthError::DeviceRevoked);
+        assert!(matches!(
+            s.accept(now, SecurityVersion(1), Some(DeviceState::Revoked)),
+            Err(AuthError::DeviceRevoked)
+        ));
+        Ok(())
     }
 
     #[test]
-    fn revoked_session_never_returns_to_active() {
-        let (now, mut s) = session(lifetime());
+    fn revoked_session_never_returns_to_active() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
         s.revoke(RevocationTrigger::Logout);
         assert_eq!(s.state, SessionState::Revoked);
-        assert_eq!(
-            s.accept(now, SecurityVersion(3), None).unwrap_err(),
-            AuthError::SessionRevoked
-        );
+        assert!(matches!(
+            s.accept(now, SecurityVersion(3), None),
+            Err(AuthError::SessionRevoked)
+        ));
         s.revoke(RevocationTrigger::Logout);
         assert_eq!(s.state, SessionState::Revoked);
+        Ok(())
     }
 
     #[test]
@@ -366,11 +370,12 @@ mod tests {
     }
 
     #[test]
-    fn elevation_never_downgrades_assurance() {
-        let (now, mut s) = session(lifetime());
+    fn elevation_never_downgrades_assurance() -> Result<(), AuthError> {
+        let (now, mut s) = session(lifetime())?;
         let _ = now;
         s.elevate_assurance(Assurance::A3);
         s.elevate_assurance(Assurance::A2);
         assert_eq!(s.assurance, Assurance::A3);
+        Ok(())
     }
 }

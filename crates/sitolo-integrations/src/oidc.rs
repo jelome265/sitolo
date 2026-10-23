@@ -227,6 +227,16 @@ impl CognitoOidcProvider {
     /// Returns an identity-provider error if the JWKS endpoint is unavailable
     /// or its bounded document is invalid.
     pub async fn probe(&self) -> Result<(), AuthError> {
+        let now = SystemTime::now();
+        if self
+            .jwks
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|cache| !cache.keys.is_empty() && now < cache.expires_at)
+        {
+            return Ok(());
+        }
         self.refresh_jwks().await
     }
 
@@ -428,6 +438,10 @@ fn parse_jwks(body: &[u8]) -> Result<HashMap<String, DecodingKey>, AuthError> {
 
 #[async_trait]
 impl IdentityProviderPort for CognitoOidcProvider {
+    async fn readiness_probe(&self) -> Result<(), AuthError> {
+        self.probe().await
+    }
+
     async fn validate_assertion(&self, assertion: &str) -> Result<ExternalIdentity, AuthError> {
         self.verify_access_token(assertion).await
     }
@@ -614,6 +628,8 @@ mod tests {
     use super::*;
     use jsonwebtoken::{EncodingKey, encode};
     use serde::Serialize;
+    use std::error::Error;
+    use std::io;
 
     fn settings() -> CognitoOidcSettings {
         CognitoOidcSettings {
@@ -630,8 +646,8 @@ mod tests {
         }
     }
 
-    fn config() -> CognitoOidcConfig {
-        CognitoOidcConfig::new(settings()).unwrap()
+    fn config() -> Result<CognitoOidcConfig, Box<dyn Error>> {
+        Ok(CognitoOidcConfig::new(settings())?)
     }
 
     #[derive(Serialize)]
@@ -646,40 +662,39 @@ mod tests {
         scope: String,
     }
 
-    async fn provider_with_fixture_key() -> CognitoOidcProvider {
-        let provider = CognitoOidcProvider::new(config()).unwrap();
+    async fn provider_with_fixture_key() -> Result<CognitoOidcProvider, Box<dyn Error>> {
+        let provider = CognitoOidcProvider::new(config()?)?;
         let jwks: JwkSet =
-            serde_json::from_slice(include_bytes!("../tests/fixtures/cognito-test-jwks.json"))
-                .unwrap();
-        let key = DecodingKey::from_jwk(&jwks.keys[0]).unwrap();
+            serde_json::from_slice(include_bytes!("../tests/fixtures/cognito-test-jwks.json"))?;
+        let key = DecodingKey::from_jwk(
+            jwks.keys
+                .first()
+                .ok_or_else(|| io::Error::other("fixture JWKS has a key"))?,
+        )?;
         *provider.jwks.write().await = Some(CachedJwks {
             keys: HashMap::from([("sitolo-test-key".to_owned(), key)]),
             expires_at: SystemTime::now() + Duration::from_secs(300),
             last_forced_refresh_at: None,
         });
-        provider
+        Ok(provider)
     }
 
-    fn signed_access_token(claims: TestAccessClaims) -> String {
+    fn signed_access_token(claims: TestAccessClaims) -> Result<String, Box<dyn Error>> {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("sitolo-test-key".to_owned());
         header.typ = Some("JWT".to_owned());
-        encode(
+        Ok(encode(
             &header,
             &claims,
             &EncodingKey::from_rsa_der(include_bytes!(
                 "../tests/fixtures/cognito-test-private.der"
             )),
-        )
-        .unwrap()
+        )?)
     }
 
-    fn valid_claims() -> TestAccessClaims {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        TestAccessClaims {
+    fn valid_claims() -> Result<TestAccessClaims, Box<dyn Error>> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        Ok(TestAccessClaims {
             iss: "https://cognito-idp.af-south-1.amazonaws.com/pool-id".to_owned(),
             sub: "provider-subject-123".to_owned(),
             exp: now + 300,
@@ -688,38 +703,43 @@ mod tests {
             token_use: "access".to_owned(),
             client_id: "sitolo-mobile-client".to_owned(),
             scope: "sitolo/read".to_owned(),
-        }
+        })
     }
 
     #[test]
-    fn jwks_location_is_derived_from_pinned_https_issuer() {
-        let config = config();
+    fn jwks_location_is_derived_from_pinned_https_issuer() -> Result<(), Box<dyn Error>> {
+        let config = config()?;
         assert_eq!(
             config.jwks_url.as_str(),
             "https://cognito-idp.af-south-1.amazonaws.com/pool-id/.well-known/jwks.json"
         );
+        Ok(())
     }
 
     #[test]
-    fn duplicate_jwks_key_ids_are_rejected() {
+    fn duplicate_jwks_key_ids_are_rejected() -> Result<(), Box<dyn Error>> {
         let mut document: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../tests/fixtures/cognito-test-jwks.json"))
-                .unwrap();
+            serde_json::from_slice(include_bytes!("../tests/fixtures/cognito-test-jwks.json"))?;
         let keys = document
             .get_mut("keys")
             .and_then(serde_json::Value::as_array_mut)
-            .unwrap();
-        keys.push(keys[0].clone());
-        let body = serde_json::to_vec(&document).unwrap();
+            .ok_or_else(|| io::Error::other("fixture has a keys array"))?;
+        let first_key = keys
+            .first()
+            .cloned()
+            .ok_or_else(|| io::Error::other("fixture has a key"))?;
+        keys.push(first_key);
+        let body = serde_json::to_vec(&document)?;
 
         assert!(matches!(
             parse_jwks(&body),
             Err(AuthError::IdentityKeyUnavailable)
         ));
+        Ok(())
     }
 
     #[test]
-    fn configuration_rejects_http_and_unsafe_client_identifiers() {
+    fn configuration_rejects_http_and_unsafe_client_identifiers() -> Result<(), Box<dyn Error>> {
         let mut http_issuer_settings = settings();
         http_issuer_settings.issuer = "http://identity.example.test/pool".to_owned();
         let http_issuer = CognitoOidcConfig::new(http_issuer_settings);
@@ -732,27 +752,39 @@ mod tests {
             unsafe_client_id,
             Err(AuthError::ConfigurationInvalid)
         ));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn malformed_and_oversized_access_tokens_are_rejected_before_fetch() {
-        let provider = CognitoOidcProvider::new(config()).unwrap();
+    async fn malformed_and_oversized_access_tokens_are_rejected_before_fetch()
+    -> Result<(), Box<dyn Error>> {
+        let provider = CognitoOidcProvider::new(config()?)?;
         assert_eq!(
-            provider.validate_assertion("not-a-jwt").await.unwrap_err(),
+            provider
+                .validate_assertion("not-a-jwt")
+                .await
+                .err()
+                .ok_or_else(|| io::Error::other("malformed token must be rejected"))?,
             AuthError::AuthenticationFailed
         );
         let oversized = "a".repeat(MAX_ACCESS_TOKEN_BYTES + 1);
         assert_eq!(
-            provider.validate_assertion(&oversized).await.unwrap_err(),
+            provider
+                .validate_assertion(&oversized)
+                .await
+                .err()
+                .ok_or_else(|| io::Error::other("oversized token must be rejected"))?,
             AuthError::AuthenticationFailed
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn valid_signed_access_token_returns_only_the_external_identity_fact() {
-        let provider = provider_with_fixture_key().await;
-        let token = signed_access_token(valid_claims());
-        let identity = provider.validate_assertion(&token).await.unwrap();
+    async fn valid_signed_access_token_returns_only_the_external_identity_fact()
+    -> Result<(), Box<dyn Error>> {
+        let provider = provider_with_fixture_key().await?;
+        let token = signed_access_token(valid_claims()?)?;
+        let identity = provider.validate_assertion(&token).await?;
         assert_eq!(
             identity.issuer,
             "https://cognito-idp.af-south-1.amazonaws.com/pool-id"
@@ -760,39 +792,56 @@ mod tests {
         assert_eq!(identity.subject, "provider-subject-123");
         assert_eq!(identity.method, AuthenticationMethod::OidcAssertion);
         assert_eq!(identity.assurance_hint, Assurance::A1);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn wrong_issuer_client_token_use_or_scope_is_denied() {
-        let provider = provider_with_fixture_key().await;
+    async fn readiness_probe_accepts_unexpired_cached_verification_keys()
+    -> Result<(), Box<dyn Error>> {
+        let provider = provider_with_fixture_key().await?;
+        provider.readiness_probe().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wrong_issuer_client_token_use_or_scope_is_denied() -> Result<(), Box<dyn Error>> {
+        let provider = provider_with_fixture_key().await?;
         let mut cases = Vec::new();
-        let mut wrong_issuer = valid_claims();
+        let mut wrong_issuer = valid_claims()?;
         wrong_issuer.iss = "https://attacker.example.test/pool".to_owned();
         cases.push(wrong_issuer);
-        let mut wrong_client = valid_claims();
+        let mut wrong_client = valid_claims()?;
         wrong_client.client_id = "another-client".to_owned();
         cases.push(wrong_client);
-        let mut wrong_token_use = valid_claims();
+        let mut wrong_token_use = valid_claims()?;
         wrong_token_use.token_use = "id".to_owned();
         cases.push(wrong_token_use);
-        let mut insufficient_scope = valid_claims();
+        let mut insufficient_scope = valid_claims()?;
         insufficient_scope.scope = "sitolo/write".to_owned();
         cases.push(insufficient_scope);
 
         for claims in cases {
-            let token = signed_access_token(claims);
+            let token = signed_access_token(claims)?;
             assert_eq!(
-                provider.validate_assertion(&token).await.unwrap_err(),
+                provider
+                    .validate_assertion(&token)
+                    .await
+                    .err()
+                    .ok_or_else(|| io::Error::other("invalid claims must be rejected"))?,
                 AuthError::AuthenticationFailed
             );
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn invalid_rsa_signature_is_denied() {
-        let provider = provider_with_fixture_key().await;
-        let mut token = signed_access_token(valid_claims());
-        let signature_index = token.rfind('.').unwrap() + 1;
+    async fn invalid_rsa_signature_is_denied() -> Result<(), Box<dyn Error>> {
+        let provider = provider_with_fixture_key().await?;
+        let mut token = signed_access_token(valid_claims()?)?;
+        let signature_index = token
+            .rfind('.')
+            .ok_or_else(|| io::Error::other("JWT has a signature separator"))?
+            + 1;
         let replacement = if token.as_bytes()[signature_index] == b'A' {
             'B'
         } else {
@@ -803,15 +852,21 @@ mod tests {
             &replacement.to_string(),
         );
         assert_eq!(
-            provider.validate_assertion(&token).await.unwrap_err(),
+            provider
+                .validate_assertion(&token)
+                .await
+                .err()
+                .ok_or_else(|| io::Error::other("invalid claims must be rejected"))?,
             AuthError::AuthenticationFailed
         );
+        Ok(())
     }
 
     #[test]
-    fn audience_handles_string_and_array_encodings() {
+    fn audience_handles_string_and_array_encodings() -> Result<(), Box<dyn Error>> {
         assert!(Audience::Single("resource-a".to_owned()).contains("resource-a"));
         assert!(!Audience::Single("resource-a".to_owned()).contains("resource-b"));
         assert!(Audience::Multiple(vec!["resource-a".to_owned()]).contains("resource-a"));
+        Ok(())
     }
 }

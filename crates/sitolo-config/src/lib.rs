@@ -53,6 +53,8 @@ pub const KNOWN_SCHEMA_VERSIONS: &[u32] = &[2, 3];
 #[cfg(test)]
 mod contract_tests {
     use super::*;
+    use std::error::Error;
+    use std::io;
 
     #[test]
     fn production_rejects_local_secret_provider() {
@@ -69,10 +71,11 @@ mod contract_tests {
     }
 
     #[test]
-    fn fingerprint_is_deterministic_and_excludes_secret_value() {
-        let first = validate(defaults::Builder::development()).unwrap();
-        let second = validate(defaults::Builder::development()).unwrap();
+    fn fingerprint_is_deterministic_and_excludes_secret_value() -> Result<(), Box<dyn Error>> {
+        let first = validate(defaults::Builder::development())?;
+        let second = validate(defaults::Builder::development())?;
         assert_eq!(config_fingerprint(&first), config_fingerprint(&second));
+        Ok(())
     }
 
     #[test]
@@ -95,17 +98,19 @@ mod contract_tests {
     }
 
     #[test]
-    fn environment_selector_chooses_baseline_before_overlays() {
-        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")]).unwrap();
+    fn environment_selector_chooses_baseline_before_overlays() -> Result<(), Box<dyn Error>> {
+        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")])
+            .map_err(|error| io::Error::other(error.0))?;
         assert_eq!(staging.environment, Environment::Staging);
-        let production =
-            EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")]).unwrap();
+        let production = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")])
+            .map_err(|error| io::Error::other(error.0))?;
         assert_eq!(production.environment, Environment::Production);
         assert!(EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "qa")]).is_err());
+        Ok(())
     }
 
     #[test]
-    fn secret_value_namespace_is_outside_configuration_parsing() {
+    fn secret_value_namespace_is_outside_configuration_parsing() -> Result<(), Box<dyn Error>> {
         // The development provider owns `SITOLO_SECRET__`; a value there must
         // coexist with ordinary `SITOLO__` configuration instead of being
         // rejected as an unknown configuration key.
@@ -116,21 +121,23 @@ mod contract_tests {
                 "TEST_ONLY_SECRET_001".to_string(),
             ),
         ])
-        .expect("the development secret namespace must not fail configuration parsing");
+        .map_err(|error| io::Error::other(error.0))?;
         assert_eq!(builder.environment, Environment::Development);
         assert_eq!(builder.db_host, "localhost");
+        Ok(())
     }
 
     #[test]
-    fn former_password_key_is_unknown_configuration() {
+    fn former_password_key_is_unknown_configuration() -> Result<(), Box<dyn Error>> {
         let error = EnvLoader::from_pairs([pair("DATABASE__PASSWORD", "TEST_ONLY_SECRET_001")])
             .err()
-            .expect("the former password key must fail closed");
+            .ok_or_else(|| io::Error::other("the former password key must fail closed"))?;
         assert_eq!(error.0, "DATABASE__PASSWORD");
+        Ok(())
     }
 
     #[test]
-    fn secret_value_namespace_does_not_mask_unknown_configuration() {
+    fn secret_value_namespace_does_not_mask_unknown_configuration() -> Result<(), Box<dyn Error>> {
         let error = EnvLoader::from_pairs([
             (
                 "SITOLO_SECRET__DATABASE__PASSWORD".to_string(),
@@ -139,30 +146,35 @@ mod contract_tests {
             pair("DATABASE__PASSWORD", "TEST_ONLY_SECRET_001"),
         ])
         .err()
-        .expect("an unknown configuration key must still fail closed");
+        .ok_or_else(|| io::Error::other("an unknown configuration key must still fail closed"))?;
         assert_eq!(error.0, "DATABASE__PASSWORD");
+        Ok(())
     }
 
     #[test]
-    fn production_baseline_requires_explicit_database_identity() {
+    fn production_baseline_requires_explicit_database_identity() -> Result<(), Box<dyn Error>> {
         // F-002: no implicit development database or secret namespace.
-        let builder = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")]).unwrap();
+        let builder = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "production")])
+            .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(builder).is_err());
-        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")]).unwrap();
+        let staging = EnvLoader::from_pairs([pair("RUNTIME__ENVIRONMENT", "staging")])
+            .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(staging).is_err());
+        Ok(())
     }
 
     #[test]
-    fn production_requires_restricted_database_role_and_complete_oidc_config() {
+    fn production_requires_restricted_database_role_and_complete_oidc_config()
+    -> Result<(), Box<dyn Error>> {
         let mut config = defaults::Builder::production();
         config.db_host = "db.internal".into();
         config.db_name = "sitolo".into();
         config.db_schema = "sitolo_app".into();
         config.db_user = "app_runtime".into();
-        config.db_password_ref = Some(
-            SecretRef::new(SecretClass::Database, "production/sitolo/db")
-                .expect("static test reference is valid"),
-        );
+        config.db_password_ref = Some(SecretRef::new(
+            SecretClass::Database,
+            "production/sitolo/db",
+        )?);
         config.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
         config.oidc_client_id = Some("client-id".into());
         config.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
@@ -174,10 +186,11 @@ mod contract_tests {
         config.db_user = "app_runtime".into();
         config.oidc_issuer = None;
         assert!(validate(config).is_err());
+        Ok(())
     }
 
     #[test]
-    fn production_rejects_development_secret_namespace() {
+    fn production_rejects_development_secret_namespace() -> Result<(), Box<dyn Error>> {
         // F-003: a fully explicit production config with a development
         // secret namespace is rejected; a production namespace is accepted.
         let mut dev_ns = defaults::Builder::production();
@@ -185,8 +198,10 @@ mod contract_tests {
         dev_ns.db_name = "sitolo".into();
         dev_ns.db_schema = "sitolo_app".into();
         dev_ns.db_user = "app_runtime".into();
-        dev_ns.db_password_ref =
-            Some(SecretRef::new(SecretClass::Database, "development/sitolo/db").unwrap());
+        dev_ns.db_password_ref = Some(SecretRef::new(
+            SecretClass::Database,
+            "development/sitolo/db",
+        )?);
         assert!(validate(dev_ns).is_err());
 
         let mut prod_ns = defaults::Builder::production();
@@ -194,17 +209,20 @@ mod contract_tests {
         prod_ns.db_name = "sitolo".into();
         prod_ns.db_schema = "sitolo_app".into();
         prod_ns.db_user = "app_runtime".into();
-        prod_ns.db_password_ref =
-            Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+        prod_ns.db_password_ref = Some(SecretRef::new(
+            SecretClass::Database,
+            "production/sitolo/db",
+        )?);
         prod_ns.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
         prod_ns.oidc_client_id = Some("client-id".into());
         prod_ns.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
         prod_ns.oidc_redirect_uri = Some("https://app.example.com/callback".into());
         assert!(validate(prod_ns).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn telemetry_endpoint_transport_is_explicit() {
+    fn telemetry_endpoint_transport_is_explicit() -> Result<(), Box<dyn Error>> {
         // F-004: (endpoint, production, expected valid).
         for (endpoint, production, valid) in [
             ("https://collector.example", false, true),
@@ -224,8 +242,10 @@ mod contract_tests {
                 builder.allow_local_secret_provider = false;
                 // F-003: production rows need a production secret namespace
                 // so only the endpoint rule is under test here.
-                builder.db_password_ref =
-                    Some(SecretRef::new(SecretClass::Database, "production/sitolo/db").unwrap());
+                builder.db_password_ref = Some(SecretRef::new(
+                    SecretClass::Database,
+                    "production/sitolo/db",
+                )?);
                 builder.db_host = "db.internal".into();
                 builder.db_name = "sitolo".into();
                 builder.db_schema = "sitolo_app".into();
@@ -243,6 +263,7 @@ mod contract_tests {
                 "endpoint={endpoint} production={production}"
             );
         }
+        Ok(())
     }
 
     #[test]
@@ -266,16 +287,14 @@ mod contract_tests {
     }
 
     #[test]
-    fn database_schema_is_a_bounded_identifier_and_is_required_outside_development() {
+    fn database_schema_is_a_bounded_identifier_and_is_required_outside_development()
+    -> Result<(), Box<dyn Error>> {
         let mut staging = defaults::Builder::staging();
         staging.db_host = "db.internal".into();
         staging.db_name = "sitolo".into();
         staging.db_user = "app_runtime".into();
         staging.db_schema = "sitolo_app".into();
-        staging.db_password_ref = Some(
-            SecretRef::new(SecretClass::Database, "staging/sitolo/db")
-                .expect("static test reference is valid"),
-        );
+        staging.db_password_ref = Some(SecretRef::new(SecretClass::Database, "staging/sitolo/db")?);
         staging.oidc_issuer = Some("https://cognito-idp.af-south-1.amazonaws.com/pool".into());
         staging.oidc_client_id = Some("client-id".into());
         staging.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
@@ -288,14 +307,13 @@ mod contract_tests {
             assert!(validate(invalid).is_err(), "schema={schema:?}");
         }
 
-        let runtime = validate(staging)
-            .expect("explicit staging database config validates")
-            .database_runtime();
+        let runtime = validate(staging)?.database_runtime();
         assert_eq!(runtime.schema, "sitolo_app");
+        Ok(())
     }
 
     #[test]
-    fn relay_settings_are_typed_and_invalid_values_fail_closed() {
+    fn relay_settings_are_typed_and_invalid_values_fail_closed() -> Result<(), Box<dyn Error>> {
         let builder = EnvLoader::from_pairs([
             (
                 "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
@@ -312,8 +330,8 @@ mod contract_tests {
                 "3600000".into(),
             ),
         ])
-        .unwrap();
-        let config = validate(builder).unwrap();
+        .map_err(|error| io::Error::other(error.0))?;
+        let config = validate(builder)?;
         assert_eq!(config.relay_aws_region.as_deref(), Some("af-south-1"));
         assert_eq!(
             config.relay_sns_topic_arn.as_deref(),
@@ -325,13 +343,13 @@ mod contract_tests {
 
         let invalid =
             EnvLoader::from_pairs([("SITOLO__EVENTS__RELAY__BATCH_SIZE".into(), "0".into())])
-                .unwrap();
+                .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(invalid).is_err());
         let incomplete = EnvLoader::from_pairs([(
             "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
             "af-south-1".into(),
         )])
-        .unwrap();
+        .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(incomplete).is_err());
 
         let mismatched = EnvLoader::from_pairs([
@@ -344,23 +362,25 @@ mod contract_tests {
                 "arn:aws:sns:eu-west-1:123456789012:sitolo-iam-events-prod.fifo".into(),
             ),
         ])
-        .unwrap();
+        .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(mismatched).is_err());
+        Ok(())
     }
 
     #[test]
-    fn managed_secret_region_is_typed_bounded_and_fingerprinted() {
+    fn managed_secret_region_is_typed_bounded_and_fingerprinted() -> Result<(), Box<dyn Error>> {
         let builder =
             EnvLoader::from_pairs([("SITOLO__SECRETS__AWS_REGION".into(), "af-south-1".into())])
-                .unwrap();
-        let config = validate(builder).unwrap();
+                .map_err(|error| io::Error::other(error.0))?;
+        let config = validate(builder)?;
         assert_eq!(config.secrets_aws_region.as_deref(), Some("af-south-1"));
 
         let invalid = EnvLoader::from_pairs([(
             "SITOLO__SECRETS__AWS_REGION".into(),
             "https://aws.example".into(),
         )])
-        .unwrap();
+        .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(invalid).is_err());
+        Ok(())
     }
 }

@@ -81,20 +81,20 @@ impl IdentityService {
         provider: Option<Arc<dyn IdentityProviderPort>>,
         policy: IdentityPolicy,
         random: Arc<dyn RandomSource>,
-    ) -> Self {
-        policy.validate().expect("valid identity policy");
+    ) -> Result<Self, sitolo_auth::AuthError> {
+        policy.validate()?;
         let mut limiter = RateLimiter::new();
         for (class, rule) in &policy.abuse_rules {
             let _ = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
         }
-        IdentityService {
+        Ok(IdentityService {
             db,
             hasher,
             provider,
             limiter: Mutex::new(limiter),
             policy,
             random,
-        }
+        })
     }
 
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
@@ -137,8 +137,16 @@ impl IdentityService {
         version: Option<SecurityVersion>,
         now: SystemTime,
     ) {
+        // The constructor receives only this fixed prefix and 16 lowercase
+        // hexadecimal characters from `random_hex(8)`.
+        #[expect(
+            clippy::expect_used,
+            reason = "the generated audit identifier is restricted to its validated ASCII grammar and length"
+        )]
+        let event_id = AuditEventId::new(format!("evt-{}", self.random_hex(8)))
+            .expect("generated audit event id is valid");
         let event = AuthenticationEvent {
-            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8))).expect("event id"),
+            event_id,
             event_name: name,
             occurred_at: now,
             request_id: None,
@@ -960,7 +968,7 @@ mod tests {
     use sitolo_persistence::IdentityDatabase;
     use sitolo_security::DeterministicRandom;
 
-    fn test_service() -> IdentityService {
+    fn test_service() -> Result<IdentityService, sitolo_auth::AuthError> {
         let policy = SessionPolicySet {
             merchant: sitolo_auth::SessionLifetime {
                 idle: Duration::from_secs(30),
@@ -1003,7 +1011,8 @@ mod tests {
     }
 
     #[test]
-    fn service_constructs() {
-        let _ = test_service();
+    fn service_constructs() -> Result<(), sitolo_auth::AuthError> {
+        let _service = test_service()?;
+        Ok(())
     }
 }

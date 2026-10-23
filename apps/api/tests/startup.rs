@@ -42,63 +42,52 @@ fn stub() -> Option<Arc<dyn sitolo_security::SecretProvider>> {
     }))
 }
 
-async fn probe_once(addr: std::net::SocketAddr, path: &str) -> String {
+async fn probe_once(
+    addr: std::net::SocketAddr,
+    path: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut stream =
         tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr))
-            .await
-            .expect("probe connects")
-            .expect("probe connects");
+            .await??;
     let request = format!("GET {path} HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .await
-        .expect("probe writes");
+    stream.write_all(request.as_bytes()).await?;
     let mut body = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut body))
-        .await
-        .expect("probe reads")
-        .expect("probe reads");
-    String::from_utf8_lossy(&body).into_owned()
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut body)).await??;
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 #[tokio::test]
-async fn development_boots_and_serves_bounded_probes() {
+async fn development_boots_and_serves_bounded_probes() -> Result<(), Box<dyn std::error::Error>> {
     let dev =
         StartupContext::build_from_pairs_with_provider(Vec::<(String, String)>::new(), stub())
-            .await
-            .expect("development bootstrap succeeds");
+            .await?;
     assert_eq!(dev.readiness(), Readiness::NotReady);
     assert!(dev.state().config_fingerprint().starts_with("sha256:"));
 
     // Live serving: ephemeral port, real socket, bounded probes.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("ephemeral bind");
-    let addr = listener.local_addr().expect("local addr");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let serve = tokio::spawn(serve(listener, Arc::clone(dev.state()), shutdown_rx));
 
-    let live = probe_once(addr, "/process/live").await;
+    let live = probe_once(addr, "/process/live").await?;
     assert!(live.contains("200 OK"), "unexpected live response: {live}");
     assert!(live.contains("\"status\":\"live\""));
     assert!(!live.contains(PROBE_SECRET), "probe leaked secret material");
-    let ready = probe_once(addr, "/process/ready").await;
+    let ready = probe_once(addr, "/process/ready").await?;
     assert!(
         ready.contains("503 Service Unavailable"),
         "unexpected ready response: {ready}"
     );
-    let missing = probe_once(addr, "/no/such/path").await;
+    let missing = probe_once(addr, "/no/such/path").await?;
     assert!(
         missing.contains("404"),
         "unexpected unknown-path response: {missing}"
     );
 
     let _ = shutdown_tx.send(());
-    let order = tokio::time::timeout(Duration::from_secs(15), serve)
-        .await
-        .expect("serve shuts down")
-        .expect("serve joins");
-    let order = order.expect("server shuts down cleanly");
+    let order = tokio::time::timeout(Duration::from_secs(15), serve).await??;
+    let order = order?;
     assert_eq!(
         order,
         &[
@@ -107,10 +96,11 @@ async fn development_boots_and_serves_bounded_probes() {
             Subsystem::PersistenceIntent,
         ]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn staging_boots_with_explicit_database_identity() {
+async fn staging_boots_with_explicit_database_identity() -> Result<(), Box<dyn std::error::Error>> {
     let staging = StartupContext::build_from_pairs_with_provider(
         [
             pair("RUNTIME__ENVIRONMENT", "staging"),
@@ -136,13 +126,14 @@ async fn staging_boots_with_explicit_database_identity() {
         ],
         stub(),
     )
-    .await
-    .expect("staging bootstrap succeeds");
+    .await?;
     assert_eq!(staging.readiness(), Readiness::NotReady);
+    Ok(())
 }
 
 #[tokio::test]
-async fn injected_production_bootstrap_without_provider_fails_closed() {
+async fn injected_production_bootstrap_without_provider_fails_closed()
+-> Result<(), Box<dyn std::error::Error>> {
     // Injected startup deliberately does not discover ECS task credentials.
     // Without an explicitly supplied provider it refuses rather than using
     // the local provider. No listener is ever bound on this path.
@@ -174,10 +165,11 @@ async fn injected_production_bootstrap_without_provider_fails_closed() {
         matches!(production, Err(StartupError::SecretProviderUnavailable)),
         "production must fail closed"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn explicit_provider_is_honored_in_production() {
+async fn explicit_provider_is_honored_in_production() -> Result<(), Box<dyn std::error::Error>> {
     // The explicit injection seam is used by tests and controlled composition;
     // the process entry point constructs the ECS-backed provider itself.
     let production = StartupContext::build_from_pairs_with_provider(
@@ -206,7 +198,7 @@ async fn explicit_provider_is_honored_in_production() {
         ],
         stub(),
     )
-    .await
-    .expect("explicit provider boots production");
+    .await?;
     assert_eq!(production.readiness(), Readiness::NotReady);
+    Ok(())
 }

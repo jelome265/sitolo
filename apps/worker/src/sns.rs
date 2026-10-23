@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
     use std::time::{Duration, SystemTime};
 
     use sitolo_domain::tenancy::OrganizationId;
@@ -10,18 +11,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fifo_configuration_requires_matching_region_and_fifo_topic() {
+    fn fifo_configuration_requires_matching_region_and_fifo_topic() -> Result<(), Box<dyn Error>> {
         let config = SnsRelayConfig::new(
             "af-south-1",
             "arn:aws:sns:af-south-1:123456789012:sitolo-iam-events-prod.fifo",
             Duration::from_secs(5),
-        )
-        .expect("approved region and FIFO topic shape are valid");
+        )?;
         assert_eq!(config.region(), "af-south-1");
         assert_eq!(
             config.topic_arn(),
             "arn:aws:sns:af-south-1:123456789012:sitolo-iam-events-prod.fifo"
         );
+        Ok(())
     }
 
     #[test]
@@ -53,14 +54,15 @@ mod tests {
     }
 
     #[test]
-    fn published_envelope_keeps_stable_identity_and_excludes_delivery_metadata() {
-        let mut event = sample_event();
+    fn published_envelope_keeps_stable_identity_and_excludes_delivery_metadata()
+    -> Result<(), Box<dyn Error>> {
+        let mut event = sample_event()?;
         event.attempt_count = 7;
         event.last_error_class = Some("credential_failure".to_owned());
         event.available_at = SystemTime::UNIX_EPOCH;
 
-        let first = encode_envelope(&event, "evt-1").expect("valid event encodes");
-        let second = encode_envelope(&event, "evt-1").expect("same event encodes identically");
+        let first = encode_envelope(&event, "evt-1")?;
+        let second = encode_envelope(&event, "evt-1")?;
         assert_eq!(first.message_deduplication_id, "evt-1");
         assert_eq!(first.message_group_id, second.message_group_id);
         assert_eq!(first.body, second.body);
@@ -70,26 +72,28 @@ mod tests {
         assert!(!first.body.contains("available_at"));
         assert!(!first.body.contains("claim_token"));
         assert!(!first.body.contains("credential_failure"));
+        Ok(())
     }
 
     #[test]
-    fn published_envelope_rejects_sequence_or_idempotency_mismatch() {
-        let mut event = sample_event();
+    fn published_envelope_rejects_sequence_or_idempotency_mismatch() -> Result<(), Box<dyn Error>> {
+        let mut event = sample_event()?;
         event.aggregate_sequence = None;
         assert!(encode_envelope(&event, "evt-1").is_err());
 
-        let event = sample_event();
+        let event = sample_event()?;
         assert!(encode_envelope(&event, "different-event").is_err());
+        Ok(())
     }
 
-    fn sample_event() -> OutboxEvent {
-        OutboxEvent {
+    fn sample_event() -> Result<OutboxEvent, Box<dyn Error>> {
+        Ok(OutboxEvent {
             event_id: "evt-1".to_owned(),
             aggregate_type: "Membership".to_owned(),
             aggregate_id: "mem-1".to_owned(),
             event_name: "iam.invitation.issued".to_owned(),
             event_version: 1,
-            organization_id: OrganizationId::new("org-1").expect("valid org id"),
+            organization_id: OrganizationId::new("org-1")?,
             branch_id: None,
             occurred_at: SystemTime::UNIX_EPOCH,
             payload: r#"{"invitation_id":"inv-1","membership_id":"mem-1","expires_at":"2026-10-23T00:00:00Z","state_version":1}"#.to_owned(),
@@ -104,7 +108,7 @@ mod tests {
             aggregate_sequence: Some(1),
             claim_token: None,
             claim_generation: 1,
-        }
+        })
     }
 }
 use std::time::Duration;

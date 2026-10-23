@@ -167,18 +167,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_secret_error_carries_no_path_or_value() {
+    fn missing_secret_error_carries_no_path_or_value() -> Result<(), Box<dyn std::error::Error>> {
         // F-014: the error identifies the class and a non-secret reference
         // fingerprint, never the raw path or a value.
         let error = SecretError::Missing {
             class: SecretClass::Database,
-            reference: SecretRef::new(SecretClass::Database, "prod/sitolo/db")
-                .unwrap()
+            reference: SecretRef::new(SecretClass::Database, "prod/sitolo/db")?
                 .reference_fingerprint(),
         };
         let text = format!("{error}");
         assert!(text.contains("database"));
         assert!(!text.contains("prod/sitolo/db"));
         assert!(!text.contains(SENTINEL));
+        Ok(())
     }
 }

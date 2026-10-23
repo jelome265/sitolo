@@ -11,11 +11,10 @@
 //! acceptance throttles per token hash. Rules are caller-supplied policy
 //! with documented moderate fallbacks.
 //!
-//! Explicitly deferred to later Phase 4 PRs: invitation delivery (outbox,
-//! PR-009), HTTP routes and DTOs (PR-006). These methods enforce
-//! state-machine and scope correctness, not caller authorization — actor
-//! authority (who may invite, grant, or revoke) is enforced by the
-//! authorization engine (Phase 6) once issuer scope exists.
+//! Invitation delivery remains an outbox concern. Caller authorization is
+//! implemented only by the explicit authenticated command methods; generic
+//! actor-taking methods remain reference/evidence operations and must not be
+//! wired directly to production HTTP requests.
 //!
 //! ## Phase 4 Part 8 evidence (PR-009)
 //!
@@ -26,9 +25,12 @@
 //! grant/revocation, token-bound invitation issue/acceptance/withdrawal, and
 //! invitation expiry sweeping.
 //!
-//! Most request-driven methods still take an `actor: ActorRef`; production
-//! HTTP authority is not yet composed. Token-bound acceptance derives its
-//! actor from the user bound to the locked invitation membership.
+//! Most request-driven methods still take an `actor: ActorRef`. The explicit
+//! authenticated branch-create, branch-activate, and membership-suspend
+//! commands instead derive actor provenance from `SecurityContext` and
+//! authorize against persisted membership state in the mutation transaction.
+//! Token-bound acceptance derives its actor from the user bound to the locked
+//! invitation membership.
 //!
 //! Owner-approved invitation issue, withdrawal, and expiry sweeping are
 //! coupled to their state changes; expiry sweeping is tenant-scoped and
@@ -355,8 +357,9 @@ impl TenancyService {
         membership_id: &MembershipId,
         assignment_id: &RoleAssignmentId,
         role: Role,
-        actor: ActorRef,
-    ) -> Result<RoleAssignment, TenancyError> {
+        actor: Option<ActorRef>,
+        security_context: Option<&SecurityContext>,
+    ) -> Result<RoleAssignment, AuthorizedTenancyError> {
         let sink = self
             .evidence
             .as_ref()
@@ -385,6 +388,30 @@ impl TenancyService {
                 stage: "role_assignment_organization_lock",
                 sqlstate: None,
             })?;
+        let actor = if let Some(security_context) = security_context {
+            let user_id =
+                TenantUserId::new(security_context.principal.subject_id.as_str().to_owned())
+                    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let authority = authorize_postgres_operation_in_transaction(
+                &mut tx,
+                organization_id,
+                MembershipSelector::User(&user_id),
+                None,
+                Permission::RoleAssign,
+            )
+            .await?;
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authority.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            }
+        } else {
+            actor.ok_or(TenancyError::EvidencePersistenceFailed)?
+        };
 
         let membership_state: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT state FROM organization_memberships \
@@ -399,10 +426,10 @@ impl TenancyService {
             sqlstate: None,
         })?;
         let Some(membership_state) = membership_state else {
-            return Err(TenancyError::NotFound);
+            return Err(TenancyError::NotFound.into());
         };
         if matches!(membership_state.as_str(), "EXPIRED" | "REVOKED") {
-            return Err(TenancyError::InvalidTransition);
+            return Err(TenancyError::InvalidTransition.into());
         }
 
         let existing: Option<(String, String, String, String, i64)> =
@@ -429,7 +456,7 @@ impl TenancyService {
                 || existing_membership != membership_id.as_str()
                 || existing_role != role.as_str()
             {
-                return Err(TenancyError::Conflict);
+                return Err(TenancyError::Conflict.into());
             }
             let state_version = u64::try_from(state_version).map_err(|_| {
                 TenancyError::EvidencePersistenceFailedAt {
@@ -529,8 +556,9 @@ impl TenancyService {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
         role: Role,
-        actor: ActorRef,
-    ) -> Result<RoleAssignment, TenancyError> {
+        actor: Option<ActorRef>,
+        security_context: Option<&SecurityContext>,
+    ) -> Result<RoleAssignment, AuthorizedTenancyError> {
         let sink = self
             .evidence
             .as_ref()
@@ -559,6 +587,30 @@ impl TenancyService {
                 stage: "role_revocation_organization_lock",
                 sqlstate: None,
             })?;
+        let actor = if let Some(security_context) = security_context {
+            let user_id =
+                TenantUserId::new(security_context.principal.subject_id.as_str().to_owned())
+                    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let authority = authorize_postgres_operation_in_transaction(
+                &mut tx,
+                organization_id,
+                MembershipSelector::User(&user_id),
+                None,
+                Permission::RoleAssign,
+            )
+            .await?;
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authority.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            }
+        } else {
+            actor.ok_or(TenancyError::EvidencePersistenceFailed)?
+        };
 
         let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
             "UPDATE role_assignments \
@@ -577,7 +629,7 @@ impl TenancyService {
             sqlstate: None,
         })?;
         let Some((assignment_id, version)) = changed else {
-            return Err(TenancyError::NotFound);
+            return Err(TenancyError::NotFound.into());
         };
         let assignment_id = RoleAssignmentId::new(assignment_id).map_err(|_| {
             TenancyError::EvidencePersistenceFailedAt {
@@ -633,10 +685,11 @@ impl TenancyService {
         membership_id: &MembershipId,
         grant_id: &ScopeGrantId,
         scope: Scope,
-        actor: ActorRef,
-    ) -> Result<ScopeGrant, TenancyError> {
+        actor: Option<ActorRef>,
+        security_context: Option<&SecurityContext>,
+    ) -> Result<ScopeGrant, AuthorizedTenancyError> {
         if scope.organization_id() != organization_id {
-            return Err(TenancyError::InvalidTransition);
+            return Err(TenancyError::InvalidTransition.into());
         }
         let (scope_kind, branch_id) = match &scope {
             Scope::Organization { .. } => ("ORGANIZATION", None),
@@ -670,6 +723,30 @@ impl TenancyService {
                 stage: "scope_grant_organization_lock",
                 sqlstate: None,
             })?;
+        let actor = if let Some(security_context) = security_context {
+            let user_id =
+                TenantUserId::new(security_context.principal.subject_id.as_str().to_owned())
+                    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let authority = authorize_postgres_operation_in_transaction(
+                &mut tx,
+                organization_id,
+                MembershipSelector::User(&user_id),
+                None,
+                Permission::ScopeGrant,
+            )
+            .await?;
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authority.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            }
+        } else {
+            actor.ok_or(TenancyError::EvidencePersistenceFailed)?
+        };
         let membership_state: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT state FROM organization_memberships WHERE organization_id = $1 AND id = $2",
         )
@@ -682,10 +759,10 @@ impl TenancyService {
             sqlstate: None,
         })?;
         let Some(membership_state) = membership_state else {
-            return Err(TenancyError::NotFound);
+            return Err(TenancyError::NotFound.into());
         };
         if matches!(membership_state.as_str(), "EXPIRED" | "REVOKED") {
-            return Err(TenancyError::InvalidTransition);
+            return Err(TenancyError::InvalidTransition.into());
         }
 
         let existing: Option<(String, String, String, Option<String>, String, i64)> =
@@ -699,12 +776,12 @@ impl TenancyService {
                 || kind != scope_kind
                 || branch != branch_id
             {
-                return Err(TenancyError::Conflict);
+                return Err(TenancyError::Conflict.into());
             }
             let state = match state.as_str() {
                 "ACTIVE" => ScopeGrantState::Active,
                 "REVOKED" => ScopeGrantState::Revoked,
-                _ => return Err(TenancyError::EvidencePersistenceFailed),
+                _ => return Err(TenancyError::EvidencePersistenceFailed.into()),
             };
             return Ok(ScopeGrant {
                 id: grant_id.clone(),
@@ -748,8 +825,9 @@ impl TenancyService {
         &self,
         organization_id: &OrganizationId,
         grant_id: &ScopeGrantId,
-        actor: ActorRef,
-    ) -> Result<ScopeGrant, TenancyError> {
+        actor: Option<ActorRef>,
+        security_context: Option<&SecurityContext>,
+    ) -> Result<ScopeGrant, AuthorizedTenancyError> {
         let sink = self
             .evidence
             .as_ref()
@@ -778,12 +856,36 @@ impl TenancyService {
                 stage: "scope_revoke_organization_lock",
                 sqlstate: None,
             })?;
+        let actor = if let Some(security_context) = security_context {
+            let user_id =
+                TenantUserId::new(security_context.principal.subject_id.as_str().to_owned())
+                    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let authority = authorize_postgres_operation_in_transaction(
+                &mut tx,
+                organization_id,
+                MembershipSelector::User(&user_id),
+                None,
+                Permission::ScopeGrant,
+            )
+            .await?;
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authority.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            }
+        } else {
+            actor.ok_or(TenancyError::EvidencePersistenceFailed)?
+        };
         let row: Option<(String, String, Option<String>, String, i64)> = sqlx_core::query_as::query_as(
             "UPDATE scope_grants SET state = 'REVOKED', state_version = state_version + 1 WHERE organization_id = $1 AND id = $2 AND state = 'ACTIVE' RETURNING membership_id, scope_kind, branch_id, state, state_version",
         ).bind(organization_id.as_str()).bind(grant_id.as_str()).fetch_optional(&mut *tx).await
             .map_err(|_| TenancyError::EvidencePersistenceFailedAt { stage: "scope_revoke_update", sqlstate: None })?;
         let Some((membership_raw, kind, branch, state, version)) = row else {
-            return Err(TenancyError::NotFound);
+            return Err(TenancyError::NotFound.into());
         };
         let membership_id = MembershipId::new(membership_raw)
             .map_err(|_| TenancyError::EvidencePersistenceFailed)?;
@@ -796,7 +898,7 @@ impl TenancyService {
                 branch_id: BranchId::new(branch_id)
                     .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
             },
-            _ => return Err(TenancyError::EvidencePersistenceFailed),
+            _ => return Err(TenancyError::EvidencePersistenceFailed.into()),
         };
         let grant = ScopeGrant {
             id: grant_id.clone(),
@@ -806,7 +908,7 @@ impl TenancyService {
             state: if state == "REVOKED" {
                 ScopeGrantState::Revoked
             } else {
-                return Err(TenancyError::EvidencePersistenceFailed);
+                return Err(TenancyError::EvidencePersistenceFailed.into());
             },
             state_version: u64::try_from(version)
                 .map_err(|_| TenancyError::EvidencePersistenceFailed)?,
@@ -1812,6 +1914,109 @@ impl TenancyService {
         Ok(branch)
     }
 
+    /// Activates a provisioning branch after checking persisted
+    /// `BRANCH_UPDATE` authority at the organization scope. Authorization,
+    /// transition, audit, and outbox writes share one PostgreSQL transaction;
+    /// actor provenance comes only from the authenticated context.
+    pub async fn activate_branch_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: OrganizationId,
+        branch_id: BranchId,
+    ) -> Result<Branch, AuthorizedTenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(ScopeError::AuthorityUnavailable)?;
+        let user_id = TenantUserId::new(security_context.principal.subject_id.as_str())?;
+        let mut tx = sink.pool.begin().await.map_err(|_| {
+            AuthorizedTenancyError::Tenancy(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_branch_activate_begin",
+                sqlstate: None,
+            })
+        })?;
+        establish_authorized_mutation_transaction(&mut tx, &organization_id).await?;
+        let organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+        if organization_state.as_deref() != Some("ACTIVE") {
+            return Err(ScopeError::OrganizationDenied.into());
+        }
+        let authorized_scope = authorize_postgres_operation_in_transaction(
+            &mut tx,
+            &organization_id,
+            MembershipSelector::User(&user_id),
+            None,
+            Permission::BranchUpdate,
+        )
+        .await?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE branches SET state = 'ACTIVE', state_version = state_version + 1 \
+             WHERE organization_id = $1 AND id = $2 AND state = 'PROVISIONING' \
+             RETURNING name, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(branch_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "authorized_branch_activate_update",
+            sqlstate: None,
+        })?;
+        let Some((name, version)) = changed else {
+            return Err(TenancyError::InvalidTransition.into());
+        };
+        let branch = Branch {
+            id: branch_id.clone(),
+            organization_id: organization_id.clone(),
+            name,
+            state: BranchState::Active,
+            state_version: u64::try_from(version).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "authorized_branch_activate_version",
+                    sqlstate: None,
+                }
+            })?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::BranchActivated,
+            &organization_id,
+            Some(&branch_id),
+            TargetRef::Branch(branch_id.clone()),
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authorized_scope.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            },
+            "activate_branch",
+            "branch",
+            branch_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "branch_id": branch_id.as_str(),
+                "from_state": "PROVISIONING",
+                "to_state": "ACTIVE",
+                "state_version": branch.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_branch_activate_commit",
+                sqlstate: None,
+            })?;
+        Ok(branch)
+    }
+
     /// Invites a user into an organization (section 8): records the
     /// membership in state `Invited` and enforces one non-terminal
     /// membership per (organization, user). Token-bound enrollment with
@@ -2006,6 +2211,224 @@ impl TenancyService {
             }),
         )
         .await?;
+        Ok(membership)
+    }
+
+    /// Suspends a membership only when the authenticated principal has the
+    /// persisted `MEMBERSHIP_SUSPEND` permission in this organization. The
+    /// authorization read, state change, audit row, and outbox event share
+    /// one transaction; the audit actor is derived from `security_context`.
+    pub async fn suspend_member_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Result<Membership, AuthorizedTenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(ScopeError::AuthorityUnavailable)?;
+        let user_id = TenantUserId::new(security_context.principal.subject_id.as_str())?;
+        let mut tx = sink.pool.begin().await.map_err(|_| {
+            AuthorizedTenancyError::Tenancy(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_membership_suspend_begin",
+                sqlstate: None,
+            })
+        })?;
+        establish_authorized_mutation_transaction(&mut tx, organization_id).await?;
+        let organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+        if organization_state.as_deref() != Some("ACTIVE") {
+            return Err(ScopeError::OrganizationDenied.into());
+        }
+        let authorized_scope = authorize_postgres_operation_in_transaction(
+            &mut tx,
+            organization_id,
+            MembershipSelector::User(&user_id),
+            None,
+            Permission::MembershipSuspend,
+        )
+        .await?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE organization_memberships \
+             SET state = 'SUSPENDED', state_version = state_version + 1 \
+             WHERE organization_id = $1 AND id = $2 AND state = 'ACTIVE' \
+             RETURNING user_id, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "authorized_membership_suspend_update",
+            sqlstate: None,
+        })?;
+        let Some((subject_id, version)) = changed else {
+            return Err(TenancyError::InvalidTransition.into());
+        };
+        let membership = Membership {
+            id: membership_id.clone(),
+            organization_id: organization_id.clone(),
+            user_id: TenantUserId::new(subject_id).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "authorized_membership_suspend_subject",
+                    sqlstate: None,
+                }
+            })?,
+            state: MembershipState::Suspended,
+            state_version: u64::try_from(version).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "authorized_membership_suspend_version",
+                    sqlstate: None,
+                }
+            })?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::MembershipSuspended,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authorized_scope.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            },
+            "suspend_member",
+            "membership",
+            membership_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "from_state": "ACTIVE",
+                "to_state": "SUSPENDED",
+                "state_version": membership.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_membership_suspend_commit",
+                sqlstate: None,
+            })?;
+        Ok(membership)
+    }
+
+    /// Revokes a membership only when the authenticated principal has the
+    /// persisted `MEMBERSHIP_REVOKE` permission in this organization. The
+    /// authorization read, state change, audit row, and outbox event share
+    /// one transaction; the audit actor is derived from `security_context`.
+    pub async fn revoke_member_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+    ) -> Result<Membership, AuthorizedTenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(ScopeError::AuthorityUnavailable)?;
+        let user_id = TenantUserId::new(security_context.principal.subject_id.as_str())?;
+        let mut tx = sink.pool.begin().await.map_err(|_| {
+            AuthorizedTenancyError::Tenancy(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_membership_revoke_begin",
+                sqlstate: None,
+            })
+        })?;
+        establish_authorized_mutation_transaction(&mut tx, organization_id).await?;
+        let organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+        if organization_state.as_deref() != Some("ACTIVE") {
+            return Err(ScopeError::OrganizationDenied.into());
+        }
+        let authorized_scope = authorize_postgres_operation_in_transaction(
+            &mut tx,
+            organization_id,
+            MembershipSelector::User(&user_id),
+            None,
+            Permission::MembershipRevoke,
+        )
+        .await?;
+        let changed: Option<(String, i64)> = sqlx_core::query_as::query_as(
+            "UPDATE organization_memberships \
+             SET state = 'REVOKED', state_version = state_version + 1 \
+             WHERE organization_id = $1 AND id = $2 AND state = 'ACTIVE' \
+             RETURNING user_id, state_version",
+        )
+        .bind(organization_id.as_str())
+        .bind(membership_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+            stage: "authorized_membership_revoke_update",
+            sqlstate: None,
+        })?;
+        let Some((subject_id, version)) = changed else {
+            return Err(TenancyError::InvalidTransition.into());
+        };
+        let membership = Membership {
+            id: membership_id.clone(),
+            organization_id: organization_id.clone(),
+            user_id: TenantUserId::new(subject_id).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "authorized_membership_revoke_subject",
+                    sqlstate: None,
+                }
+            })?,
+            state: MembershipState::Revoked,
+            state_version: u64::try_from(version).map_err(|_| {
+                TenancyError::EvidencePersistenceFailedAt {
+                    stage: "authorized_membership_revoke_version",
+                    sqlstate: None,
+                }
+            })?,
+        };
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::MembershipRevoked,
+            organization_id,
+            None,
+            TargetRef::Membership(membership_id.clone()),
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(authorized_scope.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            },
+            "revoke_member",
+            "membership",
+            membership_id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "membership_id": membership_id.as_str(),
+                "from_state": "ACTIVE",
+                "to_state": "REVOKED",
+                "state_version": membership.state_version,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_membership_revoke_commit",
+                sqlstate: None,
+            })?;
         Ok(membership)
     }
 
@@ -2730,10 +3153,9 @@ impl TenancyService {
         Ok(transitioned)
     }
 
-    /// Grants an organization-wide role to a live membership. Who may grant
-    /// which role is an actor-authority question answered by Phase 6 once
-    /// issuer scope is available (sections 8.1.8, 8.1.9, 11.2); this method
-    /// enforces target-state and duplicate-grant correctness only.
+    /// Low-level role assignment using caller-supplied actor evidence. This is
+    /// a reference/evidence API and does not authorize that actor; production
+    /// requests must call [`Self::assign_role_for_authenticated_user`].
     pub async fn assign_role(
         &self,
         organization_id: OrganizationId,
@@ -2749,9 +3171,16 @@ impl TenancyService {
                     &membership_id,
                     &assignment_id,
                     role,
-                    actor,
+                    Some(actor),
+                    None,
                 )
-                .await;
+                .await
+                .map_err(|error| match error {
+                    AuthorizedTenancyError::Tenancy(error) => error,
+                    AuthorizedTenancyError::Authorization(_) => {
+                        TenancyError::EvidencePersistenceFailed
+                    }
+                });
         }
         let assignment = self
             .db
@@ -2781,8 +3210,31 @@ impl TenancyService {
         Ok(assignment)
     }
 
-    /// Ends an effective grant. History is preserved; re-granting creates a
-    /// new record (section 8.1.10).
+    /// Assigns an organization role after checking persisted `ROLE_ASSIGN`
+    /// authority in the same PostgreSQL transaction as the state and evidence
+    /// writes. Actor and membership provenance are derived from the request's
+    /// authenticated security context.
+    pub async fn assign_role_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        assignment_id: RoleAssignmentId,
+        role: Role,
+    ) -> Result<RoleAssignment, AuthorizedTenancyError> {
+        self.assign_role_with_evidence(
+            &organization_id,
+            &membership_id,
+            &assignment_id,
+            role,
+            None,
+            Some(security_context),
+        )
+        .await
+    }
+
+    /// Low-level role revocation using caller-supplied actor evidence. Use
+    /// [`Self::revoke_role_for_authenticated_user`] for production requests.
     pub async fn revoke_role(
         &self,
         organization_id: &OrganizationId,
@@ -2792,8 +3244,14 @@ impl TenancyService {
     ) -> Result<RoleAssignment, TenancyError> {
         if self.evidence.is_some() {
             return self
-                .revoke_role_with_evidence(organization_id, membership_id, role, actor)
-                .await;
+                .revoke_role_with_evidence(organization_id, membership_id, role, Some(actor), None)
+                .await
+                .map_err(|error| match error {
+                    AuthorizedTenancyError::Tenancy(error) => error,
+                    AuthorizedTenancyError::Authorization(_) => {
+                        TenancyError::EvidencePersistenceFailed
+                    }
+                });
         }
         let assignment = self
             .db
@@ -2818,6 +3276,25 @@ impl TenancyService {
         Ok(assignment)
     }
 
+    /// Revokes an effective role after checking persisted `ROLE_ASSIGN`
+    /// authority in the same transaction as the revocation and its evidence.
+    pub async fn revoke_role_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: &OrganizationId,
+        membership_id: &MembershipId,
+        role: Role,
+    ) -> Result<RoleAssignment, AuthorizedTenancyError> {
+        self.revoke_role_with_evidence(
+            organization_id,
+            membership_id,
+            role,
+            None,
+            Some(security_context),
+        )
+        .await
+    }
+
     /// Full grant history for a membership, all states.
     pub async fn member_roles(
         &self,
@@ -2834,10 +3311,8 @@ impl TenancyService {
             .await
     }
 
-    /// Narrows a membership's authority to an explicit scope. Structural
-    /// validity (scope inside the organization, branch existence) is enforced
-    /// by the repository; issuer authority (the widening rule, section 11.2)
-    /// is enforced by Phase 6 once actor scope exists.
+    /// Low-level scope grant using caller-supplied actor evidence. Use
+    /// [`Self::grant_scope_for_authenticated_user`] for production requests.
     pub async fn grant_scope(
         &self,
         organization_id: OrganizationId,
@@ -2853,9 +3328,16 @@ impl TenancyService {
                     &membership_id,
                     &grant_id,
                     scope,
-                    actor,
+                    Some(actor),
+                    None,
                 )
-                .await;
+                .await
+                .map_err(|error| match error {
+                    AuthorizedTenancyError::Tenancy(error) => error,
+                    AuthorizedTenancyError::Authorization(_) => {
+                        TenancyError::EvidencePersistenceFailed
+                    }
+                });
         }
         let grant = self
             .db
@@ -2885,7 +3367,29 @@ impl TenancyService {
         Ok(grant)
     }
 
-    /// Lifts one narrowing entry. Remaining active grants still apply.
+    /// Adds a scope grant after checking persisted `SCOPE_GRANT` authority in
+    /// the same PostgreSQL transaction as the grant and evidence writes.
+    pub async fn grant_scope_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: OrganizationId,
+        membership_id: MembershipId,
+        grant_id: ScopeGrantId,
+        scope: Scope,
+    ) -> Result<ScopeGrant, AuthorizedTenancyError> {
+        self.grant_scope_with_evidence(
+            &organization_id,
+            &membership_id,
+            &grant_id,
+            scope,
+            None,
+            Some(security_context),
+        )
+        .await
+    }
+
+    /// Low-level scope revocation using caller-supplied actor evidence. Use
+    /// [`Self::revoke_scope_grant_for_authenticated_user`] for production requests.
     pub async fn revoke_scope_grant(
         &self,
         organization_id: &OrganizationId,
@@ -2894,8 +3398,14 @@ impl TenancyService {
     ) -> Result<ScopeGrant, TenancyError> {
         if self.evidence.is_some() {
             return self
-                .revoke_scope_with_evidence(organization_id, grant_id, actor)
-                .await;
+                .revoke_scope_with_evidence(organization_id, grant_id, Some(actor), None)
+                .await
+                .map_err(|error| match error {
+                    AuthorizedTenancyError::Tenancy(error) => error,
+                    AuthorizedTenancyError::Authorization(_) => {
+                        TenancyError::EvidencePersistenceFailed
+                    }
+                });
         }
         let grant = self
             .db
@@ -2917,6 +3427,18 @@ impl TenancyService {
         )
         .await?;
         Ok(grant)
+    }
+
+    /// Revokes a scope grant after checking persisted `SCOPE_GRANT` authority
+    /// in the same PostgreSQL transaction as the revocation/evidence writes.
+    pub async fn revoke_scope_grant_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        organization_id: &OrganizationId,
+        grant_id: &ScopeGrantId,
+    ) -> Result<ScopeGrant, AuthorizedTenancyError> {
+        self.revoke_scope_with_evidence(organization_id, grant_id, None, Some(security_context))
+            .await
     }
 
     /// Active and revoked narrowing entries for a membership.
@@ -4051,12 +4573,12 @@ mod tests {
     use super::*;
     use sitolo_authz::ContactKind;
 
-    fn org_id(value: &str) -> OrganizationId {
-        OrganizationId::new(value).unwrap()
+    fn org_id(value: &str) -> Result<OrganizationId, Box<dyn std::error::Error>> {
+        Ok(OrganizationId::new(value)?)
     }
 
-    fn user(value: &str) -> TenantUserId {
-        TenantUserId::new(value).unwrap()
+    fn user(value: &str) -> Result<TenantUserId, Box<dyn std::error::Error>> {
+        Ok(TenantUserId::new(value)?)
     }
 
     #[test]
@@ -4108,11 +4630,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_organization_mutation_fails_before_reference_store_write() {
+    async fn unsupported_organization_mutation_fails_before_reference_store_write()
+    -> Result<(), Box<dyn std::error::Error>> {
         let pool = sqlx_postgres::PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(50))
-            .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")
-            .unwrap();
+            .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")?;
         let db = Arc::new(TenancyDatabase::new());
         let service = TenancyService::new_reference(db.clone(), Vec::new())
             .for_reference_with_evidence(TenancyEvidenceSink::new(
@@ -4122,18 +4644,20 @@ mod tests {
                     sitolo_persistence::outbox_repository::PostgresOutboxRepository::new(pool),
                 ),
             ));
-        let organization_id = org_id("org-fail-closed");
+        let organization_id = org_id("org-fail-closed")?;
         let result = service
             .activate_organization(&organization_id, actor("operator"))
             .await;
         assert!(result.is_err());
         assert!(db.organization_snapshot(&organization_id).await.is_none());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn authenticated_user_authorization_never_falls_back_to_reference_store() {
+    async fn authenticated_user_authorization_never_falls_back_to_reference_store()
+    -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
 
         let result = service
             .authorize_user_operation(
@@ -4145,46 +4669,48 @@ mod tests {
             .await;
 
         assert_eq!(result, Err(ScopeError::AuthorityUnavailable));
+        Ok(())
     }
 
-    async fn provisioned(service: &TenancyService) -> ProvisionedOrganization {
-        service
+    async fn provisioned(
+        service: &TenancyService,
+    ) -> Result<ProvisionedOrganization, Box<dyn std::error::Error>> {
+        Ok(service
             .provision_organization(
-                org_id("o1"),
+                org_id("o1")?,
                 "Merchant",
-                MembershipId::new("m-owner").unwrap(),
-                user("owner"),
-                BranchId::new("b1").unwrap(),
+                MembershipId::new("m-owner")?,
+                user("owner")?,
+                BranchId::new("b1")?,
                 "Main Branch",
             )
-            .await
-            .unwrap()
+            .await?)
     }
 
     #[tokio::test]
-    async fn provision_creates_operating_triple() {
+    async fn provision_creates_operating_triple() -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         assert!(bundle.organization.can_operate());
         assert!(bundle.owner_membership.has_authority());
         assert!(bundle.default_branch.can_operate());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn member_lifecycle_round_trip() {
+    async fn member_lifecycle_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
 
         let invited = service
             .invite_member(
-                MembershipId::new("m-cashier").unwrap(),
+                MembershipId::new("m-cashier")?,
                 org.clone(),
-                user("cashier"),
+                user("cashier")?,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(!invited.has_authority());
         // Cannot skip to Active.
         assert_eq!(
@@ -4193,64 +4719,58 @@ mod tests {
         );
         service
             .mark_member_pending(org, &invited.id, actor("issuer"))
-            .await
-            .unwrap();
+            .await?;
         let active = service
             .accept_member(org, &invited.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert!(active.has_authority());
 
         let scope = service
             .effective_scope(org, &active.id, Some(&bundle.default_branch.id))
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(scope.organization_id, *org);
 
         service
             .suspend_member(org, &active.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
         );
         service
             .resume_member(org, &active.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert!(service.effective_scope(org, &active.id, None).await.is_ok());
         service
             .revoke_member(org, &active.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(
             service.effective_scope(org, &active.id, None).await,
             Err(ScopeError::MembershipNotActive)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn persisted_cross_tenant_scope_is_denied() {
+    async fn persisted_cross_tenant_scope_is_denied() -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let first = provisioned(&service).await;
+        let first = provisioned(&service).await?;
         service
             .provision_organization(
-                org_id("o2"),
+                org_id("o2")?,
                 "Other Merchant",
-                MembershipId::new("m-owner-2").unwrap(),
-                user("owner-2"),
-                BranchId::new("b2").unwrap(),
+                MembershipId::new("m-owner-2")?,
+                user("owner-2")?,
+                BranchId::new("b2")?,
                 "Other Branch",
             )
-            .await
-            .unwrap();
+            .await?;
         // Tenant A membership against Tenant B organization: denied. The
         // scoped membership lookup misses first, so the denial surfaces as
         // MembershipNotActive — still fully non-disclosing.
         assert_eq!(
             service
-                .effective_scope(&org_id("o2"), &first.owner_membership.id, None)
+                .effective_scope(&org_id("o2")?, &first.owner_membership.id, None)
                 .await,
             Err(ScopeError::MembershipNotActive)
         );
@@ -4260,17 +4780,19 @@ mod tests {
                 .effective_scope(
                     &first.organization.id,
                     &first.owner_membership.id,
-                    Some(&BranchId::new("b2").unwrap())
+                    Some(&BranchId::new("b2")?)
                 )
                 .await,
             Err(ScopeError::BranchDenied)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn role_grants_resolve_to_least_privilege_permissions() {
+    async fn role_grants_resolve_to_least_privilege_permissions()
+    -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
 
         // Owner holds the full catalog.
@@ -4278,12 +4800,11 @@ mod tests {
             .assign_role(
                 org.clone(),
                 bundle.owner_membership.id.clone(),
-                RoleAssignmentId::new("ra-owner").unwrap(),
+                RoleAssignmentId::new("ra-owner")?,
                 Role::Owner,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         let owner_permissions = service
             .member_permissions(org, &bundle.owner_membership.id)
             .await;
@@ -4292,31 +4813,27 @@ mod tests {
         // A cashier resolves to exactly sale capabilities.
         let cashier = service
             .invite_member(
-                MembershipId::new("m-cashier").unwrap(),
+                MembershipId::new("m-cashier")?,
                 org.clone(),
-                user("cashier"),
+                user("cashier")?,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         service
             .mark_member_pending(org, &cashier.id, actor("issuer"))
-            .await
-            .unwrap();
+            .await?;
         service
             .accept_member(org, &cashier.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
-                RoleAssignmentId::new("ra-cashier").unwrap(),
+                RoleAssignmentId::new("ra-cashier")?,
                 Role::Cashier,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(
             service.member_permissions(org, &cashier.id).await,
             BTreeSet::from([Permission::SaleCreate, Permission::SaleView])
@@ -4325,8 +4842,7 @@ mod tests {
         // Revocation drains authority without deleting history.
         service
             .revoke_role(org, &cashier.id, Role::Cashier, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert!(
             service
                 .member_permissions(org, &cashier.id)
@@ -4340,16 +4856,14 @@ mod tests {
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
-                RoleAssignmentId::new("ra-cashier-2").unwrap(),
+                RoleAssignmentId::new("ra-cashier-2")?,
                 Role::Cashier,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         service
             .suspend_member(org, &cashier.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert!(
             service
                 .member_permissions(org, &cashier.id)
@@ -4360,47 +4874,48 @@ mod tests {
         // Unknown memberships resolve to nothing without disclosure.
         assert!(
             service
-                .member_permissions(org, &MembershipId::new("m-ghost").unwrap())
+                .member_permissions(org, &MembershipId::new("m-ghost")?)
                 .await
                 .is_empty()
         );
+        Ok(())
     }
 
     const INVITE_TOKEN: &str = "tok-invite-accept-0123456789abcdef";
     const INVITE_TOKEN_2: &str = "tok-invite-second-0123456789abcdef";
 
-    fn mailto(value: &str) -> InvitationContact {
-        InvitationContact::new(ContactKind::Email, value).unwrap()
+    fn mailto(value: &str) -> Result<InvitationContact, Box<dyn std::error::Error>> {
+        Ok(InvitationContact::new(ContactKind::Email, value)?)
     }
 
     async fn invited(
         service: &TenancyService,
         org: &OrganizationId,
         token: &str,
-    ) -> CreatedInvitation {
-        service
+    ) -> Result<CreatedInvitation, Box<dyn std::error::Error>> {
+        Ok(service
             .create_invitation(
                 org.clone(),
-                InvitationId::new("inv-1").unwrap(),
-                MembershipId::new("m-invited").unwrap(),
-                user("invitee"),
+                InvitationId::new("inv-1")?,
+                MembershipId::new("m-invited")?,
+                user("invitee")?,
                 Role::Cashier,
                 None,
-                mailto("invitee@example.com"),
+                mailto("invitee@example.com")?,
                 token,
                 Duration::from_secs(3_600),
                 actor("test"),
             )
-            .await
-            .unwrap()
+            .await?)
     }
 
     #[tokio::test]
-    async fn invitation_accept_activates_with_record_authority() {
+    async fn invitation_accept_activates_with_record_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
-        let created = invited(&service, org, INVITE_TOKEN).await;
+        let created = invited(&service, org, INVITE_TOKEN).await?;
         assert!(!created.membership.has_authority());
 
         // Acceptance takes no role or scope parameters: authority comes
@@ -4409,12 +4924,11 @@ mod tests {
         let accepted = service
             .accept_invitation(
                 INVITE_TOKEN,
-                RoleAssignmentId::new("ra-inv").unwrap(),
+                RoleAssignmentId::new("ra-inv")?,
                 None,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(accepted.membership.has_authority());
         assert_eq!(accepted.assignment.role, Role::Cashier);
         assert_eq!(accepted.scope_grant, None);
@@ -4431,7 +4945,7 @@ mod tests {
             service
                 .accept_invitation(
                     INVITE_TOKEN,
-                    RoleAssignmentId::new("ra-replay").unwrap(),
+                    RoleAssignmentId::new("ra-replay")?,
                     None,
                     actor("test")
                 )
@@ -4451,7 +4965,7 @@ mod tests {
             service
                 .accept_invitation(
                     "tok-unknown-0123456789abcdefghijkl",
-                    RoleAssignmentId::new("ra-ghost").unwrap(),
+                    RoleAssignmentId::new("ra-ghost")?,
                     None,
                     actor("test")
                 )
@@ -4461,49 +4975,44 @@ mod tests {
         // Malformed tokens never reach the store.
         assert_eq!(
             service
-                .accept_invitation(
-                    "short",
-                    RoleAssignmentId::new("ra-x").unwrap(),
-                    None,
-                    actor("test")
-                )
+                .accept_invitation("short", RoleAssignmentId::new("ra-x")?, None, actor("test"))
                 .await,
             Err(InvitationError::Invalid)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn invitation_applies_proposed_scope_grant() {
+    async fn invitation_applies_proposed_scope_grant() -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
         let branch = &bundle.default_branch.id;
 
         service
             .create_invitation(
                 org.clone(),
-                InvitationId::new("inv-scoped").unwrap(),
-                MembershipId::new("m-scoped").unwrap(),
-                user("scoped"),
+                InvitationId::new("inv-scoped")?,
+                MembershipId::new("m-scoped")?,
+                user("scoped")?,
                 Role::BranchManager,
                 Some(Scope::Branch {
                     organization_id: org.clone(),
                     branch_id: branch.clone(),
                 }),
-                mailto("scoped@example.com"),
+                mailto("scoped@example.com")?,
                 INVITE_TOKEN_2,
                 Duration::from_secs(3_600),
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         // Accepting without the accompanying grant id is rejected: the
         // record demands a scope grant the caller did not mint.
         assert_eq!(
             service
                 .accept_invitation(
                     INVITE_TOKEN_2,
-                    RoleAssignmentId::new("ra-scoped").unwrap(),
+                    RoleAssignmentId::new("ra-scoped")?,
                     None,
                     actor("test")
                 )
@@ -4513,13 +5022,14 @@ mod tests {
         let accepted = service
             .accept_invitation(
                 INVITE_TOKEN_2,
-                RoleAssignmentId::new("ra-scoped").unwrap(),
-                Some(ScopeGrantId::new("g-scoped").unwrap()),
+                RoleAssignmentId::new("ra-scoped")?,
+                Some(ScopeGrantId::new("g-scoped")?),
                 actor("test"),
             )
-            .await
-            .unwrap();
-        let grant = accepted.scope_grant.expect("proposed scope granted");
+            .await?;
+        let grant = accepted
+            .scope_grant
+            .ok_or_else(|| std::io::Error::other("proposed scope missing"))?;
         assert_eq!(
             grant.scope,
             Scope::Branch {
@@ -4535,27 +5045,27 @@ mod tests {
                 Some(branch),
                 Permission::SaleCreate,
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(
             service
                 .authorize_operation(org, &accepted.membership.id, None, Permission::SaleCreate)
                 .await,
             Err(ScopeError::ScopeDenied)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn revoked_invitation_releases_membership_for_reinvite() {
+    async fn revoked_invitation_releases_membership_for_reinvite()
+    -> Result<(), Box<dyn std::error::Error>> {
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
 
-        let created = invited(&service, org, INVITE_TOKEN).await;
+        let created = invited(&service, org, INVITE_TOKEN).await?;
         let withdrawn = service
             .revoke_invitation(org, &created.invitation.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         assert!(withdrawn.contact.is_none());
         assert!(withdrawn.token_hash.is_none());
         // The withdrawn token is generically invalid.
@@ -4563,7 +5073,7 @@ mod tests {
             service
                 .accept_invitation(
                     INVITE_TOKEN,
-                    RoleAssignmentId::new("ra-dead").unwrap(),
+                    RoleAssignmentId::new("ra-dead")?,
                     None,
                     actor("test")
                 )
@@ -4575,57 +5085,56 @@ mod tests {
             .db
             .membership_snapshot(org, &created.membership.id)
             .await
-            .unwrap();
+            .ok_or_else(|| std::io::Error::other("reinvited membership missing"))?;
         assert!(!membership.has_authority());
         service
             .create_invitation(
                 org.clone(),
-                InvitationId::new("inv-2").unwrap(),
-                MembershipId::new("m-reinvited").unwrap(),
-                user("invitee"),
+                InvitationId::new("inv-2")?,
+                MembershipId::new("m-reinvited")?,
+                user("invitee")?,
                 Role::Cashier,
                 None,
-                mailto("invitee@example.com"),
+                mailto("invitee@example.com")?,
                 INVITE_TOKEN_2,
                 Duration::from_secs(3_600),
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn invitation_paths_are_rate_limited() {
+    async fn invitation_paths_are_rate_limited() -> Result<(), Box<dyn std::error::Error>> {
         let service = strict_service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
 
         service
             .create_invitation(
                 org.clone(),
-                InvitationId::new("inv-a").unwrap(),
-                MembershipId::new("m-a").unwrap(),
-                user("a"),
+                InvitationId::new("inv-a")?,
+                MembershipId::new("m-a")?,
+                user("a")?,
                 Role::Viewer,
                 None,
-                mailto("a@example.com"),
+                mailto("a@example.com")?,
                 INVITE_TOKEN,
                 Duration::from_secs(3_600),
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         // Second creation for the organization locks (section 38).
         assert_eq!(
             service
                 .create_invitation(
                     org.clone(),
-                    InvitationId::new("inv-b").unwrap(),
-                    MembershipId::new("m-b").unwrap(),
-                    user("b"),
+                    InvitationId::new("inv-b")?,
+                    MembershipId::new("m-b")?,
+                    user("b")?,
                     Role::Viewer,
                     None,
-                    mailto("b@example.com"),
+                    mailto("b@example.com")?,
                     INVITE_TOKEN_2,
                     Duration::from_secs(3_600),
                     actor("test"),
@@ -4642,7 +5151,7 @@ mod tests {
             throttle
                 .accept_invitation(
                     INVITE_TOKEN,
-                    RoleAssignmentId::new("ra-t").unwrap(),
+                    RoleAssignmentId::new("ra-t")?,
                     None,
                     actor("test")
                 )
@@ -4653,21 +5162,23 @@ mod tests {
             throttle
                 .accept_invitation(
                     INVITE_TOKEN,
-                    RoleAssignmentId::new("ra-t").unwrap(),
+                    RoleAssignmentId::new("ra-t")?,
                     None,
                     actor("test")
                 )
                 .await,
             Err(InvitationError::RateLimited)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn authorize_operation_intersects_permission_and_scope() {
+    async fn authorize_operation_intersects_permission_and_scope()
+    -> Result<(), Box<dyn std::error::Error>> {
         use sitolo_domain::tenancy::ScopeGrantId;
 
         let service = service();
-        let bundle = provisioned(&service).await;
+        let bundle = provisioned(&service).await?;
         let org = &bundle.organization.id;
         let owner = &bundle.owner_membership.id;
         let main_branch = &bundle.default_branch.id;
@@ -4676,51 +5187,45 @@ mod tests {
             .assign_role(
                 org.clone(),
                 owner.clone(),
-                RoleAssignmentId::new("ra-owner").unwrap(),
+                RoleAssignmentId::new("ra-owner")?,
                 Role::Owner,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         let second_branch = service
             .create_branch(
-                BranchId::new("b2").unwrap(),
+                BranchId::new("b2")?,
                 org.clone(),
                 "Second Branch",
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         service
             .activate_branch(org, &second_branch.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
 
         // No grants narrow: organization-wide and branch operations allowed.
         let access = service
             .authorize_operation(org, owner, None, Permission::SaleCreate)
-            .await
-            .unwrap();
+            .await?;
         assert!(access.permissions.contains(&Permission::SaleCreate));
         service
             .authorize_operation(org, owner, Some(main_branch), Permission::SaleCreate)
-            .await
-            .unwrap();
+            .await?;
 
         // Narrow the owner to the main branch.
         service
             .grant_scope(
                 org.clone(),
                 owner.clone(),
-                ScopeGrantId::new("g-main").unwrap(),
+                ScopeGrantId::new("g-main")?,
                 Scope::Branch {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(
             service
                 .authorize_operation(org, owner, None, Permission::SaleCreate)
@@ -4729,8 +5234,7 @@ mod tests {
         );
         service
             .authorize_operation(org, owner, Some(main_branch), Permission::SaleCreate)
-            .await
-            .unwrap();
+            .await?;
         assert!(
             service
                 .authorize_operation(org, owner, Some(&second_branch.id), Permission::SaleCreate)
@@ -4741,44 +5245,39 @@ mod tests {
         // A cashier holds the scope but lacks the permission.
         let cashier = service
             .invite_member(
-                MembershipId::new("m-cashier").unwrap(),
+                MembershipId::new("m-cashier")?,
                 org.clone(),
-                user("cashier"),
+                user("cashier")?,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         service
             .mark_member_pending(org, &cashier.id, actor("issuer"))
-            .await
-            .unwrap();
+            .await?;
         service
             .accept_member(org, &cashier.id, actor("test"))
-            .await
-            .unwrap();
+            .await?;
         service
             .assign_role(
                 org.clone(),
                 cashier.id.clone(),
-                RoleAssignmentId::new("ra-cashier").unwrap(),
+                RoleAssignmentId::new("ra-cashier")?,
                 Role::Cashier,
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         service
             .grant_scope(
                 org.clone(),
                 cashier.id.clone(),
-                ScopeGrantId::new("g-cashier").unwrap(),
+                ScopeGrantId::new("g-cashier")?,
                 Scope::Branch {
                     organization_id: org.clone(),
                     branch_id: main_branch.clone(),
                 },
                 actor("test"),
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(
             service
                 .authorize_operation(org, &cashier.id, Some(main_branch), Permission::SaleVoid)
@@ -4787,17 +5286,15 @@ mod tests {
         );
         service
             .authorize_operation(org, &cashier.id, Some(main_branch), Permission::SaleCreate)
-            .await
-            .unwrap();
+            .await?;
 
         // Lifting the narrowing restores organization-wide authority.
         service
-            .revoke_scope_grant(org, &ScopeGrantId::new("g-main").unwrap(), actor("test"))
-            .await
-            .unwrap();
+            .revoke_scope_grant(org, &ScopeGrantId::new("g-main")?, actor("test"))
+            .await?;
         service
             .authorize_operation(org, owner, None, Permission::SaleCreate)
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 }

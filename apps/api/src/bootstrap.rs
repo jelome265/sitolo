@@ -247,15 +247,17 @@ impl StartupContext {
             config.database_target(),
             Arc::clone(&telemetry),
         );
-        if let Some((_, authority, tenancy)) = &database_pool {
+        if let Some((pool, authority, tenancy)) = &database_pool {
             state = state
                 .with_identity_authority(Arc::new(authority.clone()))
-                .with_tenancy_service(Arc::clone(tenancy));
+                .with_tenancy_service(Arc::clone(tenancy))
+                .with_runtime_database(pool.clone());
         }
         if let Some(identity_provider) = identity_provider {
             state = state.with_identity_provider(identity_provider);
         }
-        let runtime_ready = database_pool.is_some() && state.has_request_identity();
+        let runtime_ready =
+            database_pool.is_some() && state.has_request_identity() && state.has_tenancy_service();
         if runtime_ready {
             state = state.with_runtime_ready();
         }
@@ -380,7 +382,8 @@ mod tests {
     }
 
     #[test]
-    fn production_requires_an_explicit_managed_secret_region() {
+    fn production_requires_an_explicit_managed_secret_region()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut builder = sitolo_config::defaults::Builder::production();
         builder.db_host = "db.internal".into();
         builder.db_name = "sitolo".into();
@@ -390,21 +393,19 @@ mod tests {
         builder.oidc_client_id = Some("client-id".into());
         builder.oidc_token_endpoint = Some("https://auth.example.com/oauth2/token".into());
         builder.oidc_redirect_uri = Some("https://app.example.com/callback".into());
-        builder.db_password_ref = Some(
-            sitolo_security::SecretRef::new(
-                sitolo_security::SecretClass::Database,
-                "production/sitolo/api/runtime-db-password",
-            )
-            .expect("static test reference is valid"),
-        );
-        let config = validate(builder.clone()).expect("production database config validates");
+        builder.db_password_ref = Some(sitolo_security::SecretRef::new(
+            sitolo_security::SecretClass::Database,
+            "production/sitolo/api/runtime-db-password",
+        )?);
+        let config = validate(builder.clone())?;
         assert_eq!(
             production_secret_region(&config),
             Err(StartupError::SecretProviderUnavailable)
         );
 
         builder.secrets_aws_region = Some("af-south-1".into());
-        let config = validate(builder).expect("production AWS region validates");
+        let config = validate(builder)?;
         assert_eq!(production_secret_region(&config), Ok("af-south-1"));
+        Ok(())
     }
 }

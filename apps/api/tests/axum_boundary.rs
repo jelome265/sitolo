@@ -19,19 +19,20 @@ impl sitolo_security::SecretProvider for StubProvider {
     }
 }
 
-async fn test_app_state() -> Arc<AppState> {
+async fn test_app_state() -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
     let context = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),
         Some(Arc::new(StubProvider)),
     )
     .await
-    .expect("test bootstrap succeeds");
-    Arc::clone(context.state())
+    .map_err(std::io::Error::other)?;
+    Ok(Arc::clone(context.state()))
 }
 
 #[tokio::test]
-async fn axum_protected_route_rejects_missing_credentials() {
-    let app = app_router(test_app_state().await).expect("route inventory is valid");
+async fn axum_protected_route_rejects_missing_credentials() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = app_router(test_app_state().await?).map_err(std::io::Error::other)?;
     let response = app
         .oneshot(
             Request::builder()
@@ -39,10 +40,11 @@ async fn axum_protected_route_rejects_missing_credentials() {
                 .uri("/v1/organizations")
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))
-                .expect("request is valid"),
+                .map_err(std::io::Error::other)?,
         )
         .await
-        .expect("router returns an HTTP response");
+        .map_err(std::io::Error::other)?;
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
 }

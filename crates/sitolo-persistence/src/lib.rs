@@ -24,12 +24,13 @@ pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
 };
-pub use runtime_pool::{PgRuntimePool, RuntimePoolError};
+pub use runtime_pool::{PgRuntimePool, PgWorkerPool, RuntimePoolError};
 pub use tenancy::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
     TenancyDatabase, TenancyStores,
 };
 
 pub mod audit_repository;
+pub mod consumer_inbox;
 pub mod identity_authority_postgres;
 pub mod outbox_repository;

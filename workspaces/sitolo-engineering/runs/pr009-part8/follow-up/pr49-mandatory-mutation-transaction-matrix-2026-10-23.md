@@ -42,3 +42,17 @@ The transaction statements below describe PostgreSQL paths selected when `Tenanc
 - Require the durable repository/evidence path in production composition; prevent a partially configured service from mutating the reference database.
 - Preserve fault-injection, race and retry tests on exact candidate SHA. Existing passing cases cover specific commands and do not prove production routing or absent cases.
 - No row above proves AWS delivery, consumer idempotency, managed production secrets, migration deployment, runtime identity or ready status.
+
+## Uncommitted candidate delta — 2026-10-23
+
+The table above remains the historical source matrix at its stated base. The current uncommitted working tree is based on commit `62eeae6ad17a78ccb062a1ab9445f5ac8e92c132`; that SHA does not contain the changes below, and no exact-head CI result applies.
+
+| Command / transition | Current candidate addition | Evidence available now | Evidence still required |
+|---|---|---|---|
+| Create branch | Live HTTP route calls `create_branch_for_authenticated_user`; transaction checks persisted branch-create authority and derives the actor from authenticated context | Earlier report records route tests and evidence assertions; API/PostgreSQL integration target compiles | Exact-candidate PostgreSQL CI and Stage 06 review |
+| Activate branch | Live HTTP route calls `activate_branch_for_authenticated_user`; same-transaction `BRANCH_UPDATE` authorization and `PROVISIONING → ACTIVE` transition | Earlier report records authorized OWNER, denied CASHIER, and anonymous HTTP cases; database target compiles | Exact-candidate PostgreSQL CI and Stage 06 review |
+| Suspend member | Live contract-listed HTTP route calls `suspend_member_for_authenticated_user`; persisted permission check and audit actor are in the mutation transaction | Current HTTP PostgreSQL test target compiles; four-case authenticated suspend/revoke audit/outbox failure test compiles | Execute both PostgreSQL targets in CI on exact candidate SHA |
+| Revoke member | Live contract-listed HTTP route calls `revoke_member_for_authenticated_user`; persisted permission check and audit actor are in the mutation transaction | Current HTTP PostgreSQL test target compiles; success/denial HTTP regression and authenticated audit/outbox failure test compile | Execute both PostgreSQL targets in CI on exact candidate SHA |
+| Assign/revoke role, grant/revoke scope | Authenticated application command wrappers are present and transaction-authorized; no corresponding live HTTP routes are present in this candidate | Application PostgreSQL integration target compiles; local application unit suite passes | Contract-approved request DTOs/identifier semantics, live route integration, PostgreSQL CI |
+
+The latest database-free suites passed locally: events 12, worker 17, application 13, and API binary library 6. This is unit evidence only. The membership application and API integration targets were compiled but not run locally under the no-local-PostgreSQL constraint. Organization and invitation mutation actor provenance remains incomplete for request-driven paths. Exact-head CI, complete Stage 06 audit, human review, and all external runtime/AWS evidence remain open.

@@ -34,7 +34,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test]
-async fn process_environment_config_and_secret_coexist() {
+async fn process_environment_config_and_secret_coexist() -> Result<(), Box<dyn std::error::Error>> {
     let _lock = ENV_LOCK.lock().await;
     let _guard = EnvGuard;
     // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
@@ -47,13 +47,14 @@ async fn process_environment_config_and_secret_coexist() {
 
     let context = StartupContext::build()
         .await
-        .expect("configuration and a development secret value must coexist");
+        .map_err(std::io::Error::other)?;
     assert_eq!(context.readiness(), Readiness::NotReady);
     assert_eq!(context.config().db_host, "127.0.0.1");
+    Ok(())
 }
 
 #[tokio::test]
-async fn unknown_configuration_key_still_fails_closed() {
+async fn unknown_configuration_key_still_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
     let _lock = ENV_LOCK.lock().await;
     let _guard = EnvGuard;
     // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
@@ -66,9 +67,10 @@ async fn unknown_configuration_key_still_fails_closed() {
     let error = StartupContext::build()
         .await
         .err()
-        .expect("the former configuration-namespace password key must fail startup");
+        .ok_or_else(|| std::io::Error::other("former password config key must fail startup"))?;
     assert!(
         matches!(error, StartupError::UnknownConfigKey { ref key } if key == "DATABASE__PASSWORD"),
         "unexpected startup failure: {error:?}"
     );
+    Ok(())
 }

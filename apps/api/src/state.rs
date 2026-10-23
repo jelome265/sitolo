@@ -5,6 +5,7 @@
 //! references, fingerprints, and bounded operational state.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sitolo_api::{AppError, authenticate_request, extract_bearer, map_auth_error};
 use sitolo_application::TenancyService;
@@ -12,8 +13,10 @@ use sitolo_auth::{IdentityProviderPort, SecurityContext, SessionId};
 use sitolo_config::DatabaseTarget;
 use sitolo_observability::RequestId;
 use sitolo_observability::TelemetryBuffer;
-use sitolo_persistence::RequestIdentityAuthority;
+use sitolo_persistence::{PgRuntimePool, RequestIdentityAuthority};
 use std::time::SystemTime;
+
+const IDENTITY_READINESS_TIMEOUT: Duration = Duration::from_millis(900);
 
 /// Immutable shared application state.
 #[derive(Clone)]
@@ -26,6 +29,7 @@ pub struct AppState {
     identity_provider: Option<Arc<dyn IdentityProviderPort>>,
     identity_authority: Option<Arc<dyn RequestIdentityAuthority>>,
     tenancy_service: Option<Arc<TenancyService>>,
+    runtime_database: Option<PgRuntimePool>,
     runtime_ready: bool,
 }
 
@@ -46,6 +50,7 @@ impl AppState {
             identity_provider: None,
             identity_authority: None,
             tenancy_service: None,
+            runtime_database: None,
             runtime_ready: false,
         }
     }
@@ -113,6 +118,11 @@ impl AppState {
         self.tenancy_service.as_deref()
     }
 
+    /// Whether a durable tenancy command service has been composed.
+    pub fn has_tenancy_service(&self) -> bool {
+        self.tenancy_service.is_some()
+    }
+
     /// Marks readiness only after the durable database, identity, tenancy,
     /// and command dependencies have all been composed and probed.
     #[must_use]
@@ -121,8 +131,29 @@ impl AppState {
         self
     }
 
-    pub fn runtime_ready(&self) -> bool {
-        self.runtime_ready
+    /// Adds the verified production pool used by dynamic readiness probes.
+    #[must_use]
+    pub fn with_runtime_database(mut self, database: PgRuntimePool) -> Self {
+        self.runtime_database = Some(database);
+        self
+    }
+
+    /// Checks composition and live database/schema health before reporting ready.
+    pub async fn runtime_ready(&self) -> bool {
+        if !self.runtime_ready || !self.has_request_identity() || !self.has_tenancy_service() {
+            return false;
+        }
+        let (Some(database), Some(identity_provider)) = (
+            self.runtime_database.as_ref(),
+            self.identity_provider.as_deref(),
+        ) else {
+            return false;
+        };
+        let (database_result, identity_ready) = tokio::join!(
+            database.probe(),
+            identity_provider_ready(identity_provider, IDENTITY_READINESS_TIMEOUT),
+        );
+        database_result.is_ok() && identity_ready
     }
 
     /// Whether both the external identity provider and persistent session
@@ -188,5 +219,73 @@ impl AppState {
 
     pub fn telemetry(&self) -> &Arc<Mutex<TelemetryBuffer>> {
         &self.telemetry
+    }
+}
+
+async fn identity_provider_ready(provider: &dyn IdentityProviderPort, timeout: Duration) -> bool {
+    tokio::time::timeout(timeout, provider.readiness_probe())
+        .await
+        .is_ok_and(|result| result.is_ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::identity_provider_ready;
+    use sitolo_auth::{AuthError, ExternalIdentity, IdentityProviderPort, TokenSet};
+    use sitolo_security::SecretValue;
+    use std::time::Duration;
+
+    #[derive(Clone, Copy)]
+    enum ProbeMode {
+        Ready,
+        Unavailable,
+        Pending,
+    }
+
+    struct ProbeProvider(ProbeMode);
+
+    #[async_trait::async_trait]
+    impl IdentityProviderPort for ProbeProvider {
+        async fn readiness_probe(&self) -> Result<(), AuthError> {
+            match self.0 {
+                ProbeMode::Ready => Ok(()),
+                ProbeMode::Unavailable => Err(AuthError::IdentityProviderUnavailable),
+                ProbeMode::Pending => std::future::pending().await,
+            }
+        }
+
+        async fn validate_assertion(
+            &self,
+            _assertion: &str,
+        ) -> Result<ExternalIdentity, AuthError> {
+            Err(AuthError::IdentityProviderUnavailable)
+        }
+
+        async fn exchange_code(
+            &self,
+            _code: SecretValue,
+            _pkce_verifier: &str,
+        ) -> Result<TokenSet, AuthError> {
+            Err(AuthError::IdentityProviderUnavailable)
+        }
+    }
+
+    #[tokio::test]
+    async fn readiness_fails_closed_on_provider_error_and_timeout() {
+        assert!(
+            identity_provider_ready(&ProbeProvider(ProbeMode::Ready), Duration::from_millis(5))
+                .await
+        );
+        assert!(
+            !identity_provider_ready(
+                &ProbeProvider(ProbeMode::Unavailable),
+                Duration::from_millis(5),
+            )
+            .await
+        );
+        assert!(
+            !identity_provider_ready(&ProbeProvider(ProbeMode::Pending), Duration::from_millis(5),)
+                .await
+        );
     }
 }

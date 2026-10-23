@@ -300,6 +300,26 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "required secret reference absent",
         );
     }
+    if b.worker_db_password_ref.is_some()
+        != (b.relay_aws_region.is_some() && b.relay_sns_topic_arn.is_some())
+    {
+        add(
+            ValidationLayer::CrossField,
+            "worker_db_password_ref",
+            "worker credential and complete relay destination must be configured together",
+        );
+    }
+    if b.environment.is_production()
+        && b.worker_db_password_ref
+            .as_ref()
+            .is_some_and(|reference| reference.path().starts_with("development/"))
+    {
+        add(
+            ValidationLayer::Environment,
+            "worker_db_password_ref",
+            "production must not use a development secret namespace",
+        );
+    }
     if b.relay_aws_region.as_ref().is_some_and(|region| {
         region.is_empty()
             || region.len() > 32
@@ -368,6 +388,15 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
     if !p.is_empty() {
         return Err(ConfigValidationError { problems: p });
     }
+    let Some(db_password_ref) = b.db_password_ref else {
+        return Err(ConfigValidationError {
+            problems: vec![crate::ConfigProblem {
+                layer: ValidationLayer::Security,
+                field: "db_password_ref",
+                reason: "required secret reference absent",
+            }],
+        });
+    };
     Ok(AppConfig {
         environment: b.environment,
         service_name: b.service_name,
@@ -385,7 +414,8 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         oidc_client_id: b.oidc_client_id,
         oidc_token_endpoint: b.oidc_token_endpoint,
         oidc_redirect_uri: b.oidc_redirect_uri,
-        db_password_ref: b.db_password_ref.expect("validated"),
+        db_password_ref,
+        worker_db_password_ref: b.worker_db_password_ref,
         db_pool_min: b.db_pool_min,
         db_pool_max: b.db_pool_max,
         db_acquire_timeout_ms: b.db_acquire_timeout_ms,

@@ -141,18 +141,18 @@ mod tests {
     use sitolo_domain::tenancy::{MembershipId, OrganizationId};
 
     #[test]
-    fn audit_event_serialization_is_secret_free() {
+    fn audit_event_serialization_is_secret_free() -> Result<(), Box<dyn std::error::Error>> {
         let event = IamAuditEvent::success(
-            AuditEventId::new("evt-test").unwrap(),
+            AuditEventId::new("evt-test")?,
             IamEventName::MembershipRevoked,
-            OrganizationId::new("org-1").unwrap(),
+            OrganizationId::new("org-1")?,
             None,
             ActorRef {
                 subject_ref: "subject-1".into(),
                 membership_ref: Some("mem-1".into()),
                 device_ref: None,
             },
-            TargetRef::Membership(MembershipId::new("mem-1").unwrap()),
+            TargetRef::Membership(MembershipId::new("mem-1")?),
             "revoke",
             "tenancy_service",
         );
@@ -161,5 +161,6 @@ mod tests {
         assert!(!debug.contains("password"));
         assert!(!debug.contains("Bearer"));
         assert!(!debug.contains("secret"));
+        Ok(())
     }
 }

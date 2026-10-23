@@ -56,28 +56,37 @@ pub(crate) fn from_utc(value: DateTime<Utc>) -> Option<SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
 
-    #[test]
-    fn epoch_round_trips() {
-        let utc = to_utc(UNIX_EPOCH).expect("epoch is representable");
-        assert_eq!(from_utc(utc), Some(UNIX_EPOCH));
+    fn test_error(message: &str) -> io::Error {
+        io::Error::other(message.to_owned())
     }
 
     #[test]
-    fn pre_epoch_instant_round_trips() {
+    fn epoch_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+        let utc = to_utc(UNIX_EPOCH).ok_or_else(|| test_error("epoch is representable"))?;
+        assert_eq!(from_utc(utc), Some(UNIX_EPOCH));
+        Ok(())
+    }
+
+    #[test]
+    fn pre_epoch_instant_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         let instant = UNIX_EPOCH
             .checked_sub(Duration::from_millis(500))
-            .expect("test instant is representable");
-        let utc = to_utc(instant).expect("pre-epoch instant is representable");
+            .ok_or_else(|| test_error("test instant is representable"))?;
+        let utc =
+            to_utc(instant).ok_or_else(|| test_error("pre-epoch instant is representable"))?;
         assert_eq!(from_utc(utc), Some(instant));
+        Ok(())
     }
 
     #[test]
-    fn fractional_future_instant_round_trips() {
+    fn fractional_future_instant_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         let instant = UNIX_EPOCH
             .checked_add(Duration::new(1_700_000_000, 123_456_789))
-            .expect("test instant is representable");
-        let utc = to_utc(instant).expect("future instant is representable");
+            .ok_or_else(|| test_error("test instant is representable"))?;
+        let utc = to_utc(instant).ok_or_else(|| test_error("future instant is representable"))?;
         assert_eq!(from_utc(utc), Some(instant));
+        Ok(())
     }
 }

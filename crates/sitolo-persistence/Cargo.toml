@@ -25,7 +25,11 @@ rustls.workspace = true
 sqlx-core.workspace = true
 sqlx-postgres.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
 uuid.workspace = true
+
+[lints]
+workspace = true

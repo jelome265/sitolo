@@ -321,8 +321,7 @@ impl IdentityStores for IdentityDatabase {
             }
             let security_version = user.security_version;
             let lifetime = self.session_policy.for_class(class);
-            let session_id =
-                SessionId::new(format!("sess-{}", Self::random_hex(8))).expect("session id");
+            let session_id = SessionId::new(format!("sess-{}", Self::random_hex(8)))?;
             let session = Session::create(
                 session_id.clone(),
                 user_id.clone(),
@@ -334,11 +333,9 @@ impl IdentityStores for IdentityDatabase {
                 lifetime,
                 now,
             );
-            let family_id =
-                RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8))).expect("family id");
+            let family_id = RefreshFamilyId::new(format!("fam-{}", Self::random_hex(8)))?;
             let refresh_token = Self::random_hex(32);
-            let credential_id =
-                RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id");
+            let credential_id = RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8)))?;
             state.refresh.create_family(RefreshFamily {
                 id: family_id.clone(),
                 user_id: user_id.clone(),
@@ -361,8 +358,7 @@ impl IdentityStores for IdentityDatabase {
             state.sessions.insert(session_id.clone(), session.clone());
             state.event_counter += 1;
             let event = AuthenticationEvent {
-                event_id: AuditEventId::new(format!("evt-{:08}", state.event_counter))
-                    .expect("event id"),
+                event_id: AuditEventId::new(format!("evt-{:08}", state.event_counter))?,
                 event_name: AuthEventName::SessionCreated,
                 occurred_at: now,
                 request_id: None,
@@ -509,7 +505,9 @@ impl IdentityStores for IdentityDatabase {
         let mut count = 0u32;
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                continue;
+            };
             let matches = match scope {
                 RevocationScope::CurrentSession => {
                     (user_id == Some(&session.user_id))
@@ -562,8 +560,7 @@ impl IdentityStores for IdentityDatabase {
             .ok_or(sitolo_auth::AuthError::RefreshTokenInvalid)?
             .clone();
         let successor_token = Self::random_hex(32);
-        let successor_id =
-            RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8))).expect("cred id");
+        let successor_id = RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8)))?;
         let successor = RefreshCredential {
             id: successor_id.clone(),
             family_id: existing.family_id.clone(),
@@ -593,7 +590,7 @@ impl IdentityStores for IdentityDatabase {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8))).expect("device id");
+        let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8)))?;
         let device = Device::begin_registration(
             device_id,
             input.user_id,
@@ -651,14 +648,20 @@ impl IdentityStores for IdentityDatabase {
         let mut revoked_sessions = Vec::new();
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                continue;
+            };
             if session.device_id.as_ref() == Some(id) {
                 session.revoke(RevocationTrigger::DeviceRevocation);
                 revoked_sessions.push(sid);
             }
         }
         Ok(DeviceRevocationEffect {
-            device: state.devices.get(id).expect("device exists").clone(),
+            device: state
+                .devices
+                .get(id)
+                .cloned()
+                .ok_or(sitolo_auth::AuthError::DeviceNotRegistered)?,
             revoked_sessions,
         })
     }
@@ -677,7 +680,7 @@ impl IdentityStores for IdentityDatabase {
             .get_mut(old)
             .ok_or(sitolo_auth::AuthError::DeviceNotRegistered)?;
         old_device.retire_for_replacement(now)?;
-        let new_id = DeviceId::new(format!("dev-{}", Self::random_hex(8))).expect("device id");
+        let new_id = DeviceId::new(format!("dev-{}", Self::random_hex(8)))?;
         let new_device = Device::begin_registration(
             new_id,
             old_device.registered_by.clone(),
@@ -702,8 +705,7 @@ impl IdentityStores for IdentityDatabase {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let auth_id =
-            MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8))).expect("mfa id");
+        let auth_id = MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8)))?;
         let security_version = state
             .users
             .get(&user_id)
@@ -717,11 +719,10 @@ impl IdentityStores for IdentityDatabase {
             now,
             security_version,
         )?;
-        let challenge_id =
-            ChallengeId::new(format!("chal-{}", Self::random_hex(8))).expect("challenge id");
+        let challenge_id = ChallengeId::new(format!("chal-{}", Self::random_hex(8)))?;
         // For the reference implementation, bind the challenge to a dummy session;
         // production implementations require a real session context.
-        let dummy_session = SessionId::new("enrollment-session").expect("session id");
+        let dummy_session = SessionId::new("enrollment-session")?;
         state.mfa.issue_challenge(
             challenge_id.clone(),
             ChallengePurpose::MfaEnrollment,
@@ -747,13 +748,16 @@ impl IdentityStores for IdentityDatabase {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.mfa.complete_enrollment(authenticator_id, now)?;
-        let auth = state.mfa.authenticator(authenticator_id).expect("auth");
+        let auth = state
+            .mfa
+            .authenticator(authenticator_id)
+            .ok_or(sitolo_auth::AuthError::InvalidIdentifier)?;
         let user_id = auth.user_id.clone();
         let mut codes = Vec::new();
         for i in 0..8 {
             let code = format!("ABCD-{:04}", i);
             let record = RecoveryCodeRecord {
-                id: RecoveryCodeId::new(format!("rec-{}", Self::random_hex(8))).expect("rec id"),
+                id: RecoveryCodeId::new(format!("rec-{}", Self::random_hex(8)))?,
                 user_id: user_id.clone(),
                 code_hash: RecoveryCodeRecord::hash_code(&code),
                 created_at: now,
@@ -827,7 +831,7 @@ impl IdentityStores for IdentityDatabase {
             return Ok(PasswordResetResult { user_id: None });
         };
         let artifact = sitolo_auth::PasswordResetArtifact::issue(
-            ResetArtifactId::new(format!("reset-{}", Self::random_hex(8))).expect("reset id"),
+            ResetArtifactId::new(format!("reset-{}", Self::random_hex(8)))?,
             user_id.clone(),
             raw_token,
             now,
@@ -866,15 +870,20 @@ impl IdentityStores for IdentityDatabase {
         state
             .resets
             .get_mut(&token_hash)
-            .expect("reset artifact exists")
+            .ok_or(sitolo_auth::AuthError::RecoveryArtifactInvalid)?
             .claim(raw_token, now, security_version)?;
-        let user = state.users.get_mut(&user_id).expect("user");
+        let user = state
+            .users
+            .get_mut(&user_id)
+            .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
         user.password_verifier = Some(new_verifier);
         user.password_policy_version = new_policy_version;
         user.security_version = user.security_version.next();
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
-            let session = state.sessions.get_mut(&sid).expect("session");
+            let Some(session) = state.sessions.get_mut(&sid) else {
+                continue;
+            };
             if session.user_id == user_id {
                 session.revoke(RevocationTrigger::PasswordReset);
             }

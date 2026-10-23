@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn emission_uses_registry_schema_version() {
+    fn emission_uses_registry_schema_version() -> Result<(), Box<dyn std::error::Error>> {
         use std::io::Write;
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
@@ -109,8 +109,10 @@ mod tests {
             .json()
             .with_writer(sink.clone())
             .finish();
-        let request_id = RequestId::parse_client("client-1").expect("client id");
-        let operation = OperationName::parse("auth.login").expect("operation");
+        let request_id = RequestId::parse_client("client-1")
+            .ok_or(std::io::Error::other("valid request id rejected"))?;
+        let operation = OperationName::parse("auth.login")
+            .ok_or(std::io::Error::other("valid operation name rejected"))?;
         tracing::subscriber::with_default(subscriber, || {
             assert!(emit_registered("service.starting", &request_id, &operation));
             assert!(!emit_registered("no.such.event", &request_id, &operation));
@@ -120,15 +122,15 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone(),
-        )
-        .expect("captured JSON is UTF-8");
+        )?;
         // Schema version comes from the registry definition, and the
         // bounded operation is the only operation text emitted.
         let expected_version = event("service.starting")
-            .expect("registered")
+            .ok_or(std::io::Error::other("registered event absent"))?
             .schema_version;
         assert!(output.contains(&format!("\"event_schema_version\":{expected_version}")));
         assert!(output.contains("\"operation\":\"auth.login\""));
         assert!(!output.contains("no.such.event"));
+        Ok(())
     }
 }

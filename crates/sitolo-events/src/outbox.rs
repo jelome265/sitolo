@@ -404,32 +404,32 @@ impl OutboxEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
-    fn organization() -> OrganizationId {
-        OrganizationId::new("org-1").expect("valid organization id")
+    fn organization() -> Result<OrganizationId, sitolo_domain::tenancy::TenancyError> {
+        OrganizationId::new("org-1")
     }
 
-    fn event() -> OutboxEvent {
-        OutboxEvent::new(
+    fn event() -> Result<OutboxEvent, Box<dyn Error>> {
+        Ok(OutboxEvent::new(
             "evt-1".to_owned(),
             "Organization".to_owned(),
             "org-1".to_owned(),
             "iam.organization.created".to_owned(),
             1,
-            organization(),
+            organization()?,
             None,
             r#"{"name":"test"}"#.to_owned(),
-        )
-        .expect("valid event")
+        )?)
     }
 
     #[test]
-    fn claim_policy_accepts_inclusive_bounds() {
-        let policy = OutboxClaimPolicy::new(MAX_BATCH_SIZE, MAX_LEASE_DURATION, MAX_ATTEMPTS)
-            .expect("boundary values are valid");
+    fn claim_policy_accepts_inclusive_bounds() -> Result<(), OutboxError> {
+        let policy = OutboxClaimPolicy::new(MAX_BATCH_SIZE, MAX_LEASE_DURATION, MAX_ATTEMPTS)?;
         assert_eq!(policy.batch_size(), MAX_BATCH_SIZE);
         assert_eq!(policy.lease_duration(), MAX_LEASE_DURATION);
         assert_eq!(policy.max_attempts(), MAX_ATTEMPTS);
+        Ok(())
     }
 
     #[test]
@@ -471,13 +471,13 @@ mod tests {
     }
 
     #[test]
-    fn claim_token_is_bounded_and_redacted() {
-        let token =
-            ClaimToken::new("8d3a4c1e-3f8f-4f37-9d0e-2a4c9e5b7a11").expect("valid claim token");
+    fn claim_token_is_bounded_and_redacted() -> Result<(), OutboxError> {
+        let token = ClaimToken::new("8d3a4c1e-3f8f-4f37-9d0e-2a4c9e5b7a11")?;
         assert!(!format!("{token:?}").contains(token.as_str()));
         assert!(ClaimToken::new("").is_err());
         assert!(ClaimToken::new("has space").is_err());
         assert!(ClaimToken::new("x".repeat(MAX_CLAIM_TOKEN_LEN + 1)).is_err());
+        Ok(())
     }
 
     #[test]
@@ -494,36 +494,38 @@ mod tests {
     }
 
     #[test]
-    fn new_event_has_no_database_assigned_state() {
-        let event = event();
+    fn new_event_has_no_database_assigned_state() -> Result<(), Box<dyn Error>> {
+        let event = event()?;
         assert!(event.aggregate_sequence.is_none());
         assert!(event.claim_token.is_none());
         assert_eq!(event.claim_generation, 0);
         assert_eq!(event.status, OutboxStatus::Pending);
         assert!(event.is_fresh());
+        Ok(())
     }
 
     #[test]
-    fn transitioned_event_is_not_fresh() {
-        let mut claimed = event();
+    fn transitioned_event_is_not_fresh() -> Result<(), Box<dyn Error>> {
+        let mut claimed = event()?;
         claimed.claim_generation = 1;
         assert!(!claimed.is_fresh());
 
-        let mut locked = event();
+        let mut locked = event()?;
         locked.locked_at = Some(SystemTime::now());
         assert!(!locked.is_fresh());
 
-        let mut published = event();
+        let mut published = event()?;
         published.published_at = Some(SystemTime::now());
         assert!(!published.is_fresh());
 
-        let mut failed = event();
+        let mut failed = event()?;
         failed.last_error_class = Some("http_5xx".to_owned());
         assert!(!failed.is_fresh());
+        Ok(())
     }
 
     #[test]
-    fn payload_validation() {
+    fn payload_validation() -> Result<(), Box<dyn Error>> {
         let oversized = "x".repeat(OutboxEvent::MAX_PAYLOAD_SIZE + 1);
         let invalid = OutboxEvent::new(
             "evt-2".to_owned(),
@@ -531,27 +533,30 @@ mod tests {
             "org-1".to_owned(),
             "iam.organization.created".to_owned(),
             1,
-            organization(),
+            organization()?,
             None,
             oversized,
         );
         assert!(matches!(invalid, Err(OutboxError::PayloadTooLarge)));
+        Ok(())
     }
 
     #[test]
-    fn approved_lifecycle_payload_rejects_unapproved_sensitive_fields() {
+    fn approved_lifecycle_payload_rejects_unapproved_sensitive_fields() -> Result<(), Box<dyn Error>>
+    {
         let result = OutboxEvent::new(
             "evt-pending".to_owned(),
             "membership".to_owned(),
             "membership-1".to_owned(),
             "iam.membership.pending_acceptance".to_owned(),
             1,
-            organization(),
+            organization()?,
             None,
             r#"{"membership_id":"membership-1","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2,"email":"person@example.test"}"#.to_owned(),
         );
 
         assert!(matches!(result, Err(OutboxError::InvalidSchema)));
+        Ok(())
     }
 
     #[test]

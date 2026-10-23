@@ -39,16 +39,15 @@ impl sitolo_security::SecretProvider for StubSecretProvider {
     }
 }
 
+#[allow(clippy::expect_used)] // Test bootstrap is a fixed, validated fixture.
 async fn base_state() -> AppState {
-    StartupContext::build_from_pairs_with_provider(
+    let context = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),
         Some(Arc::new(StubSecretProvider)),
     )
     .await
-    .expect("test bootstrap succeeds")
-    .state()
-    .as_ref()
-    .clone()
+    .expect("test bootstrap succeeds");
+    context.state().as_ref().clone()
 }
 
 fn identity_database() -> Arc<IdentityDatabase> {
@@ -66,6 +65,7 @@ fn identity_database() -> Arc<IdentityDatabase> {
     ))
 }
 
+#[allow(clippy::expect_used)] // Fixed fixture IDs and in-memory identity setup are asserted test preconditions.
 async fn provision_identity(
     database: &IdentityDatabase,
     user: &str,
@@ -75,12 +75,12 @@ async fn provision_identity(
     database
         .create_user(user_id.clone(), None, None)
         .await
-        .expect("test user is created");
+        .expect("test user can be created");
     if link_external_identity {
         database
             .bind_external_identity("test-issuer".to_owned(), "subject-1".to_owned(), &user_id)
             .await
-            .expect("test external identity is linked");
+            .expect("test identity can be linked");
     }
     database
         .establish_session(
@@ -93,11 +93,12 @@ async fn provision_identity(
             SystemTime::now(),
         )
         .await
-        .expect("test session is established")
+        .expect("test session can be established")
         .session
         .id
 }
 
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn router_with_identity(database: Arc<IdentityDatabase>) -> Router {
     let provider: Arc<dyn IdentityProviderPort> =
         Arc::new(TestIdentityProvider::new("subject-1", Assurance::A1));
@@ -110,12 +111,22 @@ async fn router_with_identity(database: Arc<IdentityDatabase>) -> Router {
     app_router(state).expect("route inventory validates")
 }
 
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn router_with_identity_and_tenancy(
     database: Arc<IdentityDatabase>,
     tenancy: Arc<TenancyService>,
 ) -> Router {
+    router_with_identity_and_tenancy_subject(database, tenancy, "subject-1").await
+}
+
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+async fn router_with_identity_and_tenancy_subject(
+    database: Arc<IdentityDatabase>,
+    tenancy: Arc<TenancyService>,
+    subject_id: &str,
+) -> Router {
     let provider: Arc<dyn IdentityProviderPort> =
-        Arc::new(TestIdentityProvider::new("subject-1", Assurance::A1));
+        Arc::new(TestIdentityProvider::new(subject_id, Assurance::A1));
     let authority: Arc<dyn RequestIdentityAuthority> = database;
     let state = Arc::new(
         base_state()
@@ -137,6 +148,7 @@ async fn post_organization(
         .status()
 }
 
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn post_organization_response(
     app: Router,
     authorization: Option<&str>,
@@ -162,6 +174,7 @@ async fn post_organization_response(
     .expect("Axum returns an HTTP response")
 }
 
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn post_branch(
     app: Router,
     organization_id: &str,
@@ -188,7 +201,74 @@ async fn post_branch(
     .expect("Axum returns an HTTP response")
 }
 
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+async fn post_branch_activation(
+    app: Router,
+    organization_id: &str,
+    branch_id: &str,
+    authorization: Option<&str>,
+    session_id: Option<&str>,
+) -> Response {
+    let mut builder = Request::builder().method("POST").uri(format!(
+        "/v1/organizations/{organization_id}/branches/{branch_id}/activate"
+    ));
+    if let Some(value) = authorization {
+        builder = builder.header("authorization", value);
+    }
+    if let Some(value) = session_id {
+        builder = builder.header("session-id", value);
+    }
+    app.oneshot(builder.body(Body::empty()).expect("request is valid"))
+        .await
+        .expect("Axum returns an HTTP response")
+}
+
+#[allow(clippy::expect_used)] // Fixed HTTP fixture identifiers make the request deterministic.
+async fn post_member_revoke(
+    app: Router,
+    organization_id: &str,
+    membership_id: &str,
+    authorization: Option<&str>,
+    session_id: Option<&str>,
+) -> Response {
+    let mut builder = Request::builder().method("POST").uri(format!(
+        "/v1/organizations/{organization_id}/members/{membership_id}/revoke"
+    ));
+    if let Some(value) = authorization {
+        builder = builder.header("authorization", value);
+    }
+    if let Some(value) = session_id {
+        builder = builder.header("session-id", value);
+    }
+    app.oneshot(builder.body(Body::empty()).expect("request is valid"))
+        .await
+        .expect("Axum returns an HTTP response")
+}
+
+#[allow(clippy::expect_used)] // Fixed HTTP fixture identifiers make the request deterministic.
+async fn post_member_suspend(
+    app: Router,
+    organization_id: &str,
+    membership_id: &str,
+    authorization: Option<&str>,
+    session_id: Option<&str>,
+) -> Response {
+    let mut builder = Request::builder().method("POST").uri(format!(
+        "/v1/organizations/{organization_id}/members/{membership_id}/suspend"
+    ));
+    if let Some(value) = authorization {
+        builder = builder.header("authorization", value);
+    }
+    if let Some(value) = session_id {
+        builder = builder.header("session-id", value);
+    }
+    app.oneshot(builder.body(Body::empty()).expect("request is valid"))
+        .await
+        .expect("Axum returns an HTTP response")
+}
+
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_rejects_missing_credentials() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     assert_eq!(
@@ -198,6 +278,7 @@ async fn live_route_rejects_missing_credentials() {
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn protected_branch_route_authenticates_before_json_extraction() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     let response = post_branch(app, "org-a", None, None, "{").await;
@@ -205,6 +286,7 @@ async fn protected_branch_route_authenticates_before_json_extraction() {
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_requires_a_well_formed_session_id_header() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", true).await;
@@ -245,6 +327,7 @@ async fn live_route_requires_a_well_formed_session_id_header() {
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_rejects_unknown_external_identity_without_mutating_tenancy() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", false).await;
@@ -261,6 +344,7 @@ async fn live_route_rejects_unknown_external_identity_without_mutating_tenancy()
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_rejects_session_owned_by_another_mapped_user() {
     let database = identity_database();
     let _mapped_session = provision_identity(&database, "user-1", true).await;
@@ -278,6 +362,7 @@ async fn live_route_rejects_session_owned_by_another_mapped_user() {
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_organization_route_fails_closed_without_provision_command() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", true).await;
@@ -305,6 +390,7 @@ async fn live_organization_route_fails_closed_without_provision_command() {
 }
 
 #[tokio::test]
+#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn health_probes_are_public_through_the_router() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     for path in ["/process/live", "/process/ready"] {
@@ -574,6 +660,242 @@ async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(denied_evidence, 2);
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    db.runtime.close().await;
+    db.admin.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_branch_activation_authenticates_and_commits_authorized_transition()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = api_tenancy_db().await?;
+    query("INSERT INTO organizations (id, name, state, state_version) VALUES ('org-activate', 'Org', 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-activate', 'org-activate', 'user-1', 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-cashier', 'org-activate', 'user-2', 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-activate', 'org-activate', 'member-activate', 'OWNER', 'EFFECTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-cashier', 'org-activate', 'member-cashier', 'CASHIER', 'EFFECTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ('grant-activate', 'org-activate', 'member-activate', 'ORGANIZATION', NULL, 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ('branch-pending', 'org-activate', 'Pending', 'PROVISIONING', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ('branch-denied', 'org-activate', 'Denied', 'PROVISIONING', 1)")
+        .execute(&db.admin)
+        .await?;
+    let tenancy = Arc::new(TenancyService::new_postgres(
+        Vec::new(),
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
+        ),
+    ));
+    let identities = identity_database();
+    let session_id = provision_identity(&identities, "user-1", true).await;
+    let denied_session = provision_identity(&identities, "user-2", false).await;
+    identities
+        .bind_external_identity(
+            "test-issuer".to_owned(),
+            "subject-2".to_owned(),
+            &UserId::new("user-2")?,
+        )
+        .await?;
+    let app = router_with_identity_and_tenancy(Arc::clone(&identities), Arc::clone(&tenancy)).await;
+
+    let anonymous =
+        post_branch_activation(app.clone(), "org-activate", "branch-pending", None, None).await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let activated = post_branch_activation(
+        app,
+        "org-activate",
+        "branch-pending",
+        Some("Bearer syntactically-valid-token"),
+        Some(session_id.as_str()),
+    )
+    .await;
+    assert_eq!(activated.status(), StatusCode::OK);
+    let outcome: (String, i64, i64, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT b.state, \
+         (SELECT count(*) FROM audit_events WHERE organization_id = 'org-activate' AND event_name = 'iam.branch.activated'), \
+         (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-activate' AND event_name = 'iam.branch.activated'), \
+         (SELECT actor_subject_ref FROM audit_events WHERE organization_id = 'org-activate' AND event_name = 'iam.branch.activated') \
+         FROM branches b WHERE b.organization_id = 'org-activate' AND b.id = 'branch-pending'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(
+        outcome,
+        ("ACTIVE".to_owned(), 1, 1, Some("user-1".to_owned()))
+    );
+
+    let denied_app =
+        router_with_identity_and_tenancy_subject(identities, tenancy, "subject-2").await;
+    let denied = post_branch_activation(
+        denied_app,
+        "org-activate",
+        "branch-denied",
+        Some("Bearer syntactically-valid-token"),
+        Some(denied_session.as_str()),
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let (denied_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT b.state, (SELECT count(*) FROM audit_events WHERE organization_id = 'org-activate' AND target_ref = 'branch-denied') + (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-activate' AND aggregate_id = 'branch-denied') FROM branches b WHERE b.organization_id = 'org-activate' AND b.id = 'branch-denied'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_state, "PROVISIONING");
+    assert_eq!(denied_evidence, 0);
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    db.runtime.close().await;
+    db.admin.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = api_tenancy_db().await?;
+    query("INSERT INTO organizations (id, name, state, state_version) VALUES ('org-revoke', 'Org', 'ACTIVE', 1), ('org-revoke-other', 'Other', 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-owner', 'org-revoke', 'user-1', 'ACTIVE', 1), ('member-cashier', 'org-revoke', 'user-2', 'ACTIVE', 1), ('member-target', 'org-revoke', 'user-3', 'ACTIVE', 1), ('member-denied', 'org-revoke', 'user-4', 'ACTIVE', 1), ('member-suspend-target', 'org-revoke', 'user-6', 'ACTIVE', 1), ('member-other-tenant', 'org-revoke-other', 'user-5', 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-owner', 'org-revoke', 'member-owner', 'OWNER', 'EFFECTIVE', 1), ('role-cashier', 'org-revoke', 'member-cashier', 'CASHIER', 'EFFECTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ('grant-owner', 'org-revoke', 'member-owner', 'ORGANIZATION', NULL, 'ACTIVE', 1), ('grant-cashier', 'org-revoke', 'member-cashier', 'ORGANIZATION', NULL, 'ACTIVE', 1)")
+        .execute(&db.admin)
+        .await?;
+
+    let tenancy = Arc::new(TenancyService::new_postgres(
+        Vec::new(),
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
+        ),
+    ));
+    let identities = identity_database();
+    let owner_session = provision_identity(&identities, "user-1", true).await;
+    let cashier_session = provision_identity(&identities, "user-2", false).await;
+    identities
+        .bind_external_identity(
+            "test-issuer".to_owned(),
+            "subject-2".to_owned(),
+            &UserId::new("user-2")?,
+        )
+        .await?;
+    let app = router_with_identity_and_tenancy(Arc::clone(&identities), Arc::clone(&tenancy)).await;
+
+    let anonymous =
+        post_member_revoke(app.clone(), "org-revoke", "member-target", None, None).await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let revoked = post_member_revoke(
+        app.clone(),
+        "org-revoke",
+        "member-target",
+        Some("Bearer syntactically-valid-token"),
+        Some(owner_session.as_str()),
+    )
+    .await;
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    let outcome: (String, i64, i64, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT m.state, \
+         (SELECT count(*) FROM audit_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.revoked' AND target_ref = 'member-target'), \
+         (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.revoked' AND aggregate_id = 'member-target'), \
+         (SELECT actor_subject_ref FROM audit_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.revoked' AND target_ref = 'member-target') \
+         FROM organization_memberships m WHERE m.organization_id = 'org-revoke' AND m.id = 'member-target'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(
+        outcome,
+        ("REVOKED".to_owned(), 1, 1, Some("user-1".to_owned()))
+    );
+
+    let suspended = post_member_suspend(
+        app.clone(),
+        "org-revoke",
+        "member-suspend-target",
+        Some("Bearer syntactically-valid-token"),
+        Some(owner_session.as_str()),
+    )
+    .await;
+    assert_eq!(suspended.status(), StatusCode::NO_CONTENT);
+    let suspend_evidence: (String, i64, i64, Option<String>) =
+        sqlx_core::query_as::query_as(
+            "SELECT m.state, \
+             (SELECT count(*) FROM audit_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.suspended' AND target_ref = 'member-suspend-target'), \
+             (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.suspended' AND aggregate_id = 'member-suspend-target'), \
+             (SELECT actor_subject_ref FROM audit_events WHERE organization_id = 'org-revoke' AND event_name = 'iam.membership.suspended' AND target_ref = 'member-suspend-target') \
+             FROM organization_memberships m WHERE m.organization_id = 'org-revoke' AND m.id = 'member-suspend-target'",
+        )
+        .fetch_one(&db.admin)
+        .await?;
+    assert_eq!(
+        suspend_evidence,
+        ("SUSPENDED".to_owned(), 1, 1, Some("user-1".to_owned()))
+    );
+
+    let denied_app =
+        router_with_identity_and_tenancy_subject(identities, tenancy, "subject-2").await;
+    let denied = post_member_revoke(
+        denied_app.clone(),
+        "org-revoke",
+        "member-denied",
+        Some("Bearer syntactically-valid-token"),
+        Some(cashier_session.as_str()),
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let cross_tenant = post_member_revoke(
+        denied_app,
+        "org-revoke-other",
+        "member-other-tenant",
+        Some("Bearer syntactically-valid-token"),
+        Some(cashier_session.as_str()),
+    )
+    .await;
+    assert_eq!(cross_tenant.status(), StatusCode::FORBIDDEN);
+    let (denied_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT m.state, (SELECT count(*) FROM audit_events WHERE organization_id = 'org-revoke' AND target_ref = 'member-denied') + (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-revoke' AND aggregate_id = 'member-denied') FROM organization_memberships m WHERE m.organization_id = 'org-revoke' AND m.id = 'member-denied'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_state, "ACTIVE");
+    assert_eq!(denied_evidence, 0);
+    let other_tenant_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = 'org-revoke-other' AND id = 'member-other-tenant'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(other_tenant_state, "ACTIVE");
 
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",

@@ -76,6 +76,7 @@ database identity and a production secret reference.
 | `DATABASE__SCHEMA` | `public` | Lowercase PostgreSQL identifier, pinned as the API runtime search path; staging/production must set it explicitly |
 | `DATABASE__USER` | `sitolo_api` | Staging/production API must authenticate directly as restricted `app_runtime` |
 | `DATABASE__PASSWORD_REF` | `development/sitolo/db` | Typed secret reference; staging/production reject the development namespace |
+| `WORKER__DATABASE__PASSWORD_REF` | absent | Worker-only typed secret reference; must be supplied together with the full relay destination, and must identify the `app_worker` credential |
 | `DATABASE__POOL_MIN` | `5` | At most 256 |
 | `DATABASE__POOL_MAX` | `20` | At least `POOL_MIN`, at most 512 |
 | `DATABASE__ACQUIRE_TIMEOUT_MS` | `2000` | At most 60,000 ms |
@@ -90,6 +91,11 @@ database identity and a production secret reference.
 | `IDENTITY__OIDC__CLIENT_ID` | absent | Required in staging/production; Cognito public app-client identifier |
 | `IDENTITY__OIDC__TOKEN_ENDPOINT` | absent | Required in staging/production; HTTPS OAuth token endpoint |
 | `IDENTITY__OIDC__REDIRECT_URI` | absent | Required in staging/production; registered HTTPS or `sitolo` callback URI |
+| `EVENTS__RELAY__AWS_REGION` | absent | Explicit SNS FIFO region; required with the topic ARN when the worker is enabled |
+| `EVENTS__RELAY__SNS_TOPIC_ARN` | absent | Explicit SNS FIFO topic ARN; no resource is created or inferred |
+| `EVENTS__RELAY__BATCH_SIZE` | `10` | Positive claim batch size, at most 100 |
+| `EVENTS__RELAY__MAX_ATTEMPTS` | `10` | Positive delivery attempt ceiling, at most 10 |
+| `EVENTS__RELAY__BACKOFF_MAX_MS` | `3600000` | Retry delay ceiling, at most one hour |
 
 The source of truth for this table is
 `crates/sitolo-config/src/field.rs`; the typed model and defaults live in
@@ -128,10 +134,13 @@ variable by design.
   hostname verification, validates the role and mandatory Phase 3/4/Part 8
   schema objects, and probes the configured Cognito JWKS endpoint before
   readiness. `DATABASE__USER` must be `app_runtime`.
-- The worker is a separate binary. An SNS FIFO publisher exists, but the worker
-  executable remains fail-closed until its restricted database and relay runtime
-  are composed. `.env.example` is an API configuration reference, not a
-  production deployment manifest.
+- The worker is a separate binary with an SNS FIFO relay runtime. It resolves
+  `WORKER__DATABASE__PASSWORD_REF` through the managed provider in production,
+  verifies the direct `app_worker` login and required outbox routines, and
+  requires explicit relay region/topic settings. Consumer SQS operations are
+  provided as an adapter, but a consumer executable still requires its own
+  database composition and owner-supplied business effect. `.env.example` is
+  an API configuration reference, not a production deployment manifest.
 - Production and staging require explicit database host, name, user, and secret
   reference; the development defaults and the `development/` secret namespace
   are rejected.

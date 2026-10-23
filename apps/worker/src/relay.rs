@@ -168,8 +168,13 @@ impl RelayWorker {
                 .ok_or(WorkerError::InvalidClaim)?;
 
             if !is_registered_event(&event) {
+                // This fixed error class is validated by its ASCII grammar.
+                #[expect(
+                    clippy::expect_used,
+                    reason = "the fixed quarantine class is a valid lowercase ASCII identifier"
+                )]
                 let class = OutboxErrorClass::new("unsupported_event_schema")
-                    .expect("static error class is valid");
+                    .expect("fixed error class is valid");
                 self.reader
                     .quarantine(&event.event_id, token, &class)
                     .await?;
@@ -276,12 +281,17 @@ fn fresh_jitter_entropy() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::error::Error;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
 
     use sitolo_domain::tenancy::OrganizationId;
     use sitolo_events::{ClaimToken, RetryClass};
 
     use super::*;
+
+    fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+        mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     #[derive(Default)]
     struct RecordedTransitions {
@@ -303,9 +313,7 @@ mod tests {
             &self,
             _policy: OutboxClaimPolicy,
         ) -> Result<Vec<OutboxEvent>, OutboxPersistenceError> {
-            Ok(std::mem::take(
-                &mut *self.events.lock().expect("event lock"),
-            ))
+            Ok(std::mem::take(&mut *lock(&self.events)))
         }
 
         async fn mark_published(
@@ -313,11 +321,7 @@ mod tests {
             event_id: &str,
             _claim_token: &ClaimToken,
         ) -> Result<(), OutboxPersistenceError> {
-            self.transitions
-                .lock()
-                .expect("transition lock")
-                .published
-                .push(event_id.to_owned());
+            lock(&self.transitions).published.push(event_id.to_owned());
             Ok(())
         }
 
@@ -328,9 +332,7 @@ mod tests {
             _error_class: &OutboxErrorClass,
             backoff: Duration,
         ) -> Result<(), OutboxPersistenceError> {
-            self.transitions
-                .lock()
-                .expect("transition lock")
+            lock(&self.transitions)
                 .retried
                 .push((event_id.to_owned(), backoff));
             Ok(())
@@ -342,9 +344,7 @@ mod tests {
             _claim_token: &ClaimToken,
             _error_class: &OutboxErrorClass,
         ) -> Result<(), OutboxPersistenceError> {
-            self.transitions
-                .lock()
-                .expect("transition lock")
+            lock(&self.transitions)
                 .quarantined
                 .push(event_id.to_owned());
             Ok(())
@@ -354,13 +354,10 @@ mod tests {
             &self,
             lease_timeout: Duration,
         ) -> Result<u32, OutboxPersistenceError> {
-            if *self.fail_recovery.lock().expect("recovery failure lock") {
+            if *lock(&self.fail_recovery) {
                 return Err(OutboxPersistenceError::InvalidRow("recovery"));
             }
-            self.recovered_leases
-                .lock()
-                .expect("recovery lock")
-                .push(lease_timeout);
+            lock(&self.recovered_leases).push(lease_timeout);
             Ok(1)
         }
     }
@@ -370,6 +367,8 @@ mod tests {
         idempotency_keys: Mutex<Vec<String>>,
     }
 
+    type WorkerHarness = (RelayWorker, Arc<FakeReader>, Arc<FakePublisher>);
+
     #[async_trait]
     impl EventPublisher for FakePublisher {
         async fn publish(
@@ -377,14 +376,10 @@ mod tests {
             _event: &OutboxEvent,
             idempotency_key: &str,
         ) -> Result<(), DeliveryFailure> {
-            self.idempotency_keys
-                .lock()
-                .expect("publisher lock")
-                .push(idempotency_key.to_owned());
+            lock(&self.idempotency_keys).push(idempotency_key.to_owned());
             match &self.failure {
                 Some(failure) => {
-                    let class = OutboxErrorClass::new(failure.class.as_str().to_owned())
-                        .expect("copied class is valid");
+                    let class = failure.class.clone();
                     if failure.worker_unavailable {
                         Err(DeliveryFailure::unavailable(class))
                     } else {
@@ -396,38 +391,41 @@ mod tests {
         }
     }
 
-    fn policy() -> RelayPolicy {
-        RelayPolicy::new(
-            OutboxClaimPolicy::new(8, Duration::from_secs(30), 5).expect("claim policy"),
+    fn policy() -> Result<RelayPolicy, Box<dyn Error>> {
+        Ok(RelayPolicy::new(
+            OutboxClaimPolicy::new(8, Duration::from_secs(30), 5)?,
             Duration::from_secs(1),
             Duration::from_secs(2),
             Duration::from_secs(20),
-        )
-        .expect("relay policy")
+        )?)
     }
 
-    fn claimed_event(event_id: &str, event_name: &str, version: u32, attempt: u32) -> OutboxEvent {
+    fn claimed_event(
+        event_id: &str,
+        event_name: &str,
+        version: u32,
+        attempt: u32,
+    ) -> Result<OutboxEvent, Box<dyn Error>> {
         let mut event = OutboxEvent::new(
             event_id.to_owned(),
             "Organization".to_owned(),
             "org-1".to_owned(),
             event_name.to_owned(),
             version,
-            OrganizationId::new("org-1").expect("organization id"),
+            OrganizationId::new("org-1")?,
             None,
             "{}".to_owned(),
-        )
-        .expect("event");
+        )?;
         event.status = OutboxStatus::Claimed;
-        event.claim_token = Some(ClaimToken::new("claim-1").expect("claim token"));
+        event.claim_token = Some(ClaimToken::new("claim-1")?);
         event.attempt_count = attempt;
-        event
+        Ok(event)
     }
 
     fn worker(
         events: Vec<OutboxEvent>,
         failure: Option<DeliveryFailure>,
-    ) -> (RelayWorker, Arc<FakeReader>, Arc<FakePublisher>) {
+    ) -> Result<WorkerHarness, Box<dyn Error>> {
         let reader = Arc::new(FakeReader {
             events: Mutex::new(events),
             transitions: Mutex::new(RecordedTransitions::default()),
@@ -438,21 +436,21 @@ mod tests {
             failure,
             idempotency_keys: Mutex::new(Vec::new()),
         });
-        (
-            RelayWorker::new(reader.clone(), publisher.clone(), policy()),
+        Ok((
+            RelayWorker::new(reader.clone(), publisher.clone(), policy()?),
             reader,
             publisher,
-        )
+        ))
     }
 
     #[tokio::test]
-    async fn success_uses_event_id_as_destination_idempotency_key() {
+    async fn success_uses_event_id_as_destination_idempotency_key() -> Result<(), Box<dyn Error>> {
         let (worker, reader, publisher) = worker(
-            vec![claimed_event("evt-1", "iam.organization.created", 1, 1)],
+            vec![claimed_event("evt-1", "iam.organization.created", 1, 1)?],
             None,
-        );
+        )?;
 
-        let report = worker.process_batch().await.expect("batch succeeds");
+        let report = worker.process_batch().await?;
         assert_eq!(
             report,
             BatchReport {
@@ -464,85 +462,72 @@ mod tests {
             }
         );
         assert_eq!(
-            reader
-                .recovered_leases
-                .lock()
-                .expect("recovery lock")
-                .as_slice(),
+            lock(&reader.recovered_leases).as_slice(),
             [Duration::from_secs(30)]
         );
-        assert_eq!(
-            *publisher.idempotency_keys.lock().expect("publisher lock"),
-            ["evt-1"]
-        );
-        assert_eq!(
-            reader
-                .transitions
-                .lock()
-                .expect("transition lock")
-                .published,
-            ["evt-1"]
-        );
+        assert_eq!(*lock(&publisher.idempotency_keys), ["evt-1"]);
+        assert_eq!(lock(&reader.transitions).published, ["evt-1"]);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn stale_claim_recovery_failure_aborts_before_claim_or_publish() {
+    async fn stale_claim_recovery_failure_aborts_before_claim_or_publish()
+    -> Result<(), Box<dyn Error>> {
         let (worker, reader, publisher) = worker(
-            vec![claimed_event("evt-8", "iam.organization.created", 1, 1)],
+            vec![claimed_event("evt-8", "iam.organization.created", 1, 1)?],
             None,
-        );
-        *reader.fail_recovery.lock().expect("recovery failure lock") = true;
+        )?;
+        *lock(&reader.fail_recovery) = true;
 
         assert!(matches!(
             worker.process_batch().await,
             Err(WorkerError::Persistence(_))
         ));
-        assert!(
-            publisher
-                .idempotency_keys
-                .lock()
-                .expect("publisher lock")
-                .is_empty()
-        );
+        assert!(lock(&publisher.idempotency_keys).is_empty());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn retryable_failure_uses_bounded_full_jitter_backoff() {
+    async fn retryable_failure_uses_bounded_full_jitter_backoff() -> Result<(), Box<dyn Error>> {
         let failure = DeliveryFailure::new(
-            OutboxErrorClass::new("transport_timeout").expect("error class"),
+            OutboxErrorClass::new("transport_timeout")?,
             RetryClass::Retryable,
         );
         let (worker, reader, _) = worker(
-            vec![claimed_event("evt-2", "iam.organization.created", 1, 3)],
+            vec![claimed_event("evt-2", "iam.organization.created", 1, 3)?],
             Some(failure),
-        );
+        )?;
 
-        let report = worker.process_batch().await.expect("batch succeeds");
+        let report = worker.process_batch().await?;
         assert_eq!(report.retried, 1);
-        let transitions = reader.transitions.lock().expect("transition lock");
+        let transitions = lock(&reader.transitions);
         assert_eq!(transitions.retried.len(), 1);
-        let (event_id, backoff) = transitions.retried.first().expect("retry transition");
+        let (event_id, backoff) = transitions
+            .retried
+            .first()
+            .ok_or_else(|| std::io::Error::other("retry transition missing"))?;
         assert_eq!(event_id, "evt-2");
         assert!(*backoff > Duration::ZERO);
         assert!(*backoff <= Duration::from_secs(8));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn destination_wide_failure_releases_event_and_stops_without_quarantine() {
-        let failure = DeliveryFailure::unavailable(
-            OutboxErrorClass::new("sns_destination_unavailable").expect("error class"),
-        );
+    async fn destination_wide_failure_releases_event_and_stops_without_quarantine()
+    -> Result<(), Box<dyn Error>> {
+        let failure =
+            DeliveryFailure::unavailable(OutboxErrorClass::new("sns_destination_unavailable")?);
         let (worker, reader, _) = worker(
-            vec![claimed_event("evt-10", "iam.organization.created", 1, 1)],
+            vec![claimed_event("evt-10", "iam.organization.created", 1, 1)?],
             Some(failure),
-        );
+        )?;
 
         let result = worker.process_batch().await;
         assert!(
             matches!(result, Err(WorkerError::PublisherUnavailable)),
             "unexpected destination failure handling: {result:?}"
         );
-        let transitions = reader.transitions.lock().expect("transition lock");
+        let transitions = lock(&reader.transitions);
         assert_eq!(transitions.retried.len(), 1);
         assert_eq!(
             transitions
@@ -552,75 +537,60 @@ mod tests {
             Some("evt-10")
         );
         assert!(transitions.quarantined.is_empty());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn unknown_and_terminal_failures_are_quarantined() {
+    async fn unknown_and_terminal_failures_are_quarantined() -> Result<(), Box<dyn Error>> {
         for retry_class in [RetryClass::Unknown, RetryClass::Terminal] {
-            let failure = DeliveryFailure::new(
-                OutboxErrorClass::new("permanent_rejection").expect("error class"),
-                retry_class,
-            );
+            let failure =
+                DeliveryFailure::new(OutboxErrorClass::new("permanent_rejection")?, retry_class);
             let (worker, reader, _) = worker(
-                vec![claimed_event("evt-3", "iam.organization.created", 1, 1)],
+                vec![claimed_event("evt-3", "iam.organization.created", 1, 1)?],
                 Some(failure),
-            );
-            let report = worker.process_batch().await.expect("batch succeeds");
+            )?;
+            let report = worker.process_batch().await?;
             assert_eq!(report.quarantined, 1);
-            assert_eq!(
-                reader
-                    .transitions
-                    .lock()
-                    .expect("transition lock")
-                    .quarantined,
-                ["evt-3"]
-            );
+            assert_eq!(lock(&reader.transitions).quarantined, ["evt-3"]);
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn unsupported_event_or_version_is_quarantined_without_publish() {
-        let mut invalid_payload = claimed_event("evt-6", "iam.organization.created", 1, 1);
+    async fn unsupported_event_or_version_is_quarantined_without_publish()
+    -> Result<(), Box<dyn Error>> {
+        let mut invalid_payload = claimed_event("evt-6", "iam.organization.created", 1, 1)?;
         invalid_payload.payload = "[]".to_owned();
         let mut invalid_lifecycle_payload =
-            claimed_event("evt-9", "iam.organization.created", 1, 1);
+            claimed_event("evt-9", "iam.organization.created", 1, 1)?;
         invalid_lifecycle_payload.event_name = "iam.membership.pending_acceptance".to_owned();
         invalid_lifecycle_payload.payload = r#"{"membership_id":"member-1","from_state":"INVITED","to_state":"PENDING_ACCEPTANCE","state_version":2,"email":"person@example.test"}"#.to_owned();
-        let mut mismatched_schema = claimed_event("evt-7", "iam.organization.created", 1, 1);
+        let mut mismatched_schema = claimed_event("evt-7", "iam.organization.created", 1, 1)?;
         mismatched_schema.schema_version = 2;
         let (worker, reader, publisher) = worker(
             vec![
-                claimed_event("evt-4", "iam.unknown.created", 1, 1),
-                claimed_event("evt-5", "iam.organization.created", 2, 1),
+                claimed_event("evt-4", "iam.unknown.created", 1, 1)?,
+                claimed_event("evt-5", "iam.organization.created", 2, 1)?,
                 invalid_payload,
                 invalid_lifecycle_payload,
                 mismatched_schema,
             ],
             None,
-        );
+        )?;
 
-        let report = worker.process_batch().await.expect("batch succeeds");
+        let report = worker.process_batch().await?;
         assert_eq!(report.quarantined, 5);
-        assert!(
-            publisher
-                .idempotency_keys
-                .lock()
-                .expect("publisher lock")
-                .is_empty()
-        );
+        assert!(lock(&publisher.idempotency_keys).is_empty());
         assert_eq!(
-            reader
-                .transitions
-                .lock()
-                .expect("transition lock")
-                .quarantined,
+            lock(&reader.transitions).quarantined,
             ["evt-4", "evt-5", "evt-6", "evt-9", "evt-7"]
         );
+        Ok(())
     }
 
     #[test]
-    fn policy_rejects_unbounded_poll_and_retry_values() {
-        let claim = OutboxClaimPolicy::new(1, Duration::from_secs(1), 1).expect("claim policy");
+    fn policy_rejects_unbounded_poll_and_retry_values() -> Result<(), Box<dyn Error>> {
+        let claim = OutboxClaimPolicy::new(1, Duration::from_secs(1), 1)?;
         assert!(
             RelayPolicy::new(
                 claim,
@@ -666,6 +636,7 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]

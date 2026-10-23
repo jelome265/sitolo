@@ -1,9 +1,14 @@
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_audit::ActorRef;
+use sitolo_auth::{
+    Assurance, AuthenticatedPrincipal, SecurityContext, SecurityVersion, SessionClass, SessionId,
+    SessionSecurityState, SessionState, UserId,
+};
 use sitolo_authz::{ContactKind, InvitationContact, Role, Scope};
 use sitolo_domain::tenancy::{MembershipId, OrganizationId, ScopeGrantId};
 use sitolo_events::{OutboxError, OutboxEvent};
@@ -20,6 +25,33 @@ use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, Postgres};
 use tokio::sync::Barrier;
 use uuid::Uuid;
+
+fn authenticated_context(user_id: &str) -> Result<SecurityContext, Box<dyn std::error::Error>> {
+    let session_id = SessionId::new("test-session")?;
+    let assurance = Assurance::A1;
+    let security_version = SecurityVersion(1);
+    Ok(SecurityContext {
+        principal: AuthenticatedPrincipal {
+            subject_id: UserId::new(user_id.to_owned())?,
+            session_id: session_id.clone(),
+            device_id: None,
+            authenticated_at: SystemTime::now(),
+            assurance,
+            security_version,
+        },
+        session: SessionSecurityState {
+            session_id,
+            state: SessionState::Active,
+            assurance,
+            security_version,
+            class: SessionClass::Merchant,
+        },
+        device: None,
+        assurance,
+        request_id: sitolo_observability::RequestId::new_server(),
+        trace: None,
+    })
+}
 
 struct TestDb {
     admin: PgPool,
@@ -132,51 +164,46 @@ async fn seed_provisioning_branch(
 }
 
 #[tokio::test]
-async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() {
-    let db = test_db().await.unwrap();
-    let organization_id = OrganizationId::new("org-authority-read").unwrap();
+async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let organization_id = OrganizationId::new("org-authority-read")?;
     let membership_id = "member-authority-read";
-    seed_active_membership(&db, organization_id.as_str(), membership_id)
-        .await
-        .unwrap();
-    seed_active_branch(&db, organization_id.as_str(), "branch-authority-main")
-        .await
-        .unwrap();
-    seed_active_branch(&db, organization_id.as_str(), "branch-authority-other")
-        .await
-        .unwrap();
+    seed_active_membership(&db, organization_id.as_str(), membership_id).await?;
+    seed_active_branch(&db, organization_id.as_str(), "branch-authority-main").await?;
+    seed_active_branch(&db, organization_id.as_str(), "branch-authority-other").await?;
     query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-authority-read', $1, $2, 'CASHIER', 'EFFECTIVE', 1)")
         .bind(organization_id.as_str())
         .bind(membership_id)
         .execute(&db.admin)
         .await
-        .unwrap();
+        ?;
     query("INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ('scope-authority-read', $1, $2, 'BRANCH', 'branch-authority-main', 'ACTIVE', 1)")
         .bind(organization_id.as_str())
         .bind(membership_id)
         .execute(&db.admin)
         .await
-        .unwrap();
+        ?;
 
     // The reference store is deliberately empty. A successful result proves
     // the request authorization path reads the same PostgreSQL authority that
     // owns the mutation and evidence records.
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
-    let user_id = sitolo_domain::tenancy::TenantUserId::new("user-1").unwrap();
-    let main_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-main").unwrap();
-    let other_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-other").unwrap();
+    let user_id = sitolo_domain::tenancy::TenantUserId::new("user-1")?;
+    let main_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-main")?;
+    let other_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-other")?;
     let roles = tenancy
-        .member_roles(&organization_id, &MembershipId::new(membership_id).unwrap())
+        .member_roles(&organization_id, &MembershipId::new(membership_id)?)
         .await;
     assert_eq!(roles.len(), 1);
     assert_eq!(roles[0].role, Role::Cashier);
     let grants = tenancy
-        .member_grants(&organization_id, &MembershipId::new(membership_id).unwrap())
+        .member_grants(&organization_id, &MembershipId::new(membership_id)?)
         .await;
     assert_eq!(grants.len(), 1);
     assert_eq!(
         tenancy
-            .member_permissions(&organization_id, &MembershipId::new(membership_id).unwrap(),)
+            .member_permissions(&organization_id, &MembershipId::new(membership_id)?,)
             .await,
         [
             sitolo_authz::Permission::SaleCreate,
@@ -192,8 +219,7 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
             Some(&main_branch),
             sitolo_authz::Permission::SaleCreate,
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(authorized.membership_id.as_str(), membership_id);
     assert_eq!(
         tenancy
@@ -223,10 +249,10 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
         .bind(membership_id)
         .execute(&db.admin)
         .await
-        .unwrap();
+        ?;
     assert!(
         tenancy
-            .member_permissions(&organization_id, &MembershipId::new(membership_id).unwrap(),)
+            .member_permissions(&organization_id, &MembershipId::new(membership_id)?,)
             .await
             .is_empty(),
         "a suspended persisted membership has no effective permissions"
@@ -247,8 +273,8 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
@@ -259,21 +285,282 @@ fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     )
 }
 
+#[tokio::test]
+async fn authenticated_membership_suspend_authorizes_and_records_server_actor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let organization_id = OrganizationId::new("org-authenticated-suspend")?;
+    seed_active_membership(&db, organization_id.as_str(), "member-admin").await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-target', $1, 'user-target', 'ACTIVE', 1), ('member-denied-target', $1, 'user-denied-target', 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-admin-suspend', $1, 'member-admin', 'OWNER', 'EFFECTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+
+    let suspended = tenancy
+        .suspend_member_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            &organization_id,
+            &MembershipId::new("member-target")?,
+        )
+        .await?;
+    assert_eq!(
+        suspended.state,
+        sitolo_domain::tenancy::MembershipState::Suspended
+    );
+    let actor: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT actor_subject_ref FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.suspended'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(actor, "user-1");
+
+    let denied = tenancy
+        .suspend_member_for_authenticated_user(
+            &authenticated_context("user-target")?,
+            &organization_id,
+            &MembershipId::new("member-denied-target")?,
+        )
+        .await;
+    assert!(matches!(
+        denied,
+        Err(sitolo_application::AuthorizedTenancyError::Authorization(
+            sitolo_tenancy::ScopeError::PermissionDenied
+        ))
+    ));
+    let (target_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT m.state, (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND target_ref = 'member-denied-target') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND aggregate_id = 'member-denied-target') FROM organization_memberships m WHERE m.organization_id = $1 AND m.id = 'member-denied-target'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(target_state, "ACTIVE");
+    assert_eq!(denied_evidence, 0);
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_membership_revoke_authorizes_and_records_server_actor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let organization_id = OrganizationId::new("org-authenticated-revoke")?;
+    seed_active_membership(&db, organization_id.as_str(), "member-admin").await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-revoke-target', $1, 'user-revoke-target', 'ACTIVE', 1), ('member-revoke-denied', $1, 'user-revoke-denied', 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-admin-revoke', $1, 'member-admin', 'OWNER', 'EFFECTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+
+    let revoked = tenancy
+        .revoke_member_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            &organization_id,
+            &MembershipId::new("member-revoke-target")?,
+        )
+        .await?;
+    assert_eq!(
+        revoked.state,
+        sitolo_domain::tenancy::MembershipState::Revoked
+    );
+    let actor: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT actor_subject_ref FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.revoked'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(actor, "user-1");
+
+    let denied = tenancy
+        .revoke_member_for_authenticated_user(
+            &authenticated_context("user-revoke-target")?,
+            &organization_id,
+            &MembershipId::new("member-revoke-denied")?,
+        )
+        .await;
+    assert!(matches!(
+        denied,
+        Err(sitolo_application::AuthorizedTenancyError::Authorization(
+            sitolo_tenancy::ScopeError::PermissionDenied
+        ))
+    ));
+    let (target_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT m.state, (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND target_ref = 'member-revoke-denied') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND aggregate_id = 'member-revoke-denied') FROM organization_memberships m WHERE m.organization_id = $1 AND m.id = 'member-revoke-denied'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(target_state, "ACTIVE");
+    assert_eq!(denied_evidence, 0);
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_role_assignment_authorizes_and_records_server_actor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let organization_id = OrganizationId::new("org-authenticated-role-assignment")?;
+    seed_active_membership(&db, organization_id.as_str(), "member-admin").await?;
+    query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ('member-role-target', $1, 'user-role-target', 'ACTIVE', 1), ('member-role-denied', $1, 'user-role-denied', 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ('role-admin-assignment', $1, 'member-admin', 'OWNER', 'EFFECTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ('branch-role-scope', $1, 'Main', 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    query("INSERT INTO scope_grants (id, organization_id, membership_id, scope_kind, branch_id, state, state_version) VALUES ('scope-admin-assignment', $1, 'member-admin', 'ORGANIZATION', NULL, 'ACTIVE', 1)")
+        .bind(organization_id.as_str())
+        .execute(&db.admin)
+        .await?;
+    let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
+    let assigned = tenancy
+        .assign_role_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            organization_id.clone(),
+            MembershipId::new("member-role-target")?,
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-target")?,
+            Role::Cashier,
+        )
+        .await?;
+    assert_eq!(assigned.state, sitolo_authz::RoleAssignmentState::Effective);
+    let actor: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT actor_subject_ref FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.assigned' AND target_ref = 'assignment-target'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(actor, "user-1");
+
+    let denied = tenancy
+        .assign_role_for_authenticated_user(
+            &authenticated_context("user-role-target")?,
+            organization_id.clone(),
+            MembershipId::new("member-role-denied")?,
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-denied")?,
+            Role::Viewer,
+        )
+        .await;
+    assert!(matches!(
+        denied,
+        Err(sitolo_application::AuthorizedTenancyError::Authorization(
+            sitolo_tenancy::ScopeError::PermissionDenied
+        ))
+    ));
+    let (assignment_count, denied_evidence): (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1 AND id = 'assignment-denied'), \
+         (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND target_ref = 'assignment-denied') + \
+         (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND aggregate_id = 'assignment-denied')",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(assignment_count, 0);
+    assert_eq!(denied_evidence, 0);
+
+    let scope_grant = tenancy
+        .grant_scope_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            organization_id.clone(),
+            MembershipId::new("member-role-target")?,
+            ScopeGrantId::new("scope-target-branch")?,
+            Scope::Branch {
+                organization_id: organization_id.clone(),
+                branch_id: sitolo_domain::tenancy::BranchId::new("branch-role-scope")?,
+            },
+        )
+        .await?;
+    assert_eq!(scope_grant.state, sitolo_authz::ScopeGrantState::Active);
+    let denied_scope = tenancy
+        .grant_scope_for_authenticated_user(
+            &authenticated_context("user-role-target")?,
+            organization_id.clone(),
+            MembershipId::new("member-role-denied")?,
+            ScopeGrantId::new("scope-denied")?,
+            Scope::Organization {
+                organization_id: organization_id.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(
+        denied_scope,
+        Err(sitolo_application::AuthorizedTenancyError::Authorization(
+            sitolo_tenancy::ScopeError::PermissionDenied
+        ))
+    ));
+    tenancy
+        .revoke_scope_grant_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            &organization_id,
+            &ScopeGrantId::new("scope-target-branch")?,
+        )
+        .await?;
+    tenancy
+        .revoke_role_for_authenticated_user(
+            &authenticated_context("user-1")?,
+            &organization_id,
+            &MembershipId::new("member-role-target")?,
+            Role::Cashier,
+        )
+        .await?;
+    let denied_scope_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM scope_grants WHERE organization_id = $1 AND id = 'scope-denied'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_scope_count, 0);
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
+
 async fn issue_invitation(
     tenancy: &TenancyService,
     organization_id: &OrganizationId,
     invitation_id: &str,
     membership_id: &str,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     tenancy
         .create_invitation(
             organization_id.clone(),
-            sitolo_domain::tenancy::InvitationId::new(invitation_id).unwrap(),
-            MembershipId::new(membership_id).unwrap(),
-            sitolo_domain::tenancy::TenantUserId::new(format!("user-{membership_id}")).unwrap(),
+            sitolo_domain::tenancy::InvitationId::new(invitation_id)?,
+            MembershipId::new(membership_id)?,
+            sitolo_domain::tenancy::TenantUserId::new(format!("user-{membership_id}"))?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "sweep@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "sweep@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -282,11 +569,15 @@ async fn issue_invitation(
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
+    Ok(())
 }
 
-async fn make_invitation_expired(db: &TestDb, organization_id: &str, invitation_id: &str) {
+async fn make_invitation_expired(
+    db: &TestDb,
+    organization_id: &str,
+    invitation_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     query(
         "UPDATE invitations SET issued_at = now() - interval '2 minutes', \
          expires_at = now() - interval '1 second' \
@@ -295,23 +586,22 @@ async fn make_invitation_expired(db: &TestDb, organization_id: &str, invitation_
     .bind(organization_id)
     .bind(invitation_id)
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-lifecycle-atomicity").unwrap();
-    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-atomicity").unwrap();
+async fn organization_and_branch_lifecycle_changes_commit_with_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-lifecycle-atomicity")?;
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-atomicity")?;
     query("INSERT INTO organizations (id, name, state, state_version) VALUES ($1, 'Org', 'PROVISIONING', 1)")
         .bind(org.as_str())
         .execute(&db.admin)
         .await
-        .unwrap();
-    seed_provisioning_branch(&db, org.as_str(), branch.as_str())
-        .await
-        .unwrap();
+        ?;
+    seed_provisioning_branch(&db, org.as_str(), branch.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let actor = |subject: &str| ActorRef {
         subject_ref: subject.to_owned(),
@@ -321,44 +611,34 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
 
     tenancy
         .activate_organization(&org, actor("org-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .suspend_organization(&org, actor("org-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .resume_organization(&org, actor("org-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .activate_branch(&org, &branch, actor("branch-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .suspend_branch(&org, &branch, actor("branch-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .resume_branch(&org, &branch, actor("branch-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .begin_close_branch(&org, &branch, actor("branch-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .close_branch(&org, &branch, actor("branch-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .begin_close_organization(&org, actor("org-operator"))
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .close_organization(&org, actor("org-operator"))
-        .await
-        .unwrap();
+        .await?;
 
     let persisted: (String, i64, String, i64) = sqlx_core::query_as::query_as(
         "SELECT organizations.state, organizations.state_version, branches.state, branches.state_version FROM organizations JOIN branches ON branches.organization_id = organizations.id WHERE organizations.id = $1 AND branches.id = $2",
@@ -367,7 +647,7 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     .bind(branch.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(persisted, ("CLOSED".to_owned(), 6, "CLOSED".to_owned(), 6));
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -375,26 +655,25 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 20);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-lifecycle-rollback").unwrap();
-    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
-    seed_active_branch(&db, org.as_str(), branch.as_str())
-        .await
-        .unwrap();
+async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-lifecycle-rollback")?;
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
+    seed_active_branch(&db, org.as_str(), branch.as_str()).await?;
     let actor = || ActorRef {
         subject_ref: "lifecycle-operator".to_owned(),
         membership_ref: None,
@@ -429,7 +708,7 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
     .bind(branch.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(state, ("ACTIVE".to_owned(), 2, "ACTIVE".to_owned(), 2));
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -437,19 +716,20 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures() {
+async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_failures()
+-> Result<(), Box<dyn std::error::Error>> {
     #[derive(Clone, Copy)]
     enum Transition {
         ActivateOrganization,
@@ -583,14 +863,12 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
         ),
     ];
 
-    let db = test_db().await.unwrap();
+    let db = test_db().await?;
     for (name, transition, organization_state, branch_state) in cases {
-        let audit_org = OrganizationId::new(format!("org-{name}-audit")).unwrap();
-        let outbox_org = OrganizationId::new(format!("org-{name}-outbox")).unwrap();
-        let audit_branch =
-            sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-audit")).unwrap();
-        let outbox_branch =
-            sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-outbox")).unwrap();
+        let audit_org = OrganizationId::new(format!("org-{name}-audit"))?;
+        let outbox_org = OrganizationId::new(format!("org-{name}-outbox"))?;
+        let audit_branch = sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-audit"))?;
+        let outbox_branch = sitolo_domain::tenancy::BranchId::new(format!("branch-{name}-outbox"))?;
         for (organization_id, branch_id) in
             [(&audit_org, &audit_branch), (&outbox_org, &outbox_branch)]
         {
@@ -599,7 +877,7 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
                 .bind(organization_state)
                 .execute(&db.admin)
                 .await
-                .unwrap();
+                ?;
             if let Some(branch_state) = branch_state {
                 query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, 'Main', $3, 4)")
                     .bind(branch_id.as_str())
@@ -607,7 +885,7 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
                     .bind(branch_state)
                     .execute(&db.admin)
                     .await
-                    .unwrap();
+                    ?;
             }
         }
 
@@ -659,7 +937,7 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
             .bind(organization_id.as_str())
             .fetch_one(&db.admin)
             .await
-            .unwrap();
+            ?;
             assert_eq!(
                 persisted,
                 (
@@ -677,8 +955,7 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
             )
             .bind(organization_id.as_str())
             .fetch_one(&db.admin)
-            .await
-            .unwrap();
+            .await?;
             assert_eq!(evidence_count, 0, "{name} must not leave partial evidence");
         }
     }
@@ -687,15 +964,16 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-branch-create-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn branch_creation_rolls_back_state_and_evidence_on_write_failures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-branch-create-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
     let actor = || ActorRef {
         subject_ref: "user-branch-operator".to_owned(),
         membership_ref: None,
@@ -704,7 +982,7 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
 
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .create_branch(
-            sitolo_domain::tenancy::BranchId::new("branch-create-audit-failure").unwrap(),
+            sitolo_domain::tenancy::BranchId::new("branch-create-audit-failure")?,
             org.clone(),
             "Audit Failure",
             actor(),
@@ -720,7 +998,7 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
                 Arc::new(FailingOutboxWriter),
             ))
             .create_branch(
-                sitolo_domain::tenancy::BranchId::new("branch-create-outbox-failure").unwrap(),
+                sitolo_domain::tenancy::BranchId::new("branch-create-outbox-failure")?,
                 org.clone(),
                 "Outbox Failure",
                 actor(),
@@ -735,29 +1013,27 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(counts, (0, 0, 0));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn competing_organization_transitions_and_cross_tenant_branch_update_are_denied() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-lifecycle-race").unwrap();
-    let other_org = OrganizationId::new("org-lifecycle-other").unwrap();
-    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-cross-tenant").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
-    seed_organization(&db, other_org.as_str()).await.unwrap();
-    seed_active_branch(&db, org.as_str(), branch.as_str())
-        .await
-        .unwrap();
+async fn competing_organization_transitions_and_cross_tenant_branch_update_are_denied()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-lifecycle-race")?;
+    let other_org = OrganizationId::new("org-lifecycle-other")?;
+    let branch = sitolo_domain::tenancy::BranchId::new("branch-lifecycle-cross-tenant")?;
+    seed_organization(&db, org.as_str()).await?;
+    seed_organization(&db, other_org.as_str()).await?;
+    seed_active_branch(&db, org.as_str(), branch.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
 
     let (suspend, close) = tokio::join!(
@@ -800,8 +1076,7 @@ async fn competing_organization_transitions_and_cross_tenant_branch_update_are_d
     .bind(org.as_str())
     .bind(branch.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(branch_state, ("ACTIVE".to_owned(), 2));
     let event_counts: (i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1), (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -809,38 +1084,38 @@ async fn competing_organization_transitions_and_cross_tenant_branch_update_are_d
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(event_counts, (1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn member_invitation_and_required_evidence_commit_together() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-member-invitation-atomicity").unwrap();
-    let membership = MembershipId::new("member-invitation-atomicity").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn member_invitation_and_required_evidence_commit_together()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-member-invitation-atomicity")?;
+    let membership = MembershipId::new("member-invitation-atomicity")?;
+    seed_organization(&db, org.as_str()).await?;
 
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let created = tenancy
         .invite_member(
             membership.clone(),
             org.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-invited").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-invited")?,
             ActorRef {
                 subject_ref: "user-operator".to_owned(),
                 membership_ref: None,
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         created.state,
         sitolo_domain::tenancy::MembershipState::Invited
@@ -851,8 +1126,7 @@ async fn member_invitation_and_required_evidence_commit_together() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(persisted_state, "INVITED");
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.membership.invited') + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.membership.invited')",
@@ -860,22 +1134,23 @@ async fn member_invitation_and_required_evidence_commit_together() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 2);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-member-invitation-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn member_invitation_rolls_back_state_and_evidence_on_write_failures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-member-invitation-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
     let actor = || ActorRef {
         subject_ref: "user-operator".to_owned(),
         membership_ref: None,
@@ -884,9 +1159,9 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
 
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .invite_member(
-            MembershipId::new("member-invitation-audit-failure").unwrap(),
+            MembershipId::new("member-invitation-audit-failure")?,
             org.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-invitation-audit-failure").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-invitation-audit-failure")?,
             actor(),
         )
         .await;
@@ -900,10 +1175,9 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
                 Arc::new(FailingOutboxWriter),
             ))
             .invite_member(
-                MembershipId::new("member-invitation-outbox-failure").unwrap(),
+                MembershipId::new("member-invitation-outbox-failure")?,
                 org.clone(),
-                sitolo_domain::tenancy::TenantUserId::new("user-invitation-outbox-failure")
-                    .unwrap(),
+                sitolo_domain::tenancy::TenantUserId::new("user-invitation-outbox-failure")?,
                 actor(),
             )
             .await;
@@ -916,25 +1190,25 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(counts, (0, 0, 0));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-token-invitation").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-token-invitation").unwrap();
-    let membership = MembershipId::new("member-token-invitation").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_issue_persists_only_hash_and_emits_approved_event()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-token-invitation")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-token-invitation")?;
+    let membership = MembershipId::new("member-token-invitation")?;
+    seed_organization(&db, org.as_str()).await?;
 
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let created = tenancy
@@ -942,10 +1216,10 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
             org.clone(),
             invitation.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-token-invitation").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-token-invitation")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "invitee@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "invitee@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -954,8 +1228,7 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         created.membership.state,
         sitolo_domain::tenancy::MembershipState::Invited
@@ -967,7 +1240,7 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     .bind(invitation.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(persisted.0, "ISSUED");
     assert!(persisted.1);
     assert_eq!(persisted.2.as_deref(), Some("invitee@example.test"));
@@ -978,7 +1251,7 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(
         audit_target,
         ("Invitation".to_owned(), invitation.to_string())
@@ -989,15 +1262,15 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 2);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 async fn assert_invitation_rows_absent(
@@ -1014,34 +1287,37 @@ async fn assert_invitation_rows_absent(
     Ok(())
 }
 
-fn token_invitation_arguments(
-    org: OrganizationId,
-    invitation_id: &str,
-    membership_id: &str,
-) -> (
+type TokenInvitationArguments = (
     OrganizationId,
     sitolo_domain::tenancy::InvitationId,
     MembershipId,
     sitolo_domain::tenancy::TenantUserId,
     InvitationContact,
-) {
-    (
+);
+
+fn token_invitation_arguments(
+    org: OrganizationId,
+    invitation_id: &str,
+    membership_id: &str,
+) -> Result<TokenInvitationArguments, Box<dyn std::error::Error>> {
+    Ok((
         org,
-        sitolo_domain::tenancy::InvitationId::new(invitation_id).unwrap(),
-        MembershipId::new(membership_id).unwrap(),
-        sitolo_domain::tenancy::TenantUserId::new("user-invitation-failure").unwrap(),
-        InvitationContact::new(ContactKind::Email, "invitee@example.test").unwrap(),
-    )
+        sitolo_domain::tenancy::InvitationId::new(invitation_id)?,
+        MembershipId::new(membership_id)?,
+        sitolo_domain::tenancy::TenantUserId::new("user-invitation-failure")?,
+        InvitationContact::new(ContactKind::Email, "invitee@example.test")?,
+    ))
 }
 
 #[tokio::test]
-async fn token_invitation_issue_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-audit-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_issue_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-audit-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = service(&db, Arc::new(FailingAuditWriter));
     let (org, invitation, membership, user, contact) =
-        token_invitation_arguments(org.clone(), "inv-audit-rollback", "member-audit-rollback");
+        token_invitation_arguments(org.clone(), "inv-audit-rollback", "member-audit-rollback")?;
     assert!(
         tenancy
             .create_invitation(
@@ -1063,21 +1339,22 @@ async fn token_invitation_issue_rolls_back_when_audit_write_fails() {
             .await
             .is_err()
     );
-    assert_invitation_rows_absent(&db, &org).await.unwrap();
+    assert_invitation_rows_absent(&db, &org).await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-outbox-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_issue_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-outbox-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
         .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
@@ -1085,7 +1362,7 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
             Arc::new(FailingOutboxWriter),
         ));
     let (org, invitation, membership, user, contact) =
-        token_invitation_arguments(org.clone(), "inv-outbox-rollback", "member-outbox-rollback");
+        token_invitation_arguments(org.clone(), "inv-outbox-rollback", "member-outbox-rollback")?;
     assert!(
         tenancy
             .create_invitation(
@@ -1107,33 +1384,34 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
             .await
             .is_err()
     );
-    assert_invitation_rows_absent(&db, &org).await.unwrap();
+    assert_invitation_rows_absent(&db, &org).await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-withdrawal").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal").unwrap();
-    let membership = MembershipId::new("member-withdrawal").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-withdrawal")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal")?;
+    let membership = MembershipId::new("member-withdrawal")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     tenancy
         .create_invitation(
             org.clone(),
             invitation.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "withdrawal@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "withdrawal@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -1142,8 +1420,7 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
     let withdrawn = tenancy
         .revoke_invitation(
@@ -1155,8 +1432,7 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(withdrawn.state, sitolo_authz::InvitationState::Revoked);
     assert!(withdrawn.contact.is_none());
     assert!(withdrawn.token_hash.is_none());
@@ -1167,7 +1443,7 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
     .bind(invitation.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(stored.0, "WITHDRAWN");
     assert!(!stored.1);
     assert!(stored.2.is_none());
@@ -1179,23 +1455,21 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
     .bind(membership.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(membership_state, ("EXPIRED".to_owned(), 3));
     let event_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(event_count, 2);
     let event_payloads: Vec<String> = sqlx_core::query_scalar::query_scalar(
         "SELECT payload::text FROM outbox_events WHERE organization_id = $1",
     )
     .bind(org.as_str())
     .fetch_all(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert!(
         event_payloads
             .iter()
@@ -1207,28 +1481,28 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically() 
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_token_invitation_withdrawals_emit_one_transition() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-withdrawal-concurrent").unwrap();
-    let invitation =
-        sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-concurrent").unwrap();
-    let membership = MembershipId::new("member-withdrawal-concurrent").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn concurrent_token_invitation_withdrawals_emit_one_transition()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-withdrawal-concurrent")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-concurrent")?;
+    let membership = MembershipId::new("member-withdrawal-concurrent")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     tenancy
         .create_invitation(
             org.clone(),
             invitation.clone(),
             membership,
-            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-concurrent").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-concurrent")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "concurrent@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "concurrent@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -1237,8 +1511,7 @@ async fn concurrent_token_invitation_withdrawals_emit_one_transition() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
     let (first, second) = tokio::join!(
         tenancy.revoke_invitation(
@@ -1268,34 +1541,35 @@ async fn concurrent_token_invitation_withdrawals_emit_one_transition() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(event_counts, (1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-withdrawal-audit-rollback").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-audit").unwrap();
-    let membership = MembershipId::new("member-withdrawal-audit").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-withdrawal-audit-rollback")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-audit")?;
+    let membership = MembershipId::new("member-withdrawal-audit")?;
+    seed_organization(&db, org.as_str()).await?;
     let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
     create_service
         .create_invitation(
             org.clone(),
             invitation.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-audit").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-audit")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "audit@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "audit@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -1304,8 +1578,7 @@ async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
     let revoke_service = service(&db, Arc::new(FailingAuditWriter));
     assert!(
@@ -1329,7 +1602,7 @@ async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
     .bind(invitation.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(invitation_state.0, "ISSUED");
     assert!(invitation_state.1);
     assert_eq!(invitation_state.2.as_deref(), Some("audit@example.test"));
@@ -1340,42 +1613,42 @@ async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails() {
     .bind(membership.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(membership_state, ("INVITED".to_owned(), 1));
     let event_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(event_count, 1);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-withdrawal-outbox-rollback").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-outbox").unwrap();
-    let membership = MembershipId::new("member-withdrawal-outbox").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-withdrawal-outbox-rollback")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-withdrawal-outbox")?;
+    let membership = MembershipId::new("member-withdrawal-outbox")?;
+    seed_organization(&db, org.as_str()).await?;
     let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
     create_service
         .create_invitation(
             org.clone(),
             invitation.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-outbox").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-withdrawal-outbox")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "outbox@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "outbox@example.test")?,
             "0123456789abcdef0123456789abcdef",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -1384,8 +1657,7 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
     let revoke_service =
         TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
@@ -1416,7 +1688,7 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
     .bind(invitation.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(invitation_state.0, "ISSUED");
     assert!(invitation_state.1);
     assert_eq!(invitation_state.2.as_deref(), Some("outbox@example.test"));
@@ -1427,41 +1699,38 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
     .bind(membership.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(membership_state, ("INVITED".to_owned(), 1));
     let event_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM outbox_events WHERE organization_id = $1",
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(event_count, 1);
     let audit_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM audit_events WHERE organization_id = $1",
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(audit_count, 1);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn membership_transition_and_audit_outbox_commit_together() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-atomicity").unwrap();
-    let membership = MembershipId::new("member-membership-atomicity").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn membership_transition_and_audit_outbox_commit_together()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-atomicity")?;
+    let membership = MembershipId::new("member-membership-atomicity")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
 
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let changed = tenancy
@@ -1474,8 +1743,7 @@ async fn membership_transition_and_audit_outbox_commit_together() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         changed.state,
         sitolo_domain::tenancy::MembershipState::Suspended
@@ -1486,8 +1754,7 @@ async fn membership_transition_and_audit_outbox_commit_together() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(persisted_state, "SUSPENDED");
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -1495,15 +1762,15 @@ async fn membership_transition_and_audit_outbox_commit_together() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 2);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 struct FailingAuditWriter;
@@ -1520,13 +1787,12 @@ impl AuditWriter for FailingAuditWriter {
 }
 
 #[tokio::test]
-async fn membership_transition_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-rollback").unwrap();
-    let membership = MembershipId::new("member-membership-rollback").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn membership_transition_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-rollback")?;
+    let membership = MembershipId::new("member-membership-rollback")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
 
     let tenancy = service(&db, Arc::new(FailingAuditWriter));
     assert!(
@@ -1549,8 +1815,7 @@ async fn membership_transition_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(persisted_state, "ACTIVE");
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -1558,15 +1823,15 @@ async fn membership_transition_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 struct FailingOutboxWriter;
@@ -1585,13 +1850,104 @@ impl OutboxWriter for FailingOutboxWriter {
 }
 
 #[tokio::test]
-async fn membership_transition_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-outbox-rollback").unwrap();
-    let membership = MembershipId::new("member-membership-outbox-rollback").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn authenticated_membership_suspend_and_revoke_roll_back_on_evidence_failures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let cases = [
+        ("org-auth-suspend-audit", true, true),
+        ("org-auth-suspend-outbox", true, false),
+        ("org-auth-revoke-audit", false, true),
+        ("org-auth-revoke-outbox", false, false),
+    ];
+
+    for (organization_raw, suspend, fail_audit) in cases {
+        let organization_id = OrganizationId::new(organization_raw)?;
+        let owner_membership_id = format!("{organization_raw}-owner");
+        let target_membership_id = format!("{organization_raw}-target");
+        seed_active_membership(&db, organization_id.as_str(), &owner_membership_id).await?;
+        query("INSERT INTO organization_memberships (id, organization_id, user_id, state, state_version) VALUES ($1, $2, 'user-target', 'ACTIVE', 1)")
+            .bind(&target_membership_id)
+            .bind(organization_id.as_str())
+            .execute(&db.admin)
+            .await?;
+        query("INSERT INTO role_assignments (id, organization_id, membership_id, role, state, state_version) VALUES ($1, $2, $3, 'OWNER', 'EFFECTIVE', 1)")
+            .bind(format!("{organization_raw}-role"))
+            .bind(organization_id.as_str())
+            .bind(&owner_membership_id)
+            .execute(&db.admin)
+            .await?;
+
+        let audit: Arc<dyn AuditWriter> = if fail_audit {
+            Arc::new(FailingAuditWriter)
+        } else {
+            Arc::new(PostgresAuditWriter::new())
+        };
+        let outbox: Arc<dyn OutboxWriter> = if fail_audit {
+            Arc::new(PostgresOutboxRepository::new(db.runtime.clone()))
+        } else {
+            Arc::new(FailingOutboxWriter)
+        };
+        let tenancy = TenancyService::new_postgres(
+            Vec::new(),
+            TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox),
+        );
+        let result = if suspend {
+            tenancy
+                .suspend_member_for_authenticated_user(
+                    &authenticated_context("user-1")?,
+                    &organization_id,
+                    &MembershipId::new(target_membership_id.clone())?,
+                )
+                .await
+                .map(|_| ())
+        } else {
+            tenancy
+                .revoke_member_for_authenticated_user(
+                    &authenticated_context("user-1")?,
+                    &organization_id,
+                    &MembershipId::new(target_membership_id.clone())?,
+                )
+                .await
+                .map(|_| ())
+        };
+        assert!(
+            result.is_err(),
+            "expected evidence failure for {organization_raw}"
+        );
+
+        let (state, evidence_count): (String, i64) = sqlx_core::query_as::query_as(
+            "SELECT m.state, \
+             (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND target_ref = $2) + \
+             (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND aggregate_id = $2) \
+             FROM organization_memberships m WHERE m.organization_id = $1 AND m.id = $2",
+        )
+        .bind(organization_id.as_str())
+        .bind(&target_membership_id)
+        .fetch_one(&db.admin)
+        .await?;
+        assert_eq!(state, "ACTIVE", "membership changed for {organization_raw}");
+        assert_eq!(
+            evidence_count, 0,
+            "evidence remained for {organization_raw}"
+        );
+    }
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn membership_transition_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-outbox-rollback")?;
+    let membership = MembershipId::new("member-membership-outbox-rollback")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
 
     let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
         .for_reference_with_evidence(TenancyEvidenceSink::new(
@@ -1619,8 +1975,7 @@ async fn membership_transition_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(persisted_state, "ACTIVE");
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
@@ -1628,40 +1983,35 @@ async fn membership_transition_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(evidence_count, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-expiry-sweep").unwrap();
+async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-expiry-sweep")?;
     let invitation = "inv-expiry-sweep";
     let membership = "member-expiry-sweep";
-    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
-    issue_invitation(&tenancy, &org, invitation, membership).await;
-    make_invitation_expired(&db, org.as_str(), invitation).await;
+    issue_invitation(&tenancy, &org, invitation, membership).await?;
+    make_invitation_expired(&db, org.as_str(), invitation).await?;
 
     let (first, second) = tokio::join!(
         tenancy.expire_invitations_for_organization(&org),
         tenancy.expire_invitations_for_organization(&org),
     );
-    assert_eq!(first.unwrap() + second.unwrap(), 1);
-    assert_eq!(
-        tenancy
-            .expire_invitations_for_organization(&org)
-            .await
-            .unwrap(),
-        0
-    );
+    assert_eq!(first? + second?, 1);
+    assert_eq!(tenancy.expire_invitations_for_organization(&org).await?, 0);
 
     let invitation_row: (String, Option<String>, Option<String>, Option<Vec<u8>>, i64) =
         sqlx_core::query_as::query_as(
@@ -1671,8 +2021,7 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
         .bind(org.as_str())
         .bind(invitation)
         .fetch_one(&db.admin)
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(invitation_row, ("EXPIRED".to_owned(), None, None, None, 2));
     let membership_state: (String, i64) = sqlx_core::query_as::query_as(
         "SELECT state, state_version FROM organization_memberships \
@@ -1681,16 +2030,14 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
     .bind(org.as_str())
     .bind(membership)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(membership_state, ("EXPIRED".to_owned(), 2));
     let event_names: Vec<String> = sqlx_core::query_scalar::query_scalar(
         "SELECT event_name FROM outbox_events WHERE organization_id = $1 ORDER BY event_name",
     )
     .bind(org.as_str())
     .fetch_all(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(
         event_names,
         vec![
@@ -1704,28 +2051,29 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transition() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-terminal-race").unwrap();
+async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transition()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-terminal-race")?;
     let invitation = "inv-terminal-race";
     let membership = "member-terminal-race";
     let token = "0123456789abcdef0123456789abcdef";
-    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
     tenancy
         .create_invitation(
             org.clone(),
-            sitolo_domain::tenancy::InvitationId::new(invitation).unwrap(),
-            MembershipId::new(membership).unwrap(),
-            sitolo_domain::tenancy::TenantUserId::new("user-terminal-race").unwrap(),
+            sitolo_domain::tenancy::InvitationId::new(invitation)?,
+            MembershipId::new(membership)?,
+            sitolo_domain::tenancy::TenantUserId::new("user-terminal-race")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "terminal-race@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "terminal-race@example.test")?,
             token,
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -1734,15 +2082,14 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
-    make_invitation_expired(&db, org.as_str(), invitation).await;
-    let invitation_id = sitolo_domain::tenancy::InvitationId::new(invitation).unwrap();
+        .await?;
+    make_invitation_expired(&db, org.as_str(), invitation).await?;
+    let invitation_id = sitolo_domain::tenancy::InvitationId::new(invitation)?;
 
     let (accepted, withdrawn, expired) = tokio::join!(
         tenancy.accept_invitation(
             token,
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-terminal-race").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-terminal-race")?,
             None,
             ActorRef {
                 subject_ref: "caller-accept".to_owned(),
@@ -1764,7 +2111,7 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
 
     assert!(accepted.is_err());
     let withdrawn = withdrawn.is_ok();
-    let expired = expired.unwrap() == 1;
+    let expired = expired? == 1;
     assert_ne!(withdrawn, expired);
 
     let invitation_row: (String, Option<String>, Option<Vec<u8>>) = sqlx_core::query_as::query_as(
@@ -1774,8 +2121,7 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
     .bind(org.as_str())
     .bind(invitation)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert!(matches!(invitation_row.0.as_str(), "WITHDRAWN" | "EXPIRED"));
     assert!(invitation_row.1.is_none() && invitation_row.2.is_none());
 
@@ -1785,8 +2131,7 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
     )
     .bind(org.as_str())
     .fetch_all(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(terminal_events.len(), 1);
     assert_eq!(
         terminal_events[0],
@@ -1803,8 +2148,7 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
     .bind(org.as_str())
     .bind(membership)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(membership_state, "EXPIRED");
 
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
@@ -1812,20 +2156,21 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-expiry-audit-rollback").unwrap();
+async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-expiry-audit-rollback")?;
     let invitation = "inv-expiry-audit-rollback";
     let membership = "member-expiry-audit-rollback";
-    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_organization(&db, org.as_str()).await?;
     let issuer = service(&db, Arc::new(PostgresAuditWriter::new()));
-    issue_invitation(&issuer, &org, invitation, membership).await;
-    make_invitation_expired(&db, org.as_str(), invitation).await;
+    issue_invitation(&issuer, &org, invitation, membership).await?;
+    make_invitation_expired(&db, org.as_str(), invitation).await?;
     let sweeper = service(&db, Arc::new(FailingAuditWriter));
 
     assert!(
@@ -1841,8 +2186,7 @@ async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .bind(invitation)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(row.0, "ISSUED");
     assert!(row.1.is_some() && row.2.is_some());
     let membership_state: String = sqlx_core::query_scalar::query_scalar(
@@ -1851,8 +2195,7 @@ async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .bind(membership)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(membership_state, "INVITED");
     let expiry_events: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM outbox_events WHERE organization_id = $1 \
@@ -1860,28 +2203,28 @@ async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(expiry_events, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-invitation-expiry-outbox-rollback").unwrap();
+async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-invitation-expiry-outbox-rollback")?;
     let invitation = "inv-expiry-outbox-rollback";
     let membership = "member-expiry-outbox-rollback";
-    seed_organization(&db, org.as_str()).await.unwrap();
+    seed_organization(&db, org.as_str()).await?;
     let issuer = service(&db, Arc::new(PostgresAuditWriter::new()));
-    issue_invitation(&issuer, &org, invitation, membership).await;
-    make_invitation_expired(&db, org.as_str(), invitation).await;
+    issue_invitation(&issuer, &org, invitation, membership).await?;
+    make_invitation_expired(&db, org.as_str(), invitation).await?;
     let sweeper = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
         .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
@@ -1902,8 +2245,7 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .bind(invitation)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(row.0, "ISSUED");
     assert!(row.1.is_some() && row.2.is_some());
     let membership_state: String = sqlx_core::query_scalar::query_scalar(
@@ -1912,8 +2254,7 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .bind(membership)
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(membership_state, "INVITED");
     let expiry_audits: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM audit_events WHERE organization_id = $1 \
@@ -1921,20 +2262,23 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(expiry_audits, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
-async fn seed_pending_membership(db: &TestDb, organization_id: &str, membership_id: &str) {
-    seed_organization(db, organization_id).await.unwrap();
+async fn seed_pending_membership(
+    db: &TestDb,
+    organization_id: &str,
+    membership_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_organization(db, organization_id).await?;
     query(
         "INSERT INTO organization_memberships \
          (id, organization_id, user_id, state, state_version) \
@@ -1943,16 +2287,17 @@ async fn seed_pending_membership(db: &TestDb, organization_id: &str, membership_
     .bind(membership_id)
     .bind(organization_id)
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn membership_expiry_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-expiry-audit-rollback").unwrap();
-    let membership = MembershipId::new("member-expiry-audit-rollback").unwrap();
-    seed_pending_membership(&db, org.as_str(), membership.as_str()).await;
+async fn membership_expiry_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-expiry-audit-rollback")?;
+    let membership = MembershipId::new("member-expiry-audit-rollback")?;
+    seed_pending_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(FailingAuditWriter));
 
     assert!(tenancy.expire_invitation(&org, &membership).await.is_err());
@@ -1963,8 +2308,7 @@ async fn membership_expiry_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(state, ("PENDING_ACCEPTANCE".to_owned(), 2));
     let expiry_events: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 \
@@ -1974,24 +2318,24 @@ async fn membership_expiry_rolls_back_when_audit_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(expiry_events, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn membership_expiry_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-expiry-outbox-rollback").unwrap();
-    let membership = MembershipId::new("member-expiry-outbox-rollback").unwrap();
-    seed_pending_membership(&db, org.as_str(), membership.as_str()).await;
+async fn membership_expiry_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-expiry-outbox-rollback")?;
+    let membership = MembershipId::new("member-expiry-outbox-rollback")?;
+    seed_pending_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
         .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
@@ -2007,8 +2351,7 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(state, ("PENDING_ACCEPTANCE".to_owned(), 2));
     let expiry_audits: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT count(*) FROM audit_events WHERE organization_id = $1 \
@@ -2016,29 +2359,29 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(expiry_audits, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failures() {
+async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failures()
+-> Result<(), Box<dyn std::error::Error>> {
     enum Operation {
         Accept,
         Resume,
         Revoke,
     }
 
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-membership-transition-failures").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-membership-transition-failures")?;
+    seed_organization(&db, org.as_str()).await?;
     for (membership_id, user_id, state) in [
         (
             "member-accept-audit",
@@ -2065,8 +2408,7 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
         .bind(user_id)
         .bind(state)
         .execute(&db.admin)
-        .await
-        .unwrap();
+        .await?;
     }
 
     let actor = || ActorRef {
@@ -2100,8 +2442,8 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
             Operation::Revoke,
         ),
     ] {
-        let audit_membership = MembershipId::new(audit_id).unwrap();
-        let outbox_membership = MembershipId::new(outbox_id).unwrap();
+        let audit_membership = MembershipId::new(audit_id)?;
+        let outbox_membership = MembershipId::new(outbox_id)?;
         let audit_result = match operation {
             Operation::Accept => {
                 audit_service
@@ -2149,8 +2491,7 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
     )
     .bind(org.as_str())
     .fetch_all(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(
         rows,
         vec![
@@ -2176,31 +2517,28 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(evidence_count, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() {
+async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent()
+-> Result<(), Box<dyn std::error::Error>> {
     use sitolo_authz::RoleAssignmentState;
 
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-assignment-atomicity").unwrap();
-    let membership = MembershipId::new("member-role-assignment-atomicity").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-assignment-atomicity")?;
+    let membership = MembershipId::new("member-role-assignment-atomicity")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
-    let assignment_id =
-        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-atomicity").unwrap();
+    let assignment_id = sitolo_domain::tenancy::RoleAssignmentId::new("assignment-atomicity")?;
     let actor = ActorRef {
         subject_ref: "user-role-operator".to_owned(),
         membership_ref: None,
@@ -2215,8 +2553,7 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
             sitolo_authz::Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(assignment.state, RoleAssignmentState::Effective);
     let persisted: (String, String, String, i64) = sqlx_core::query_as::query_as(
         "SELECT organization_id, membership_id, role, state_version \
@@ -2224,8 +2561,7 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
     )
     .bind(assignment_id.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(
         persisted,
         (
@@ -2244,8 +2580,7 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
             sitolo_authz::Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(retry, assignment);
     assert!(
         tenancy
@@ -2264,7 +2599,7 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
             .assign_role(
                 org.clone(),
                 membership.clone(),
-                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-duplicate-role").unwrap(),
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-duplicate-role")?,
                 sitolo_authz::Role::Cashier,
                 actor,
             )
@@ -2280,30 +2615,27 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent() 
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(counts, (1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_role_assignment_retries_emit_one_semantic_event() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-assignment-concurrent").unwrap();
-    let membership = MembershipId::new("member-role-assignment-concurrent").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn concurrent_role_assignment_retries_emit_one_semantic_event()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-assignment-concurrent")?;
+    let membership = MembershipId::new("member-role-assignment-concurrent")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
     let barrier = Arc::new(Barrier::new(2));
-    let assignment_id =
-        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-concurrent").unwrap();
+    let assignment_id = sitolo_domain::tenancy::RoleAssignmentId::new("assignment-concurrent")?;
     let run = |tenancy: Arc<TenancyService>, barrier: Arc<Barrier>| {
         let org = org.clone();
         let membership = membership.clone();
@@ -2327,8 +2659,8 @@ async fn concurrent_role_assignment_retries_emit_one_semantic_event() {
     };
     let first = run(Arc::clone(&tenancy), Arc::clone(&barrier));
     let second = run(Arc::clone(&tenancy), barrier);
-    let first = first.await.unwrap().unwrap();
-    let second = second.await.unwrap().unwrap();
+    let first = first.await??;
+    let second = second.await??;
     assert_eq!(first, second);
     let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1), \
@@ -2339,33 +2671,31 @@ async fn concurrent_role_assignment_retries_emit_one_semantic_event() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(counts, (1, 1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_assignment_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-assignment-audit-failure").unwrap();
-    let membership = MembershipId::new("member-role-assignment-audit-failure").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn role_assignment_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-assignment-audit-failure")?;
+    let membership = MembershipId::new("member-role-assignment-audit-failure")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(FailingAuditWriter));
     assert!(
         tenancy
             .assign_role(
                 org.clone(),
                 membership,
-                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-audit-failure").unwrap(),
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-audit-failure")?,
                 sitolo_authz::Role::Cashier,
                 ActorRef {
                     subject_ref: "user-role-operator".to_owned(),
@@ -2381,8 +2711,7 @@ async fn role_assignment_rolls_back_when_audit_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(role_count, 0);
     let evidence_count: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1) + \
@@ -2390,26 +2719,24 @@ async fn role_assignment_rolls_back_when_audit_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(evidence_count, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_assignment_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-assignment-outbox-failure").unwrap();
-    let membership = MembershipId::new("member-role-assignment-outbox-failure").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn role_assignment_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-assignment-outbox-failure")?;
+    let membership = MembershipId::new("member-role-assignment-outbox-failure")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
         .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
@@ -2421,7 +2748,7 @@ async fn role_assignment_rolls_back_when_outbox_write_fails() {
             .assign_role(
                 org.clone(),
                 membership,
-                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-outbox-failure").unwrap(),
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-outbox-failure")?,
                 sitolo_authz::Role::Cashier,
                 ActorRef {
                     subject_ref: "user-role-operator".to_owned(),
@@ -2439,31 +2766,29 @@ async fn role_assignment_rolls_back_when_outbox_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(counts, (0, 0, 0));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
+async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe()
+-> Result<(), Box<dyn std::error::Error>> {
     use sitolo_authz::RoleAssignmentState;
 
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-revocation").unwrap();
-    let membership = MembershipId::new("member-role-revocation").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-revocation")?;
+    let membership = MembershipId::new("member-role-revocation")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let assignment_id =
-        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-revocation").unwrap();
+        sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-revocation")?;
     let actor = ActorRef {
         subject_ref: "user-role-operator".to_owned(),
         membership_ref: None,
@@ -2477,13 +2802,11 @@ async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
             Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
 
     let revoked = tenancy
         .revoke_role(&org, &membership, Role::Cashier, actor.clone())
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(revoked.id, assignment_id);
     assert_eq!(revoked.state, RoleAssignmentState::Revoked);
     assert_eq!(revoked.state_version, 4);
@@ -2502,20 +2825,18 @@ async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
             Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(replay, revoked);
 
     let regrant = tenancy
         .assign_role(
             org.clone(),
             membership,
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-regrant").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-role-regrant")?,
             Role::Cashier,
             actor,
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(regrant.state, RoleAssignmentState::Effective);
     let counts: (i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1), \
@@ -2527,25 +2848,24 @@ async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(counts, (2, 1, 2, 2, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_revocation_rolls_back_when_audit_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-revoke-audit-failure").unwrap();
-    let membership = MembershipId::new("member-role-revoke-audit-failure").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn role_revocation_rolls_back_when_audit_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-revoke-audit-failure")?;
+    let membership = MembershipId::new("member-role-revoke-audit-failure")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let actor = ActorRef {
         subject_ref: "user-role-operator".to_owned(),
         membership_ref: None,
@@ -2555,13 +2875,11 @@ async fn role_revocation_rolls_back_when_audit_write_fails() {
         .assign_role(
             org.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-audit-failure")
-                .unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-audit-failure")?,
             Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
 
     assert!(
         service(&db, Arc::new(FailingAuditWriter))
@@ -2576,8 +2894,7 @@ async fn role_revocation_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(state, ("EFFECTIVE".to_owned(), 3));
     let removal_events: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed') + \
@@ -2586,25 +2903,24 @@ async fn role_revocation_rolls_back_when_audit_write_fails() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(removal_events, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn role_revocation_rolls_back_when_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-revoke-outbox-failure").unwrap();
-    let membership = MembershipId::new("member-role-revoke-outbox-failure").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn role_revocation_rolls_back_when_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-revoke-outbox-failure")?;
+    let membership = MembershipId::new("member-role-revoke-outbox-failure")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let actor = ActorRef {
         subject_ref: "user-role-operator".to_owned(),
         membership_ref: None,
@@ -2614,13 +2930,11 @@ async fn role_revocation_rolls_back_when_outbox_write_fails() {
         .assign_role(
             org.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-outbox-failure")
-                .unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-outbox-failure")?,
             Role::Cashier,
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
     let failing_outbox =
         TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
             .for_reference_with_evidence(TenancyEvidenceSink::new(
@@ -2641,8 +2955,7 @@ async fn role_revocation_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .bind(membership.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(state, ("EFFECTIVE".to_owned(), 3));
     let removal_events: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.removed') + \
@@ -2651,30 +2964,29 @@ async fn role_revocation_rolls_back_when_outbox_write_fails() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(removal_events, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_role_revocations_emit_one_semantic_event() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-role-revoke-concurrent").unwrap();
-    let membership = MembershipId::new("member-role-revoke-concurrent").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn concurrent_role_revocations_emit_one_semantic_event()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-role-revoke-concurrent")?;
+    let membership = MembershipId::new("member-role-revoke-concurrent")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     service(&db, Arc::new(PostgresAuditWriter::new()))
         .assign_role(
             org.clone(),
             membership.clone(),
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-concurrent").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-revoke-concurrent")?,
             Role::Cashier,
             ActorRef {
                 subject_ref: "user-role-operator".to_owned(),
@@ -2682,8 +2994,7 @@ async fn concurrent_role_revocations_emit_one_semantic_event() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
     let barrier = Arc::new(Barrier::new(2));
     let run = |tenancy: Arc<TenancyService>, barrier: Arc<Barrier>| {
@@ -2707,8 +3018,8 @@ async fn concurrent_role_revocations_emit_one_semantic_event() {
     };
     let first = run(Arc::clone(&tenancy), Arc::clone(&barrier));
     let second = run(tenancy, barrier);
-    let first = first.await.unwrap();
-    let second = second.await.unwrap();
+    let first = first.await?;
+    let second = second.await?;
     let successful = usize::from(first.is_ok()) + usize::from(second.is_ok());
     assert_eq!(successful, 1);
     assert_eq!(
@@ -2722,29 +3033,28 @@ async fn concurrent_role_revocations_emit_one_semantic_event() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(counts, (1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
+async fn scope_grant_and_revocation_commit_with_single_evidence_pair()
+-> Result<(), Box<dyn std::error::Error>> {
     use sitolo_authz::ScopeGrantState;
 
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-scope-persist").unwrap();
-    let membership = MembershipId::new("member-scope-persist").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-scope-persist")?;
+    let membership = MembershipId::new("member-scope-persist")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
-    let grant_id = ScopeGrantId::new("grant-scope-persist").unwrap();
+    let grant_id = ScopeGrantId::new("grant-scope-persist")?;
     let scope = Scope::Organization {
         organization_id: org.clone(),
     };
@@ -2762,8 +3072,7 @@ async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
             scope.clone(),
             actor.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(grant.state, ScopeGrantState::Active);
     assert_eq!(grant.state_version, 1);
     assert_eq!(
@@ -2775,14 +3084,10 @@ async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
                 scope,
                 actor.clone(),
             )
-            .await
-            .unwrap(),
+            .await?,
         grant
     );
-    let revoked = tenancy
-        .revoke_scope_grant(&org, &grant_id, actor)
-        .await
-        .unwrap();
+    let revoked = tenancy.revoke_scope_grant(&org, &grant_id, actor).await?;
     assert_eq!(revoked.state, ScopeGrantState::Revoked);
     assert_eq!(revoked.state_version, 2);
     assert!(
@@ -2808,25 +3113,24 @@ async fn scope_grant_and_revocation_commit_with_single_evidence_pair() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(counts, (1, 1, 1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-scope-rollback").unwrap();
-    let membership = MembershipId::new("member-scope-rollback").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-scope-rollback")?;
+    let membership = MembershipId::new("member-scope-rollback")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let scope = Scope::Organization {
         organization_id: org.clone(),
     };
@@ -2835,22 +3139,23 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
         membership_ref: None,
         device_ref: None,
     };
-    let input = |grant_id: &str| {
-        (
+    let input = |grant_id: &str| -> Result<_, Box<dyn std::error::Error>> {
+        Ok((
             org.clone(),
             membership.clone(),
-            ScopeGrantId::new(grant_id).unwrap(),
+            ScopeGrantId::new(grant_id)?,
             scope.clone(),
             actor(),
-        )
+        ))
     };
+    let audit_input = input("grant-scope-audit-failure")?;
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .grant_scope(
-            input("grant-scope-audit-failure").0,
-            input("grant-scope-audit-failure").1,
-            input("grant-scope-audit-failure").2,
-            input("grant-scope-audit-failure").3,
-            input("grant-scope-audit-failure").4,
+            audit_input.0,
+            audit_input.1,
+            audit_input.2,
+            audit_input.3,
+            audit_input.4,
         )
         .await;
     assert!(audit_failure.is_err());
@@ -2861,7 +3166,7 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
                 Arc::new(PostgresAuditWriter::new()),
                 Arc::new(FailingOutboxWriter),
             ));
-    let outbox_input = input("grant-scope-outbox-failure");
+    let outbox_input = input("grant-scope-outbox-failure")?;
     assert!(
         failing_outbox
             .grant_scope(
@@ -2879,27 +3184,25 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
     )
     .bind(org.as_str())
     .fetch_one(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(remaining, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-scope-revoke-rollback").unwrap();
-    let audit_membership = MembershipId::new("member-scope-revoke-audit").unwrap();
-    let outbox_membership = MembershipId::new("member-scope-revoke-outbox").unwrap();
-    seed_active_membership(&db, org.as_str(), audit_membership.as_str())
-        .await
-        .unwrap();
+async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-scope-revoke-rollback")?;
+    let audit_membership = MembershipId::new("member-scope-revoke-audit")?;
+    let outbox_membership = MembershipId::new("member-scope-revoke-outbox")?;
+    seed_active_membership(&db, org.as_str(), audit_membership.as_str()).await?;
     query(
         "INSERT INTO organization_memberships \
          (id, organization_id, user_id, state, state_version) \
@@ -2908,8 +3211,7 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
     .bind(outbox_membership.as_str())
     .bind(org.as_str())
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
 
     let scope = Scope::Organization {
         organization_id: org.clone(),
@@ -2919,8 +3221,8 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
         membership_ref: None,
         device_ref: None,
     };
-    let audit_grant = ScopeGrantId::new("grant-scope-revoke-audit").unwrap();
-    let outbox_grant = ScopeGrantId::new("grant-scope-revoke-outbox").unwrap();
+    let audit_grant = ScopeGrantId::new("grant-scope-revoke-audit")?;
+    let outbox_grant = ScopeGrantId::new("grant-scope-revoke-outbox")?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     tenancy
         .grant_scope(
@@ -2930,8 +3232,7 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
             scope.clone(),
             actor(),
         )
-        .await
-        .unwrap();
+        .await?;
     tenancy
         .grant_scope(
             org.clone(),
@@ -2940,8 +3241,7 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
             scope,
             actor(),
         )
-        .await
-        .unwrap();
+        .await?;
 
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .revoke_scope_grant(&org, &audit_grant, actor())
@@ -2963,8 +3263,7 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
     )
     .bind(org.as_str())
     .fetch_all(&db.admin)
-    .await
-    .unwrap();
+    .await?;
     assert_eq!(
         rows,
         vec![
@@ -2979,30 +3278,29 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(revoked_evidence, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-scope-concurrent").unwrap();
-    let membership = MembershipId::new("member-scope-concurrent").unwrap();
-    seed_active_membership(&db, org.as_str(), membership.as_str())
-        .await
-        .unwrap();
+async fn concurrent_identical_scope_grants_emit_one_evidence_pair()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-scope-concurrent")?;
+    let membership = MembershipId::new("member-scope-concurrent")?;
+    seed_active_membership(&db, org.as_str(), membership.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     let scope = Scope::Organization {
         organization_id: org.clone(),
     };
-    let grant_id = ScopeGrantId::new("grant-scope-concurrent").unwrap();
+    let grant_id = ScopeGrantId::new("grant-scope-concurrent")?;
     let actor = || ActorRef {
         subject_ref: "user-scope-operator".to_owned(),
         membership_ref: None,
@@ -3018,7 +3316,7 @@ async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
         ),
         tenancy.grant_scope(org.clone(), membership, grant_id, scope, actor(),),
     );
-    assert_eq!(first.unwrap(), second.unwrap());
+    assert_eq!(first?, second?);
     let counts: (i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted'), \
                 (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name = 'iam.scope.granted')",
@@ -3026,27 +3324,28 @@ async fn concurrent_identical_scope_grants_emit_one_evidence_pair() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(counts, (1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomically() {
+async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
     use sitolo_authz::{InvitationState, RoleAssignmentState};
 
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-accept-persist").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-persist").unwrap();
-    let membership = MembershipId::new("member-accept-persist").unwrap();
-    let user = sitolo_domain::tenancy::TenantUserId::new("user-accept-persist").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-accept-persist")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-persist")?;
+    let membership = MembershipId::new("member-accept-persist")?;
+    let user = sitolo_domain::tenancy::TenantUserId::new("user-accept-persist")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = service(&db, Arc::new(PostgresAuditWriter::new()));
     tenancy
         .create_invitation(
@@ -3056,7 +3355,7 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
             user,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "invitee-accept@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "invitee-accept@example.test")?,
             "token-for-acceptance-persist-test",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -3065,13 +3364,12 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
 
     let accepted = tenancy
         .accept_invitation(
             "token-for-acceptance-persist-test",
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-persist").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-persist")?,
             None,
             ActorRef {
                 subject_ref: "forged-caller-actor".to_owned(),
@@ -3079,8 +3377,7 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(accepted.invitation.state, InvitationState::Accepted);
     assert!(accepted.invitation.contact.is_none());
     assert!(accepted.invitation.token_hash.is_none());
@@ -3097,7 +3394,7 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
     .bind(invitation.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(
         stored,
         ("ACCEPTED".to_owned(), None, false, "ACTIVE".to_owned(), 3)
@@ -3108,7 +3405,7 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(
         accepted_audit,
         (
@@ -3123,22 +3420,23 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(pii_outbox, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-accept-rollback").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-accept-rollback")?;
+    seed_organization(&db, org.as_str()).await?;
     let create_service = service(&db, Arc::new(PostgresAuditWriter::new()));
     for (suffix, raw_token) in [
         ("audit", "token-for-audit-failure-case-12345678"),
@@ -3148,12 +3446,12 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
         create_service
             .create_invitation(
                 org.clone(),
-                sitolo_domain::tenancy::InvitationId::new(format!("inv-accept-{suffix}")).unwrap(),
-                MembershipId::new(format!("member-accept-{suffix}")).unwrap(),
-                sitolo_domain::tenancy::TenantUserId::new(format!("user-accept-{suffix}")).unwrap(),
+                sitolo_domain::tenancy::InvitationId::new(format!("inv-accept-{suffix}"))?,
+                MembershipId::new(format!("member-accept-{suffix}"))?,
+                sitolo_domain::tenancy::TenantUserId::new(format!("user-accept-{suffix}"))?,
                 Role::Cashier,
                 None,
-                InvitationContact::new(ContactKind::Email, &contact).unwrap(),
+                InvitationContact::new(ContactKind::Email, &contact)?,
                 raw_token,
                 std::time::Duration::from_secs(3_600),
                 ActorRef {
@@ -3162,14 +3460,12 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
                     device_ref: None,
                 },
             )
-            .await
-            .unwrap();
+            .await?;
     }
     let audit_failure = service(&db, Arc::new(FailingAuditWriter))
         .accept_invitation(
             "token-for-audit-failure-case-12345678",
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-audit-failure")
-                .unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-audit-failure")?,
             None,
             ActorRef {
                 subject_ref: "caller".to_owned(),
@@ -3188,8 +3484,7 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
             ))
             .accept_invitation(
                 "token-for-outbox-failure-case-12345678",
-                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")
-                    .unwrap(),
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")?,
                 None,
                 ActorRef {
                     subject_ref: "caller".to_owned(),
@@ -3205,7 +3500,7 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(state, (2, 2, 0, 0));
     let accepted_events: i64 = sqlx_core::query_scalar::query_scalar(
         "SELECT (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name IN ('iam.membership.invitation_accepted', 'iam.membership.pending_acceptance', 'iam.membership.activated')) + (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND event_name IN ('iam.membership.invitation_accepted', 'iam.membership.pending_acceptance', 'iam.membership.activated'))",
@@ -3213,34 +3508,35 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(accepted_events, 0);
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_invitation_acceptance_claims_token_once() {
-    let db = test_db().await.unwrap();
-    let org = OrganizationId::new("org-accept-concurrent").unwrap();
-    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-concurrent").unwrap();
-    let membership = MembershipId::new("member-accept-concurrent").unwrap();
-    seed_organization(&db, org.as_str()).await.unwrap();
+async fn concurrent_invitation_acceptance_claims_token_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-accept-concurrent")?;
+    let invitation = sitolo_domain::tenancy::InvitationId::new("inv-accept-concurrent")?;
+    let membership = MembershipId::new("member-accept-concurrent")?;
+    seed_organization(&db, org.as_str()).await?;
     let tenancy = Arc::new(service(&db, Arc::new(PostgresAuditWriter::new())));
     tenancy
         .create_invitation(
             org.clone(),
             invitation,
             membership.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-accept-concurrent").unwrap(),
+            sitolo_domain::tenancy::TenantUserId::new("user-accept-concurrent")?,
             Role::Cashier,
             None,
-            InvitationContact::new(ContactKind::Email, "accept-race@example.test").unwrap(),
+            InvitationContact::new(ContactKind::Email, "accept-race@example.test")?,
             "token-for-concurrent-acceptance-12345678",
             std::time::Duration::from_secs(3_600),
             ActorRef {
@@ -3249,8 +3545,7 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
                 device_ref: None,
             },
         )
-        .await
-        .unwrap();
+        .await?;
     let actor = || ActorRef {
         subject_ref: "caller".to_owned(),
         membership_ref: None,
@@ -3259,13 +3554,13 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
     let (first, second) = tokio::join!(
         tenancy.accept_invitation(
             "token-for-concurrent-acceptance-12345678",
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-a").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-a")?,
             None,
             actor(),
         ),
         tenancy.accept_invitation(
             "token-for-concurrent-acceptance-12345678",
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-b").unwrap(),
+            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-race-b")?,
             None,
             actor(),
         ),
@@ -3279,13 +3574,13 @@ async fn concurrent_invitation_acceptance_claims_token_once() {
     .bind(org.as_str())
     .fetch_one(&db.admin)
     .await
-    .unwrap();
+    ?;
     assert_eq!(counts, (1, 1, 1));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
     )))
     .execute(&db.admin)
-    .await
-    .unwrap();
+    .await?;
+    Ok(())
 }

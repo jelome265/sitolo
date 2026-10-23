@@ -256,6 +256,7 @@ fn session_lifetime_for_accepted(session: &Session) -> sitolo_auth::SessionLifet
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use std::time::Duration;
 
     use sitolo_auth::{
@@ -271,11 +272,11 @@ mod tests {
         }
     }
 
-    fn session() -> Session {
+    fn session() -> Result<Session, Box<dyn Error>> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+        Ok(Session::create(
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
             None,
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -283,7 +284,7 @@ mod tests {
             SecurityVersion(1),
             lifetime(),
             now,
-        )
+        ))
     }
 
     fn identity_database() -> IdentityDatabase {
@@ -302,19 +303,15 @@ mod tests {
         database: &IdentityDatabase,
         user_id: &str,
         bind_provider_identity: bool,
-    ) -> SessionId {
-        let user_id = UserId::new(user_id).unwrap();
-        database
-            .create_user(user_id.clone(), None, None)
-            .await
-            .unwrap();
+    ) -> Result<SessionId, Box<dyn Error>> {
+        let user_id = UserId::new(user_id)?;
+        database.create_user(user_id.clone(), None, None).await?;
         if bind_provider_identity {
             database
                 .bind_external_identity("test-issuer".into(), "subject-1".into(), &user_id)
-                .await
-                .unwrap();
+                .await?;
         }
-        database
+        let created = database
             .establish_session(
                 user_id,
                 None,
@@ -324,16 +321,15 @@ mod tests {
                 Assurance::A1,
                 SystemTime::now(),
             )
-            .await
-            .unwrap()
-            .session
-            .id
+            .await?;
+        Ok(created.session.id)
     }
 
     #[tokio::test]
-    async fn verified_identity_and_owned_active_session_establish_context() {
+    async fn verified_identity_and_owned_active_session_establish_context()
+    -> Result<(), Box<dyn Error>> {
         let database = identity_database();
-        let session_id = user_with_session(&database, "user-1", true).await;
+        let session_id = user_with_session(&database, "user-1", true).await?;
         let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
         let context = authenticate_request(
             Some("Bearer signed-token"),
@@ -345,16 +341,18 @@ mod tests {
             None,
         )
         .await
-        .unwrap();
+        .map_err(|error| std::io::Error::other(format!("authentication failed: {error:?}")))?;
         assert_eq!(context.principal.subject_id.as_str(), "user-1");
         assert_eq!(context.principal.session_id, session_id);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn session_selector_cannot_cross_the_mapped_user_boundary() {
+    async fn session_selector_cannot_cross_the_mapped_user_boundary() -> Result<(), Box<dyn Error>>
+    {
         let database = identity_database();
-        let _mapped_user_session = user_with_session(&database, "user-1", true).await;
-        let other_user_session = user_with_session(&database, "user-2", false).await;
+        let _mapped_user_session = user_with_session(&database, "user-1", true).await?;
+        let other_user_session = user_with_session(&database, "user-2", false).await?;
         let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
         let result = authenticate_request(
             Some("Bearer signed-token"),
@@ -367,12 +365,13 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn unknown_external_identity_is_not_auto_linked() {
+    async fn unknown_external_identity_is_not_auto_linked() -> Result<(), Box<dyn Error>> {
         let database = identity_database();
-        let session_id = user_with_session(&database, "user-1", false).await;
+        let session_id = user_with_session(&database, "user-1", false).await?;
         let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
         let result = authenticate_request(
             Some("Bearer signed-token"),
@@ -385,6 +384,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(AppError::Authentication)));
+        Ok(())
     }
 
     #[test]
@@ -399,10 +399,13 @@ mod tests {
     }
 
     #[test]
-    fn bearer_material_never_renders() {
-        let cred = extract_bearer(Some("Bearer secret-token")).unwrap();
+    fn bearer_material_never_renders() -> Result<(), Box<dyn Error>> {
+        let cred = extract_bearer(Some("Bearer secret-token")).map_err(|error| {
+            std::io::Error::other(format!("bearer extraction failed: {error:?}"))
+        })?;
         assert_eq!(format!("{cred:?}"), "CredentialMaterial(redacted)");
         assert_eq!(cred.to_string(), "<credential>");
+        Ok(())
     }
 
     #[test]
@@ -447,13 +450,13 @@ mod tests {
     }
 
     #[test]
-    fn bound_device_requires_device_record() {
+    fn bound_device_requires_device_record() -> Result<(), Box<dyn Error>> {
         use sitolo_auth::{ClientPlatform, Device, DeviceId};
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let device_id = DeviceId::new("dev-1").unwrap();
+        let device_id = DeviceId::new("dev-1")?;
         let mut sess = Session::create(
-            SessionId::new("sess-2").unwrap(),
-            UserId::new("user-1").unwrap(),
+            SessionId::new("sess-2")?,
+            UserId::new("user-1")?,
             Some(device_id),
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -478,7 +481,7 @@ mod tests {
             .is_err()
         );
         // An unbound session establishes normally.
-        let mut free = session();
+        let mut free = session()?;
         let request_id = RequestId::new_server();
         let ctx = establish_context(
             &mut free,
@@ -489,15 +492,18 @@ mod tests {
             request_id,
             None,
         )
-        .unwrap();
+        .map_err(|error| {
+            std::io::Error::other(format!("context establishment failed: {error:?}"))
+        })?;
         assert_eq!(ctx.assurance, Assurance::A1);
         let _ = Device::begin_registration(
-            DeviceId::new("dev-x").unwrap(),
-            UserId::new("user-1").unwrap(),
+            DeviceId::new("dev-x")?,
+            UserId::new("user-1")?,
             ClientPlatform::Android,
             SecurityVersion(1),
             now,
         );
+        Ok(())
     }
 
     #[test]

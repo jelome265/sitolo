@@ -288,34 +288,34 @@ mod tests {
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
-    fn contact() -> InvitationContact {
-        InvitationContact::new(ContactKind::Email, "cashier@example.com").unwrap()
+    fn contact() -> Result<InvitationContact, TenancyError> {
+        InvitationContact::new(ContactKind::Email, "cashier@example.com")
     }
 
-    fn invitation() -> Invitation {
+    fn invitation() -> Result<Invitation, TenancyError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         Invitation::issue(
-            InvitationId::new("inv-1").unwrap(),
-            OrganizationId::new("o1").unwrap(),
-            MembershipId::new("m1").unwrap(),
+            InvitationId::new("inv-1")?,
+            OrganizationId::new("o1")?,
+            MembershipId::new("m1")?,
             Role::Cashier,
             None,
-            contact(),
+            contact()?,
             TOKEN,
             now,
             Duration::from_secs(3_600),
         )
-        .unwrap()
     }
 
     #[test]
-    fn issue_stores_hash_never_raw() {
-        let invitation = invitation();
+    fn issue_stores_hash_never_raw() -> Result<(), TenancyError> {
+        let invitation = invitation()?;
         assert_eq!(invitation.token_hash, Some(Invitation::hash_token(TOKEN)));
         assert_eq!(invitation.state, InvitationState::Issued);
         // The record carries no raw-token field: debug output cannot leak it.
         let rendered = format!("{invitation:?}");
         assert!(!rendered.contains(TOKEN));
+        Ok(())
     }
 
     #[test]
@@ -327,22 +327,23 @@ mod tests {
     }
 
     #[test]
-    fn zero_ttl_cannot_issue() {
+    fn zero_ttl_cannot_issue() -> Result<(), TenancyError> {
         let now = SystemTime::UNIX_EPOCH;
         assert_eq!(
             Invitation::issue(
-                InvitationId::new("inv-1").unwrap(),
-                OrganizationId::new("o1").unwrap(),
-                MembershipId::new("m1").unwrap(),
+                InvitationId::new("inv-1")?,
+                OrganizationId::new("o1")?,
+                MembershipId::new("m1")?,
                 Role::Cashier,
                 None,
-                contact(),
+                contact()?,
                 TOKEN,
                 now,
                 Duration::ZERO,
             ),
             Err(TenancyError::InvalidInvitation)
         );
+        Ok(())
     }
 
     #[test]
@@ -358,10 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn accept_consumes_exactly_once() {
-        let mut invitation = invitation();
+    fn accept_consumes_exactly_once() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
-        invitation.accept(now).unwrap();
+        invitation
+            .accept(now)
+            .map_err(|_| TenancyError::InvalidInvitation)?;
         assert_eq!(invitation.state, InvitationState::Accepted);
         assert!(invitation.contact.is_none());
         assert!(invitation.token_hash.is_none());
@@ -369,35 +372,43 @@ mod tests {
             invitation.accept(now),
             Err(InvitationError::AlreadyAccepted)
         );
+        Ok(())
     }
 
     #[test]
-    fn lapsed_invitation_expires_on_observation() {
-        let mut invitation = invitation();
+    fn lapsed_invitation_expires_on_observation() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let late = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000);
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
         assert_eq!(invitation.state, InvitationState::Expired);
         assert!(invitation.contact.is_none());
         assert!(invitation.token_hash.is_none());
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
+        Ok(())
     }
 
     #[test]
-    fn withdrawal_erases_contact_and_token_hash() {
-        let mut invitation = invitation();
-        invitation.revoke().unwrap();
+    fn withdrawal_erases_contact_and_token_hash() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
+        invitation
+            .revoke()
+            .map_err(|_| TenancyError::InvalidInvitation)?;
         assert_eq!(invitation.state, InvitationState::Revoked);
         assert!(invitation.contact.is_none());
         assert!(invitation.token_hash.is_none());
+        Ok(())
     }
 
     #[test]
-    fn revoked_tokens_are_generically_invalid() {
-        let mut invitation = invitation();
+    fn revoked_tokens_are_generically_invalid() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
-        invitation.revoke().unwrap();
+        invitation
+            .revoke()
+            .map_err(|_| TenancyError::InvalidInvitation)?;
         assert_eq!(invitation.accept(now), Err(InvitationError::Invalid));
         assert_eq!(invitation.revoke(), Err(InvitationError::Invalid));
+        Ok(())
     }
 
     #[test]

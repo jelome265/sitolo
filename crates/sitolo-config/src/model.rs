@@ -112,6 +112,8 @@ pub struct AppConfig {
     pub db_user: String,
     /// Secret reference; a raw database password is prohibited (Appendix A).
     pub db_password_ref: SecretRef,
+    /// Separate secret reference for the restricted outbox worker role.
+    pub worker_db_password_ref: Option<SecretRef>,
     /// Trusted Cognito OIDC issuer used by the process runtime.
     pub oidc_issuer: Option<String>,
     /// Cognito public app-client identifier.
@@ -196,6 +198,24 @@ impl AppConfig {
         }
     }
 
+    /// Produces connection intent for the restricted outbox worker login.
+    /// The credential reference is distinct from the API runtime credential.
+    pub fn worker_database_runtime(&self) -> Option<DatabaseRuntimeConfig> {
+        self.worker_db_password_ref
+            .as_ref()
+            .map(|password_ref| DatabaseRuntimeConfig {
+                host: self.db_host.clone(),
+                port: self.db_port,
+                database: self.db_name.clone(),
+                schema: self.db_schema.clone(),
+                username: "app_worker".to_string(),
+                password_ref: password_ref.clone(),
+                pool_min: 1,
+                pool_max: self.db_pool_max.min(8),
+                acquire_timeout: Duration::from_millis(self.db_acquire_timeout_ms),
+            })
+    }
+
     /// Returns only safe database identity fields for diagnostics/telemetry.
     pub fn database_target(&self) -> DatabaseTarget {
         DatabaseTarget {
@@ -258,6 +278,7 @@ pub mod defaults {
         pub secrets_aws_region: Option<String>,
         /// `None` until a secret reference is supplied from an upper layer.
         pub db_password_ref: Option<SecretRef>,
+        pub worker_db_password_ref: Option<SecretRef>,
     }
 
     impl Default for Builder {
@@ -266,7 +287,7 @@ pub mod defaults {
                 environment: Environment::Development,
                 service_name: "sitolo".to_string(),
                 service_version: "0.0.0+dev".to_string(),
-                bind_address: "0.0.0.0:8080".parse().expect("static default"),
+                bind_address: SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), 8080),
                 max_request_body_bytes: 2_097_152,
                 request_header_timeout_ms: 5_000,
                 keepalive_timeout_ms: 30_000,
@@ -296,6 +317,7 @@ pub mod defaults {
                 relay_backoff_max_ms: 3_600_000,
                 secrets_aws_region: None,
                 db_password_ref: None,
+                worker_db_password_ref: None,
             }
         }
     }
@@ -304,11 +326,18 @@ pub mod defaults {
         /// A development-oriented preset with a local secret reference, so the
         /// catalogue has a complete, valid development profile.
         pub fn development() -> Self {
+            // This built-in path is a fixed, validated development reference.
+            #[expect(
+                clippy::expect_used,
+                reason = "the fixed development reference uses only allowed ASCII path characters"
+            )]
+            let db_password_ref = Some(
+                SecretRef::new(SecretClass::Database, "development/sitolo/db")
+                    .expect("static development reference"),
+            );
             Builder {
-                db_password_ref: Some(
-                    SecretRef::new(SecretClass::Database, "development/sitolo/db")
-                        .expect("static development reference"),
-                ),
+                db_password_ref,
+                worker_db_password_ref: None,
                 ..Builder::default()
             }
         }

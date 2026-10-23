@@ -127,6 +127,13 @@ const CATALOGUE: &[ConfigField] = &[
         "typed secret reference"
     ),
     field!(
+        "WORKER__DATABASE__PASSWORD_REF",
+        SecretReference,
+        false,
+        "security",
+        "typed database secret reference for app_worker"
+    ),
+    field!(
         "IDENTITY__OIDC__ISSUER",
         Static,
         false,
@@ -281,6 +288,7 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "DATABASE__SCHEMA",
     "DATABASE__USER",
     "DATABASE__PASSWORD_REF",
+    "WORKER__DATABASE__PASSWORD_REF",
     "IDENTITY__OIDC__ISSUER",
     "IDENTITY__OIDC__CLIENT_ID",
     "IDENTITY__OIDC__TOKEN_ENDPOINT",

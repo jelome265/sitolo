@@ -103,61 +103,62 @@ impl PasswordResetArtifact {
 mod tests {
     use super::*;
 
-    fn artifact() -> PasswordResetArtifact {
+    fn artifact() -> Result<PasswordResetArtifact, AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        PasswordResetArtifact::issue(
-            ResetArtifactId::new("reset-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+        Ok(PasswordResetArtifact::issue(
+            ResetArtifactId::new("reset-1")?,
+            UserId::new("user-1")?,
             "raw-token-abc",
             now,
             Duration::from_secs(600),
             SecurityVersion(3),
-        )
+        ))
     }
 
     #[test]
-    fn single_use_redemption() {
+    fn single_use_redemption() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
-        let mut a = artifact();
+        let mut a = artifact()?;
         assert!(a.claim("raw-token-abc", now, SecurityVersion(3)).is_ok());
         assert_eq!(a.state, ResetArtifactState::Consumed);
         assert_eq!(
-            a.claim("raw-token-abc", now, SecurityVersion(3))
-                .unwrap_err(),
-            AuthError::RecoveryArtifactUsed
+            a.claim("raw-token-abc", now, SecurityVersion(3)),
+            Err(AuthError::RecoveryArtifactUsed)
         );
+        Ok(())
     }
 
     #[test]
-    fn wrong_token_is_rejected() {
+    fn wrong_token_is_rejected() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
-        let mut a = artifact();
-        assert_eq!(
-            a.claim("wrong", now, SecurityVersion(3)).unwrap_err(),
-            AuthError::RecoveryArtifactInvalid
-        );
+        let mut a = artifact()?;
+        assert!(matches!(
+            a.claim("wrong", now, SecurityVersion(3)),
+            Err(AuthError::RecoveryArtifactInvalid)
+        ));
+        Ok(())
     }
 
     #[test]
-    fn expired_artifact_is_rejected() {
+    fn expired_artifact_is_rejected() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000);
-        let mut a = artifact();
-        assert_eq!(
-            a.claim("raw-token-abc", now, SecurityVersion(3))
-                .unwrap_err(),
-            AuthError::RecoveryArtifactInvalid
-        );
+        let mut a = artifact()?;
+        assert!(matches!(
+            a.claim("raw-token-abc", now, SecurityVersion(3)),
+            Err(AuthError::RecoveryArtifactInvalid)
+        ));
         assert_eq!(a.state, ResetArtifactState::Expired);
+        Ok(())
     }
 
     #[test]
-    fn security_version_mismatch_blocks_use() {
+    fn security_version_mismatch_blocks_use() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
-        let mut a = artifact();
-        assert_eq!(
-            a.claim("raw-token-abc", now, SecurityVersion(4))
-                .unwrap_err(),
-            AuthError::RecoveryArtifactInvalid
-        );
+        let mut a = artifact()?;
+        assert!(matches!(
+            a.claim("raw-token-abc", now, SecurityVersion(4)),
+            Err(AuthError::RecoveryArtifactInvalid)
+        ));
+        Ok(())
     }
 }

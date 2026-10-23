@@ -75,6 +75,14 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
         "db_password_ref",
         &config.db_password_ref.to_string(),
     );
+    line(
+        &mut output,
+        "worker_db_password_ref",
+        &config
+            .worker_db_password_ref
+            .as_ref()
+            .map_or("<none>".to_string(), ToString::to_string),
+    );
     line(&mut output, "db_pool_min", &config.db_pool_min.to_string());
     line(&mut output, "db_pool_max", &config.db_pool_max.to_string());
     line(
@@ -170,14 +178,15 @@ pub fn config_fingerprint(config: &AppConfig) -> String {
 mod tests {
     use super::*;
     use crate::{LogLevel, SecretClass, SecretRef, defaults, validate};
+    use std::error::Error;
 
-    fn base() -> crate::AppConfig {
-        validate(defaults::Builder::development()).unwrap()
+    fn base() -> Result<crate::AppConfig, Box<dyn Error>> {
+        Ok(validate(defaults::Builder::development())?)
     }
 
     #[test]
-    fn digest_is_lowercase_sha256() {
-        let fingerprint = config_fingerprint(&base());
+    fn digest_is_lowercase_sha256() -> Result<(), Box<dyn Error>> {
+        let fingerprint = config_fingerprint(&base()?);
         assert!(fingerprint.starts_with("sha256:"));
         let digest = &fingerprint[7..];
         assert_eq!(digest.len(), 64);
@@ -186,6 +195,7 @@ mod tests {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         );
+        Ok(())
     }
 
     #[test]
@@ -197,8 +207,8 @@ mod tests {
     }
 
     #[test]
-    fn every_effective_non_secret_field_changes_fingerprint() {
-        let original = base();
+    fn every_effective_non_secret_field_changes_fingerprint() -> Result<(), Box<dyn Error>> {
+        let original = base()?;
         let baseline = config_fingerprint(&original);
         macro_rules! changed {
             ($field:ident, $value:expr) => {{
@@ -210,7 +220,7 @@ mod tests {
         changed!(environment, crate::Environment::Staging);
         changed!(service_name, "other".into());
         changed!(service_version, "1.0.0".into());
-        changed!(bind_address, "127.0.0.1:8081".parse().unwrap());
+        changed!(bind_address, "127.0.0.1:8081".parse()?);
         changed!(max_request_body_bytes, 3_000_000);
         changed!(request_header_timeout_ms, 6_000);
         changed!(keepalive_timeout_ms, 31_000);
@@ -239,15 +249,17 @@ mod tests {
         changed!(relay_max_attempts, 9);
         changed!(relay_backoff_max_ms, 3_000_000);
         changed!(secrets_aws_region, Some("af-south-1".into()));
+        Ok(())
     }
 
     #[test]
-    fn reference_changes_but_secret_value_does_not_enter_canonical_input() {
-        let mut config = base();
+    fn reference_changes_but_secret_value_does_not_enter_canonical_input()
+    -> Result<(), Box<dyn Error>> {
+        let mut config = base()?;
         let initial = config_fingerprint(&config);
-        config.db_password_ref =
-            SecretRef::new(SecretClass::Database, "development/rotated/db").unwrap();
+        config.db_password_ref = SecretRef::new(SecretClass::Database, "development/rotated/db")?;
         assert_ne!(initial, config_fingerprint(&config));
         assert!(!canonical_non_secret_config(&config).contains("TEST_ONLY_DATABASE_SECRET"));
+        Ok(())
     }
 }

@@ -23,6 +23,9 @@ use sitolo_auth::{AuditEventId, SessionId, UserId};
 use sitolo_domain::tenancy::OrganizationId;
 use sitolo_events::{MAX_ATTEMPTS, OutboxClaimPolicy, OutboxError, OutboxErrorClass, OutboxEvent};
 use sitolo_persistence::audit_repository::{AuditWriter, PostgresAuditWriter};
+use sitolo_persistence::consumer_inbox::{
+    ConsumerInboxError, ConsumerInboxRecord, ConsumerInboxWriter, PostgresConsumerInbox,
+};
 use sitolo_persistence::outbox_repository::{
     OutboxPersistenceError, OutboxReader, OutboxWriter, PostgresOutboxRepository,
 };
@@ -133,6 +136,9 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
         .execute(&admin_pool)
         .await?;
+    raw_sql(include_str!("../schema/consumer_inbox.sql"))
+        .execute(&admin_pool)
+        .await?;
     let identity_sql = include_str!("../schema/phase3_identity_authority.sql")
         .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
@@ -194,8 +200,9 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
 }
 
 #[tokio::test]
-async fn postgres_identity_mapping_and_session_authority_fail_closed() {
-    let ctx = setup_test_context().await.unwrap();
+async fn postgres_identity_mapping_and_session_authority_fail_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
     let result = async {
         let now = chrono::Utc::now();
         query("INSERT INTO identity_users (id, security_version, suspended) VALUES ($1, 1, FALSE), ($2, 1, FALSE)")
@@ -239,8 +246,8 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed() {
         let direct_read = query("SELECT id FROM identity_users")
             .fetch_all(&ctx.runtime_pool)
             .await
-            .unwrap_err();
-        assert_eq!(sqlstate(&direct_read), "42501");
+            .err().ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
+        assert_eq!(sqlstate(&direct_read)?, "42501");
 
         let worker_mapping_call = query(sqlx_core::sql_str::AssertSqlSafe(format!(
             "SELECT \"{}\".resolve_external_identity($1, $2)",
@@ -250,8 +257,8 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed() {
         .bind("subject-auth-1")
         .fetch_optional(&ctx.worker_pool)
         .await
-        .unwrap_err();
-        assert_eq!(sqlstate(&worker_mapping_call), "42501");
+        .err().ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
+        assert_eq!(sqlstate(&worker_mapping_call)?, "42501");
 
         let mapped = authority
             .resolve_external_identity("https://issuer.example/tenant", "subject-auth-1")
@@ -283,14 +290,14 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed() {
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Builds the bounded claim policy used by the worker tests.
-fn claim_policy(batch_size: usize, lease_secs: u64) -> OutboxClaimPolicy {
+fn claim_policy(batch_size: usize, lease_secs: u64) -> Result<OutboxClaimPolicy, OutboxError> {
     OutboxClaimPolicy::new(batch_size, Duration::from_secs(lease_secs), MAX_ATTEMPTS)
-        .expect("test claim policy is within the configured bounds")
 }
 
 /// Enqueues one pending event through the request transaction path.
@@ -323,11 +330,12 @@ async fn enqueue_pending_event(
 /// The repository boundary must revalidate public event fields before it
 /// mutates either the outbox or the aggregate sequence table.
 #[tokio::test]
-async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let organization_id = OrganizationId::new("org-enqueue-validation").unwrap();
+        let organization_id = OrganizationId::new("org-enqueue-validation")?;
         let aggregate_id = "membership-enqueue-validation";
         let event_id = format!("evt-{}", Uuid::new_v4());
         let mut event = OutboxEvent::new(
@@ -376,18 +384,20 @@ async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes()
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Tears down test schema.
-async fn teardown_test_context(ctx: &TestContext) {
+async fn teardown_test_context(ctx: &TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _ = raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
     )))
     .execute(&ctx.admin_pool)
-    .await;
+    .await?;
+    Ok(())
 }
 
 // ============================================================================
@@ -396,12 +406,12 @@ async fn teardown_test_context(ctx: &TestContext) {
 
 /// Test A: A mandatory audit write failure rolls back the transaction.
 #[tokio::test]
-async fn test_atomicity_business_succeeds_audit_fails() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_atomicity_business_succeeds_audit_fails() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-atomic-1").unwrap();
-        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4())).unwrap();
+        let org_id = OrganizationId::new("org-atomic-1")?;
+        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4()))?;
 
         let audit_event = IamAuditEvent::success(
             event_id.clone(),
@@ -453,18 +463,19 @@ async fn test_atomicity_business_succeeds_audit_fails() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test B: An outbox write failure rolls back the audit and outbox writes.
 #[tokio::test]
-async fn test_atomicity_business_succeeds_outbox_fails() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_atomicity_business_succeeds_outbox_fails() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-atomic-2").unwrap();
-        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4())).unwrap();
+        let org_id = OrganizationId::new("org-atomic-2")?;
+        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4()))?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         let audit_event = IamAuditEvent::success(
@@ -490,8 +501,7 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
             org_id.clone(),
             None,
             r#"{"organization_id":"org-atomic-2","name":"Test Org"}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let audit_writer = PostgresAuditWriter::new();
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -538,18 +548,19 @@ async fn test_atomicity_business_succeeds_outbox_fails() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test C: All writes succeed -> COMMIT
 #[tokio::test]
-async fn test_atomicity_all_succeed_commit() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_atomicity_all_succeed_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-atomic-3").unwrap();
-        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4())).unwrap();
+        let org_id = OrganizationId::new("org-atomic-3")?;
+        let event_id = AuditEventId::new(format!("evt-{}", Uuid::new_v4()))?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         let audit_event = IamAuditEvent::success(
@@ -576,8 +587,7 @@ async fn test_atomicity_all_succeed_commit() {
             org_id.clone(),
             None,
             r#"{"organization_id":"org-atomic-3","name":"Test Org"}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let audit_writer = PostgresAuditWriter::new();
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -622,8 +632,9 @@ async fn test_atomicity_all_succeed_commit() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 // ============================================================================
@@ -632,8 +643,8 @@ async fn test_atomicity_all_succeed_commit() {
 
 /// Test: Missing tenant context fails closed
 #[tokio::test]
-async fn test_missing_tenant_context_fails_closed() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_missing_tenant_context_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
@@ -661,14 +672,15 @@ async fn test_missing_tenant_context_fails_closed() {
         Ok::<(), Box<dyn std::error::Error>>(())
     }.await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Invalid tenant context fails closed
 #[tokio::test]
-async fn test_invalid_tenant_context_fails_closed() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_invalid_tenant_context_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
@@ -705,14 +717,15 @@ async fn test_invalid_tenant_context_fails_closed() {
         Ok::<(), Box<dyn std::error::Error>>(())
     }.await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Runtime cannot UPDATE audit records
 #[tokio::test]
-async fn test_runtime_cannot_update_audit() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_runtime_cannot_update_audit() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
@@ -758,14 +771,15 @@ async fn test_runtime_cannot_update_audit() {
         Ok::<(), Box<dyn std::error::Error>>(())
     }.await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Runtime cannot DELETE audit records
 #[tokio::test]
-async fn test_runtime_cannot_delete_audit() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_runtime_cannot_delete_audit() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let event_id = format!("evt-{}", Uuid::new_v4());
@@ -810,8 +824,9 @@ async fn test_runtime_cannot_delete_audit() {
         Ok::<(), Box<dyn std::error::Error>>(())
     }.await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 // ============================================================================
@@ -820,11 +835,11 @@ async fn test_runtime_cannot_delete_audit() {
 
 /// Test: Two workers claim same event - only one succeeds
 #[tokio::test]
-async fn test_concurrent_worker_claim() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_concurrent_worker_claim() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-concurrent").unwrap();
+        let org_id = OrganizationId::new("org-concurrent")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         // Insert PENDING event
@@ -837,8 +852,7 @@ async fn test_concurrent_worker_claim() {
             org_id,
             None,
             r#"{}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
@@ -852,12 +866,12 @@ async fn test_concurrent_worker_claim() {
         let outbox_reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
 
         let (result1, result2) = tokio::join!(
-            outbox_reader.claim_batch(claim_policy(1, 300)),
-            outbox_reader.claim_batch(claim_policy(1, 300))
+            outbox_reader.claim_batch(claim_policy(1, 300)?),
+            outbox_reader.claim_batch(claim_policy(1, 300)?)
         );
 
-        let claimed1 = result1.unwrap();
-        let claimed2 = result2.unwrap();
+        let claimed1 = result1?;
+        let claimed2 = result2?;
 
         // Exactly one worker should claim the event
         let total_claims = claimed1.len() + claimed2.len();
@@ -878,17 +892,18 @@ async fn test_concurrent_worker_claim() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Lease recovery after worker crash
 #[tokio::test]
-async fn test_lease_recovery() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_lease_recovery() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-lease").unwrap();
+        let org_id = OrganizationId::new("org-lease")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         let outbox_event = OutboxEvent::new(
@@ -900,8 +915,7 @@ async fn test_lease_recovery() {
             org_id,
             None,
             r#"{}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
@@ -914,12 +928,12 @@ async fn test_lease_recovery() {
         let outbox_reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
 
         // Claim with very short lease
-        let claimed = outbox_reader.claim_batch(claim_policy(1, 1)).await?;
+        let claimed = outbox_reader.claim_batch(claim_policy(1, 1)?).await?;
         assert_eq!(claimed.len(), 1);
         let stale_token = claimed
             .first()
             .and_then(|event| event.claim_token.as_ref())
-            .expect("claimed event carries a claim token")
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
             .clone();
 
         // Wait for lease to expire
@@ -956,17 +970,18 @@ async fn test_lease_recovery() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Worker cannot rewrite immutable event fields
 #[tokio::test]
-async fn test_worker_cannot_rewrite_immutable_fields() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_worker_cannot_rewrite_immutable_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-worker-test").unwrap();
+        let org_id = OrganizationId::new("org-worker-test")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         let outbox_event = OutboxEvent::new(
@@ -978,8 +993,7 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
             org_id.clone(),
             None,
             r#"{}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
@@ -1018,8 +1032,9 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: A published event is terminal and cannot be claimed again.
@@ -1027,11 +1042,11 @@ async fn test_worker_cannot_rewrite_immutable_fields() {
 /// This is not the duplicate-delivery/idempotent-consumer proof: that requires
 /// the worker relay and a real consumer (blocked on the delivery destination).
 #[tokio::test]
-async fn test_published_event_is_not_reclaimable() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_published_event_is_not_reclaimable() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-dup").unwrap();
+        let org_id = OrganizationId::new("org-dup")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
 
         let outbox_event = OutboxEvent::new(
@@ -1043,8 +1058,7 @@ async fn test_published_event_is_not_reclaimable() {
             org_id,
             None,
             r#"{}"#.into(),
-        )
-        .unwrap();
+        )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
         let mut tx = ctx.admin_pool.begin().await?;
@@ -1057,12 +1071,12 @@ async fn test_published_event_is_not_reclaimable() {
         let outbox_reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
 
         // Claim event
-        let claimed = outbox_reader.claim_batch(claim_policy(1, 300)).await?;
+        let claimed = outbox_reader.claim_batch(claim_policy(1, 300)?).await?;
         assert_eq!(claimed.len(), 1);
         let claim_token = claimed
             .first()
             .and_then(|event| event.claim_token.as_ref())
-            .expect("claimed event carries a claim token");
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?;
 
         // Mark as published
         outbox_reader
@@ -1071,7 +1085,7 @@ async fn test_published_event_is_not_reclaimable() {
 
         // Simulate crash before marking - try to claim again
         // Event should be PUBLISHED, not claimable
-        let claimed2 = outbox_reader.claim_batch(claim_policy(1, 300)).await?;
+        let claimed2 = outbox_reader.claim_batch(claim_policy(1, 300)?).await?;
         assert_eq!(
             claimed2.len(),
             0,
@@ -1093,21 +1107,22 @@ async fn test_published_event_is_not_reclaimable() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: concurrent enqueues for one aggregate receive a unique, gap-free
 /// database-assigned sequence. This is the regression test for the former
 /// `MAX(aggregate_sequence) + 1` race.
 #[tokio::test]
-async fn test_concurrent_aggregate_sequence_assignment() {
+async fn test_concurrent_aggregate_sequence_assignment() -> Result<(), Box<dyn std::error::Error>> {
     const EVENT_COUNT: usize = 8;
 
-    let ctx = setup_test_context().await.unwrap();
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-sequence").unwrap();
+        let org_id = OrganizationId::new("org-sequence")?;
         let aggregate_id = org_id.to_string();
         let mut tasks = tokio::task::JoinSet::new();
 
@@ -1165,19 +1180,20 @@ async fn test_concurrent_aggregate_sequence_assignment() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result.map_err(std::io::Error::other)?;
+    Ok(())
 }
 
 /// Test: same-aggregate claims follow the database-assigned sequence. Only the
 /// aggregate head is claimable, so delivery order cannot be inverted by
 /// wall-clock availability.
 #[tokio::test]
-async fn test_same_aggregate_claims_follow_sequence() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_same_aggregate_claims_follow_sequence() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-order").unwrap();
+        let org_id = OrganizationId::new("org-order")?;
         let first_id = format!("outbox-{}", Uuid::new_v4());
         let second_id = format!("outbox-{}", Uuid::new_v4());
         enqueue_pending_event(&ctx, &org_id, &first_id).await?;
@@ -1185,7 +1201,7 @@ async fn test_same_aggregate_claims_follow_sequence() {
 
         let reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
 
-        let first_claim = reader.claim_batch(claim_policy(10, 300)).await?;
+        let first_claim = reader.claim_batch(claim_policy(10, 300)?).await?;
         assert_eq!(
             first_claim.len(),
             1,
@@ -1200,11 +1216,11 @@ async fn test_same_aggregate_claims_follow_sequence() {
         let first_token = first_claim[0]
             .claim_token
             .as_ref()
-            .expect("claimed event carries a claim token")
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
             .clone();
         reader.mark_published(&first_id, &first_token).await?;
 
-        let second_claim = reader.claim_batch(claim_policy(10, 300)).await?;
+        let second_claim = reader.claim_batch(claim_policy(10, 300)?).await?;
         assert_eq!(
             second_claim.len(),
             1,
@@ -1221,8 +1237,9 @@ async fn test_same_aggregate_claims_follow_sequence() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 // ============================================================================
@@ -1231,22 +1248,22 @@ async fn test_same_aggregate_claims_follow_sequence() {
 
 /// Test: A retryable failure reschedules the event and fences the old token.
 #[tokio::test]
-async fn test_release_for_retry_reschedules_and_fences() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_release_for_retry_reschedules_and_fences() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-retry").unwrap();
+        let org_id = OrganizationId::new("org-retry")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
         enqueue_pending_event(&ctx, &org_id, &outbox_id).await?;
 
         let reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
-        let claimed = reader.claim_batch(claim_policy(1, 300)).await?;
+        let claimed = reader.claim_batch(claim_policy(1, 300)?).await?;
         let token = claimed
             .first()
             .and_then(|event| event.claim_token.as_ref())
-            .expect("claimed event carries a claim token")
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
             .clone();
-        let error_class = OutboxErrorClass::new("http_5xx").expect("valid error class");
+        let error_class = OutboxErrorClass::new("http_5xx")?;
 
         reader
             .release_for_retry(&outbox_id, &token, &error_class, Duration::from_secs(60))
@@ -1274,7 +1291,7 @@ async fn test_release_for_retry_reschedules_and_fences() {
             "release records the bounded error class"
         );
 
-        let reclaimed = reader.claim_batch(claim_policy(1, 300)).await?;
+        let reclaimed = reader.claim_batch(claim_policy(1, 300)?).await?;
         assert!(
             reclaimed.is_empty(),
             "event must not be claimable before available_at"
@@ -1306,28 +1323,29 @@ async fn test_release_for_retry_reschedules_and_fences() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Quarantine is terminal, and the abandoned lease cannot transition.
 #[tokio::test]
-async fn test_quarantine_is_terminal() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_quarantine_is_terminal() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-quarantine").unwrap();
+        let org_id = OrganizationId::new("org-quarantine")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
         enqueue_pending_event(&ctx, &org_id, &outbox_id).await?;
 
         let reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
-        let claimed = reader.claim_batch(claim_policy(1, 300)).await?;
+        let claimed = reader.claim_batch(claim_policy(1, 300)?).await?;
         let token = claimed
             .first()
             .and_then(|event| event.claim_token.as_ref())
-            .expect("claimed event carries a claim token")
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
             .clone();
-        let error_class = OutboxErrorClass::new("schema_invalid").expect("valid error class");
+        let error_class = OutboxErrorClass::new("schema_invalid")?;
 
         reader.quarantine(&outbox_id, &token, &error_class).await?;
 
@@ -1349,7 +1367,7 @@ async fn test_quarantine_is_terminal() {
         assert!(locked_at.is_none(), "quarantine clears the lease time");
         assert_eq!(last_error_class.as_deref(), Some("schema_invalid"));
 
-        let reclaimed = reader.claim_batch(claim_policy(1, 300)).await?;
+        let reclaimed = reader.claim_batch(claim_policy(1, 300)?).await?;
         assert!(reclaimed.is_empty(), "quarantined events are not claimable");
 
         assert!(
@@ -1373,36 +1391,36 @@ async fn test_quarantine_is_terminal() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: an event that exhausts its attempt budget is quarantined by the claim
 /// function and never handed to a worker again.
 #[tokio::test]
-async fn test_attempt_budget_exhaustion_quarantines() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_attempt_budget_exhaustion_quarantines() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-budget").unwrap();
+        let org_id = OrganizationId::new("org-budget")?;
         let outbox_id = format!("outbox-{}", Uuid::new_v4());
         enqueue_pending_event(&ctx, &org_id, &outbox_id).await?;
 
         let reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
-        let single_attempt =
-            OutboxClaimPolicy::new(1, Duration::from_secs(300), 1).expect("valid policy");
+        let single_attempt = OutboxClaimPolicy::new(1, Duration::from_secs(300), 1)?;
         let claimed = reader.claim_batch(single_attempt).await?;
         let token = claimed
             .first()
             .and_then(|event| event.claim_token.as_ref())
-            .expect("claimed event carries a claim token")
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
             .clone();
 
         reader
             .release_for_retry(
                 &outbox_id,
                 &token,
-                &OutboxErrorClass::new("destination_unavailable").expect("valid error class"),
+                &OutboxErrorClass::new("destination_unavailable")?,
                 Duration::from_millis(10),
             )
             .await?;
@@ -1427,8 +1445,9 @@ async fn test_attempt_budget_exhaustion_quarantines() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 // ============================================================================
@@ -1437,19 +1456,19 @@ async fn test_attempt_budget_exhaustion_quarantines() {
 
 /// Extracts the SQLSTATE from a database error, failing loudly when the error
 /// is not a PostgreSQL error at all.
-fn sqlstate(error: &Error) -> String {
+fn sqlstate(error: &Error) -> Result<String, std::io::Error> {
     error
         .as_database_error()
         .and_then(|error| error.code())
-        .expect("expected a PostgreSQL error with a SQLSTATE")
-        .into_owned()
+        .map(std::borrow::Cow::into_owned)
+        .ok_or_else(|| std::io::Error::other("expected PostgreSQL error with a SQLSTATE"))
 }
 
 /// Test: every SECURITY DEFINER function is owned by the non-login owner,
 /// pins a trusted `search_path`, and is executable only by `app_worker`.
 #[tokio::test]
-async fn test_security_definer_functions_are_hardened() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let rows: Vec<FunctionSecurityRow> = query_as(
@@ -1515,10 +1534,9 @@ async fn test_security_definer_functions_are_hardened() {
                 row.proname
             );
 
-            let config = row
-                .proconfig
-                .as_ref()
-                .unwrap_or_else(|| panic!("{} must pin search_path", row.proname));
+            let config = row.proconfig.as_ref().ok_or_else(|| {
+                std::io::Error::other(format!("{} must pin search_path", row.proname))
+            })?;
             assert!(
                 config.iter().any(|entry| {
                     entry.starts_with("search_path=")
@@ -1613,15 +1631,17 @@ async fn test_security_definer_functions_are_hardened() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: Part 8 relations are owned by the dedicated non-login owner, the
 /// evidence tables force RLS, and the policies name exact roles only.
 #[tokio::test]
-async fn test_part8_relation_ownership_and_rls_metadata() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn std::error::Error>>
+{
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let relations: Vec<RelationSecurityRow> = query_as(
@@ -1656,14 +1676,14 @@ async fn test_part8_relation_ownership_and_rls_metadata() {
         let audit = relations
             .iter()
             .find(|relation| relation.relname == "audit_events")
-            .expect("audit table is catalogued");
+            .ok_or_else(|| std::io::Error::other("audit table is not catalogued"))?;
         assert!(audit.relrowsecurity, "audit_events must enable RLS");
         assert!(audit.relforcerowsecurity, "audit_events must force RLS");
 
         let outbox = relations
             .iter()
             .find(|relation| relation.relname == "outbox_events")
-            .expect("outbox table is catalogued");
+            .ok_or_else(|| std::io::Error::other("outbox table is not catalogued"))?;
         assert!(outbox.relrowsecurity, "outbox_events must enable RLS");
         assert!(outbox.relforcerowsecurity, "outbox_events must force RLS");
 
@@ -1729,22 +1749,24 @@ async fn test_part8_relation_ownership_and_rls_metadata() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: the runtime role cannot read evidence tables or truncate them.
 #[tokio::test]
-async fn test_runtime_cannot_read_or_truncate_evidence() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_runtime_cannot_read_or_truncate_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let audit_read = query("SELECT event_id FROM audit_events LIMIT 1")
             .fetch_all(&ctx.runtime_pool)
             .await
-            .expect_err("runtime must not read audit events");
+            .err()
+            .ok_or_else(|| std::io::Error::other("runtime must not read audit events"))?;
         assert_eq!(
-            sqlstate(&audit_read),
+            sqlstate(&audit_read)?,
             "42501",
             "expected insufficient_privilege, got: {audit_read}"
         );
@@ -1752,9 +1774,10 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
         let outbox_read = query("SELECT event_id FROM outbox_events LIMIT 1")
             .fetch_all(&ctx.runtime_pool)
             .await
-            .expect_err("runtime must not read outbox events");
+            .err()
+            .ok_or_else(|| std::io::Error::other("runtime must not read outbox events"))?;
         assert_eq!(
-            sqlstate(&outbox_read),
+            sqlstate(&outbox_read)?,
             "42501",
             "expected insufficient_privilege, got: {outbox_read}"
         );
@@ -1762,9 +1785,10 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
         let truncate = query("TRUNCATE audit_events")
             .execute(&ctx.runtime_pool)
             .await
-            .expect_err("runtime must not truncate audit events");
+            .err()
+            .ok_or_else(|| std::io::Error::other("runtime must not truncate audit events"))?;
         assert_eq!(
-            sqlstate(&truncate),
+            sqlstate(&truncate)?,
             "42501",
             "expected insufficient_privilege, got: {truncate}"
         );
@@ -1773,15 +1797,16 @@ async fn test_runtime_cannot_read_or_truncate_evidence() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: RLS rejects an outbox insert whose organization does not match the
 /// transaction tenant.
 #[tokio::test]
-async fn test_outbox_cross_tenant_insert_is_denied() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_outbox_cross_tenant_insert_is_denied() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let mut tx = ctx.runtime_pool.begin().await?;
@@ -1804,9 +1829,11 @@ async fn test_outbox_cross_tenant_insert_is_denied() {
         .execute(&mut *tx)
         .await;
 
-        let error = insert.expect_err("cross-tenant outbox insert must be denied");
+        let error = insert
+            .err()
+            .ok_or_else(|| std::io::Error::other("cross-tenant outbox insert must be denied"))?;
         assert_eq!(
-            sqlstate(&error),
+            sqlstate(&error)?,
             "42501",
             "expected RLS violation, got: {error}"
         );
@@ -1816,24 +1843,28 @@ async fn test_outbox_cross_tenant_insert_is_denied() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: the worker role cannot read the outbox table directly, so one replica
 /// cannot observe another replica's claim tokens or payloads.
 #[tokio::test]
-async fn test_worker_cannot_select_outbox_table() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_worker_cannot_select_outbox_table() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let error = query("SELECT event_id FROM outbox_events LIMIT 1")
             .fetch_one(&ctx.worker_pool)
             .await
-            .expect_err("worker must not read the outbox table directly");
+            .err()
+            .ok_or_else(|| {
+                std::io::Error::other("worker must not read the outbox table directly")
+            })?;
 
         assert_eq!(
-            sqlstate(&error),
+            sqlstate(&error)?,
             "42501",
             "expected insufficient_privilege, got: {error}"
         );
@@ -1842,14 +1873,16 @@ async fn test_worker_cannot_select_outbox_table() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: the runtime request role cannot invoke worker state transitions.
 #[tokio::test]
-async fn test_runtime_cannot_execute_worker_transitions() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_runtime_cannot_execute_worker_transitions() -> Result<(), Box<dyn std::error::Error>>
+{
+    let ctx = setup_test_context().await?;
 
     let result = async {
         let mark_error = query_scalar::<_, bool>("SELECT outbox_mark_published($1, $2)")
@@ -1857,9 +1890,10 @@ async fn test_runtime_cannot_execute_worker_transitions() {
             .bind("any-token")
             .fetch_one(&ctx.runtime_pool)
             .await
-            .expect_err("runtime must not execute worker transitions");
+            .err()
+            .ok_or_else(|| std::io::Error::other("runtime must not execute worker transitions"))?;
         assert_eq!(
-            sqlstate(&mark_error),
+            sqlstate(&mark_error)?,
             "42501",
             "expected insufficient_privilege, got: {mark_error}"
         );
@@ -1870,9 +1904,10 @@ async fn test_runtime_cannot_execute_worker_transitions() {
             .bind(10i32)
             .fetch_all(&ctx.runtime_pool)
             .await
-            .expect_err("runtime must not claim outbox events");
+            .err()
+            .ok_or_else(|| std::io::Error::other("runtime must not claim outbox events"))?;
         assert_eq!(
-            sqlstate(&claim_error),
+            sqlstate(&claim_error)?,
             "42501",
             "expected insufficient_privilege, got: {claim_error}"
         );
@@ -1881,18 +1916,19 @@ async fn test_runtime_cannot_execute_worker_transitions() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }
 
 /// Test: the worker metrics view exposes bounded aggregate columns only, never
 /// payloads, actor data, or claim tokens.
 #[tokio::test]
-async fn test_worker_metrics_view_is_bounded() {
-    let ctx = setup_test_context().await.unwrap();
+async fn test_worker_metrics_view_is_bounded() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
 
     let result = async {
-        let org_id = OrganizationId::new("org-metrics").unwrap();
+        let org_id = OrganizationId::new("org-metrics")?;
         enqueue_pending_event(&ctx, &org_id, &format!("outbox-{}", Uuid::new_v4())).await?;
 
         let counts: Vec<(String, i64)> =
@@ -1924,6 +1960,84 @@ async fn test_worker_metrics_view_is_bounded() {
     }
     .await;
 
-    teardown_test_context(&ctx).await;
-    result.unwrap();
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
+/// Consumer idempotency markers are tenant scoped and atomic with the caller's effect.
+#[tokio::test]
+async fn test_consumer_inbox_rolls_back_and_deduplicates_identical_events()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        let inbox = PostgresConsumerInbox;
+        let payload = br#"{"invitation_id":"inv-1","membership_id":"mem-1","expires_at":"2026-11-23T00:00:00Z","state_version":1}"#;
+        let record = ConsumerInboxRecord {
+            consumer_name: "iam-projection",
+            event_id: "evt-inbox-1",
+            event_name: "iam.invitation.issued",
+            event_version: 1,
+            organization_id: "org-inbox",
+            branch_id: None,
+            aggregate_type: "Invitation",
+            aggregate_id: "inv-1",
+            aggregate_sequence: 1,
+            occurred_at: chrono::DateTime::parse_from_rfc3339("2026-10-23T00:00:00Z")?
+                .with_timezone(&chrono::Utc),
+            payload,
+        };
+
+        let mut rolled_back = ctx.worker_pool.begin().await?;
+        assert!(inbox.begin_processing(&mut rolled_back, record).await?);
+        rolled_back.rollback().await?;
+        let after_rollback: i64 = query_scalar(
+            "SELECT count(*) FROM consumer_inbox WHERE consumer_name = $1 AND event_id = $2",
+        )
+        .bind(record.consumer_name)
+        .bind(record.event_id)
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(after_rollback, 0, "rollback removes the inbox marker");
+
+        let mut first_delivery = ctx.worker_pool.begin().await?;
+        assert!(inbox.begin_processing(&mut first_delivery, record).await?);
+        first_delivery.commit().await?;
+
+        let mut duplicate = ctx.worker_pool.begin().await?;
+        assert!(!inbox.begin_processing(&mut duplicate, record).await?);
+        duplicate.commit().await?;
+
+        let changed_payload = br#"{"invitation_id":"inv-1","membership_id":"mem-1","expires_at":"2026-12-23T00:00:00Z","state_version":2}"#;
+        let mismatched = ConsumerInboxRecord {
+            payload: changed_payload,
+            ..record
+        };
+        let mut conflicting_delivery = ctx.worker_pool.begin().await?;
+        let conflict = inbox
+            .begin_processing(&mut conflicting_delivery, mismatched)
+            .await;
+        assert!(matches!(conflict, Err(ConsumerInboxError::EventIdentityConflict)));
+        conflicting_delivery.rollback().await?;
+
+        let cross_tenant = ConsumerInboxRecord {
+            organization_id: "org-other",
+            ..record
+        };
+        let mut cross_tenant_delivery = ctx.worker_pool.begin().await?;
+        let cross_tenant_result = inbox
+            .begin_processing(&mut cross_tenant_delivery, cross_tenant)
+            .await;
+        assert!(matches!(
+            cross_tenant_result,
+            Err(ConsumerInboxError::InvalidPersistedRecord)
+        ));
+        cross_tenant_delivery.rollback().await?;
+
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
 }

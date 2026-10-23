@@ -672,11 +672,12 @@ mod tests {
     }
 
     #[test]
-    fn row_preserves_database_sequence_and_generation() {
-        let event = OutboxEvent::try_from(row()).expect("valid claimed row");
+    fn row_preserves_database_sequence_and_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let event = OutboxEvent::try_from(row())?;
         assert_eq!(event.aggregate_sequence, Some(1));
         assert_eq!(event.claim_generation, 1);
         assert!(event.claim_token.is_some());
+        Ok(())
     }
 
     #[test]

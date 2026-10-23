@@ -51,6 +51,11 @@ impl fmt::Debug for TokenSet {
 /// (OIDC, etc.); the rest of Sitolo depends only on this neutral boundary.
 #[async_trait]
 pub trait IdentityProviderPort: Send + Sync {
+    /// Checks whether the provider's verification material is available for
+    /// serving authenticated requests. Implementations must bound external
+    /// I/O and may reuse valid cached verification metadata.
+    async fn readiness_probe(&self) -> Result<(), AuthError>;
+
     /// Validates an identity assertion (e.g., an ID token or provider-specific
     /// credential) and returns the normalized identity fact.
     async fn validate_assertion(&self, assertion: &str) -> Result<ExternalIdentity, AuthError>;
@@ -82,6 +87,10 @@ impl TestIdentityProvider {
 
 #[async_trait]
 impl IdentityProviderPort for TestIdentityProvider {
+    async fn readiness_probe(&self) -> Result<(), AuthError> {
+        Ok(())
+    }
+
     async fn validate_assertion(&self, _assertion: &str) -> Result<ExternalIdentity, AuthError> {
         Ok(ExternalIdentity {
             issuer: "test-issuer".to_owned(),

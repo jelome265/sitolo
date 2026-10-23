@@ -11,3 +11,6 @@ sha2.workspace = true
 sitolo-security.workspace = true
 sitolo-observability.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

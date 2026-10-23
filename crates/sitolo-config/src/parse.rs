@@ -81,6 +81,11 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
                 SecretRef::new(SecretClass::Database, value).map_err(|_| UnknownKey(key.into()))?,
             )
         }
+        "WORKER__DATABASE__PASSWORD_REF" => {
+            b.worker_db_password_ref = Some(
+                SecretRef::new(SecretClass::Database, value).map_err(|_| UnknownKey(key.into()))?,
+            )
+        }
         "DATABASE__POOL_MIN" => b.db_pool_min = number(key, value)?,
         "DATABASE__POOL_MAX" => b.db_pool_max = number(key, value)?,
         "DATABASE__ACQUIRE_TIMEOUT_MS" => b.db_acquire_timeout_ms = number(key, value)?,

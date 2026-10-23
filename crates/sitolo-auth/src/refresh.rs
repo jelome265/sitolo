@@ -128,7 +128,10 @@ impl RefreshLedger {
         {
             return Err(AuthError::RefreshTokenReused);
         }
-        let previous = self.credentials.get_mut(&id).expect("existing");
+        let previous = self
+            .credentials
+            .get_mut(&id)
+            .ok_or(AuthError::RefreshTokenInvalid)?;
         previous.state = RefreshState::Consumed;
         let successor_id = successor.id.clone();
         previous.replaced_by = Some(successor_id.clone());
@@ -189,12 +192,12 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn setup() -> (RefreshLedger, SystemTime, RefreshCredentialId) {
+    fn setup() -> Result<(RefreshLedger, SystemTime, RefreshCredentialId), AuthError> {
         let mut ledger = RefreshLedger::new();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let family = RefreshFamilyId::new("fam-1").unwrap();
-        let user = UserId::new("user-1").unwrap();
-        let session = SessionId::new("sess-1").unwrap();
+        let family = RefreshFamilyId::new("fam-1")?;
+        let user = UserId::new("user-1")?;
+        let session = SessionId::new("sess-1")?;
         ledger.create_family(RefreshFamily {
             id: family.clone(),
             user_id: user.clone(),
@@ -202,7 +205,7 @@ mod tests {
             compromised: false,
             security_version: SecurityVersion(1),
         });
-        let first = RefreshCredentialId::new("cred-1").unwrap();
+        let first = RefreshCredentialId::new("cred-1")?;
         ledger.issue_credential(RefreshCredential {
             id: first.clone(),
             family_id: family.clone(),
@@ -215,16 +218,16 @@ mod tests {
             replaced_by: None,
             security_version: SecurityVersion(1),
         });
-        (ledger, now, first)
+        Ok((ledger, now, first))
     }
 
     fn successor(
         family: &RefreshFamilyId,
         user: &UserId,
         session: &SessionId,
-    ) -> RefreshCredential {
-        RefreshCredential {
-            id: RefreshCredentialId::new("cred-2").unwrap(),
+    ) -> Result<RefreshCredential, AuthError> {
+        Ok(RefreshCredential {
+            id: RefreshCredentialId::new("cred-2")?,
             family_id: family.clone(),
             user_id: user.clone(),
             session_id: session.clone(),
@@ -234,72 +237,96 @@ mod tests {
             state: RefreshState::Active,
             replaced_by: None,
             security_version: SecurityVersion(1),
-        }
+        })
     }
 
     #[test]
-    fn rotation_consumes_and_issues_successor() {
-        let (mut ledger, now, first) = setup();
-        let family = ledger.credential(&first).unwrap().family_id.clone();
-        let user = ledger.credential(&first).unwrap().user_id.clone();
-        let session = ledger.credential(&first).unwrap().session_id.clone();
-        let outcome = ledger
-            .rotate("r1", successor(&family, &user, &session), now)
-            .unwrap();
+    fn rotation_consumes_and_issues_successor() -> Result<(), AuthError> {
+        let (mut ledger, now, first) = setup()?;
+        let initial = ledger
+            .credential(&first)
+            .ok_or(AuthError::InvalidIdentifier)?;
+        let family = initial.family_id.clone();
+        let user = initial.user_id.clone();
+        let session = initial.session_id.clone();
+        let outcome = ledger.rotate("r1", successor(&family, &user, &session)?, now)?;
         assert_eq!(outcome.previous_id, first);
         assert_eq!(
-            ledger.credential(&first).unwrap().state,
+            ledger
+                .credential(&first)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             RefreshState::Consumed
         );
         assert_eq!(
-            ledger.credential(&outcome.successor_id).unwrap().state,
+            ledger
+                .credential(&outcome.successor_id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             RefreshState::Active
         );
+        Ok(())
     }
 
     #[test]
-    fn replay_compromises_family() {
-        let (mut ledger, now, first) = setup();
-        let family = ledger.credential(&first).unwrap().family_id.clone();
-        let user = ledger.credential(&first).unwrap().user_id.clone();
-        let session = ledger.credential(&first).unwrap().session_id.clone();
-        ledger
-            .rotate("r1", successor(&family, &user, &session), now)
-            .unwrap();
+    fn replay_compromises_family() -> Result<(), AuthError> {
+        let (mut ledger, now, first) = setup()?;
+        let initial = ledger
+            .credential(&first)
+            .ok_or(AuthError::InvalidIdentifier)?;
+        let family = initial.family_id.clone();
+        let user = initial.user_id.clone();
+        let session = initial.session_id.clone();
+        ledger.rotate("r1", successor(&family, &user, &session)?, now)?;
         // Replay of the consumed credential must trigger containment.
-        let err = ledger
-            .rotate("r1", successor(&family, &user, &session), now)
-            .unwrap_err();
-        assert_eq!(err, AuthError::RefreshTokenReused);
-        assert!(ledger.family(&family).unwrap().compromised);
-        // Even the valid successor is revoked after replay detection.
-        let successor_id = RefreshCredentialId::new("cred-2").unwrap();
-        assert_eq!(
-            ledger.credential(&successor_id).unwrap().state,
-            RefreshState::Revoked
-        );
-    }
-
-    #[test]
-    fn unknown_token_is_rejected_without_containment() {
-        let (mut ledger, now, first) = setup();
-        let err = ledger
-            .rotate(
-                "unknown",
-                successor(
-                    &RefreshFamilyId::new("fam-1").unwrap(),
-                    &UserId::new("user-1").unwrap(),
-                    &SessionId::new("sess-1").unwrap(),
-                ),
-                now,
-            )
-            .unwrap_err();
-        assert_eq!(err, AuthError::RefreshTokenInvalid);
+        assert!(matches!(
+            ledger.rotate("r1", successor(&family, &user, &session)?, now),
+            Err(AuthError::RefreshTokenReused)
+        ));
         assert!(
-            !ledger
-                .family(&ledger.credential(&first).unwrap().family_id)
-                .unwrap()
+            ledger
+                .family(&family)
+                .ok_or(AuthError::InvalidIdentifier)?
                 .compromised
         );
+        // Even the valid successor is revoked after replay detection.
+        let successor_id = RefreshCredentialId::new("cred-2")?;
+        assert_eq!(
+            ledger
+                .credential(&successor_id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
+            RefreshState::Revoked
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_token_is_rejected_without_containment() -> Result<(), AuthError> {
+        let (mut ledger, now, first) = setup()?;
+        assert!(matches!(
+            ledger.rotate(
+                "unknown",
+                successor(
+                    &RefreshFamilyId::new("fam-1")?,
+                    &UserId::new("user-1")?,
+                    &SessionId::new("sess-1")?,
+                )?,
+                now,
+            ),
+            Err(AuthError::RefreshTokenInvalid)
+        ));
+        assert!(
+            !ledger
+                .family(
+                    &ledger
+                        .credential(&first)
+                        .ok_or(AuthError::InvalidIdentifier)?
+                        .family_id,
+                )
+                .ok_or(AuthError::InvalidIdentifier)?
+                .compromised
+        );
+        Ok(())
     }
 }
