@@ -9,6 +9,11 @@
 //! Environment mutation is `unsafe` in edition 2024 and the library source
 //! forbids unsafe code, so the tests live in an integration test target.
 
+#![expect(
+    unsafe_code,
+    reason = "Rust 2024 environment mutation is unsafe and serialized in this integration-test harness"
+)]
+
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
 use std::pin::Pin;
