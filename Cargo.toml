@@ -29,6 +29,17 @@ repository = "https://github.com/jelome265/sitolo"
 keywords = ["sitolo", "saas", "multi-tenant"]
 categories = ["web-programming"]
 
+# Release hardening: integer overflow must trap in production, not wrap
+# silently. The strict `arithmetic_side_effects` lint covers code we write;
+# these profiles are the runtime backstop for code we do not.
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+debug = "line-tables-only"
+
 [workspace.dependencies]
 aws-config = { version = "1.13.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-sns = { version = "1.119.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
