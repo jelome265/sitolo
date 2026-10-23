@@ -24,7 +24,6 @@ use std::sync::Arc;
 use sitolo_application::{TenancyEvidenceSink, TenancyService};
 use sitolo_audit::ActorRef;
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyError, TenantUserId};
-use sitolo_persistence::TenancyDatabase;
 use sitolo_persistence::audit_repository::PostgresAuditWriter;
 use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
 use sitolo_persistence::postgres::verify_part8_provisioning_rls_metadata;
@@ -132,7 +131,7 @@ fn service_with_evidence(pool: PgPool) -> TenancyService {
     let audit = Arc::new(PostgresAuditWriter::new());
     let outbox = Arc::new(PostgresOutboxRepository::new(pool.clone()));
     let sink = TenancyEvidenceSink::new(pool, audit, outbox);
-    TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(sink)
+    TenancyService::new_postgres(Vec::new(), sink)
 }
 
 async fn row_count(pool: &PgPool, table: &str, org_id: &str) -> i64 {

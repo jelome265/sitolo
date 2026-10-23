@@ -161,6 +161,21 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
     let user_id = sitolo_domain::tenancy::TenantUserId::new("user-1").unwrap();
     let main_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-main").unwrap();
     let other_branch = sitolo_domain::tenancy::BranchId::new("branch-authority-other").unwrap();
+    let roles = tenancy
+        .member_roles(&organization_id, &MembershipId::new(membership_id).unwrap())
+        .await;
+    assert_eq!(roles.len(), 1);
+    assert_eq!(roles[0].role, Role::Cashier);
+    let grants = tenancy
+        .member_grants(&organization_id, &MembershipId::new(membership_id).unwrap())
+        .await;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        tenancy
+            .member_permissions(&organization_id, &MembershipId::new(membership_id).unwrap(),)
+            .await,
+        [sitolo_authz::Permission::SaleCreate].into_iter().collect()
+    );
     let authorized = tenancy
         .authorize_user_operation(
             &user_id,
@@ -200,6 +215,13 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
         .execute(&db.admin)
         .await
         .unwrap();
+    assert!(
+        tenancy
+            .member_permissions(&organization_id, &MembershipId::new(membership_id).unwrap(),)
+            .await
+            .is_empty(),
+        "a suspended persisted membership has no effective permissions"
+    );
     assert_eq!(
         tenancy
             .authorize_user_operation(
@@ -219,8 +241,10 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
 
 fn service(db: &TestDb, audit: Arc<dyn AuditWriter>) -> TenancyService {
     let outbox = Arc::new(PostgresOutboxRepository::new(db.runtime.clone()));
-    TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox))
+    TenancyService::new_postgres(
+        Vec::new(),
+        TenancyEvidenceSink::new(db.runtime.clone(), audit, outbox),
+    )
 }
 
 async fn issue_invitation(
@@ -369,12 +393,13 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
             .await
             .is_err()
     );
-    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ));
+    let outbox_failure =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
     assert!(
         outbox_failure
             .suspend_branch(&org, &branch, actor())
@@ -569,12 +594,13 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
         }
 
         let audit_service = service(&db, Arc::new(FailingAuditWriter));
-        let outbox_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-            .with_evidence(TenancyEvidenceSink::new(
-                db.runtime.clone(),
-                Arc::new(PostgresAuditWriter::new()),
-                Arc::new(FailingOutboxWriter),
-            ));
+        let outbox_service =
+            TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+                .for_reference_with_evidence(TenancyEvidenceSink::new(
+                    db.runtime.clone(),
+                    Arc::new(PostgresAuditWriter::new()),
+                    Arc::new(FailingOutboxWriter),
+                ));
         let actor = || ActorRef {
             subject_ref: "lifecycle-operator".to_owned(),
             membership_ref: None,
@@ -665,19 +691,20 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures() {
         .await;
     assert!(audit_failure.is_err());
 
-    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ))
-        .create_branch(
-            sitolo_domain::tenancy::BranchId::new("branch-create-outbox-failure").unwrap(),
-            org.clone(),
-            "Outbox Failure",
-            actor(),
-        )
-        .await;
+    let outbox_failure =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ))
+            .create_branch(
+                sitolo_domain::tenancy::BranchId::new("branch-create-outbox-failure").unwrap(),
+                org.clone(),
+                "Outbox Failure",
+                actor(),
+            )
+            .await;
     assert!(outbox_failure.is_err());
 
     let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
@@ -835,19 +862,21 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures() {
         .await;
     assert!(audit_failure.is_err());
 
-    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ))
-        .invite_member(
-            MembershipId::new("member-invitation-outbox-failure").unwrap(),
-            org.clone(),
-            sitolo_domain::tenancy::TenantUserId::new("user-invitation-outbox-failure").unwrap(),
-            actor(),
-        )
-        .await;
+    let outbox_failure =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ))
+            .invite_member(
+                MembershipId::new("member-invitation-outbox-failure").unwrap(),
+                org.clone(),
+                sitolo_domain::tenancy::TenantUserId::new("user-invitation-outbox-failure")
+                    .unwrap(),
+                actor(),
+            )
+            .await;
     assert!(outbox_failure.is_err());
 
     let counts: (i64, i64, i64) = sqlx_core::query_as::query_as(
@@ -1010,13 +1039,12 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails() {
     let db = test_db().await.unwrap();
     let org = OrganizationId::new("org-invitation-outbox-rollback").unwrap();
     seed_organization(&db, org.as_str()).await.unwrap();
-    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
-        TenancyEvidenceSink::new(
+    let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+        .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
             Arc::new(PostgresAuditWriter::new()),
             Arc::new(FailingOutboxWriter),
-        ),
-    );
+        ));
     let (org, invitation, membership, user, contact) =
         token_invitation_arguments(org.clone(), "inv-outbox-rollback", "member-outbox-rollback");
     assert!(
@@ -1308,12 +1336,13 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails() {
         .await
         .unwrap();
 
-    let revoke_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ));
+    let revoke_service =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
     assert!(
         revoke_service
             .revoke_invitation(
@@ -1504,13 +1533,12 @@ async fn membership_transition_rolls_back_when_outbox_write_fails() {
         .await
         .unwrap();
 
-    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
-        TenancyEvidenceSink::new(
+    let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+        .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
             Arc::new(PostgresAuditWriter::new()),
             Arc::new(FailingOutboxWriter),
-        ),
-    );
+        ));
     assert!(
         tenancy
             .suspend_member(
@@ -1782,13 +1810,12 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails() {
     let issuer = service(&db, Arc::new(PostgresAuditWriter::new()));
     issue_invitation(&issuer, &org, invitation, membership).await;
     make_invitation_expired(&db, org.as_str(), invitation).await;
-    let sweeper = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
-        TenancyEvidenceSink::new(
+    let sweeper = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+        .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
             Arc::new(PostgresAuditWriter::new()),
             Arc::new(FailingOutboxWriter),
-        ),
-    );
+        ));
 
     assert!(
         sweeper
@@ -1887,13 +1914,12 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails() {
     let org = OrganizationId::new("org-membership-expiry-outbox-rollback").unwrap();
     let membership = MembershipId::new("member-expiry-outbox-rollback").unwrap();
     seed_pending_membership(&db, org.as_str(), membership.as_str()).await;
-    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
-        TenancyEvidenceSink::new(
+    let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+        .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
             Arc::new(PostgresAuditWriter::new()),
             Arc::new(FailingOutboxWriter),
-        ),
-    );
+        ));
 
     assert!(tenancy.expire_invitation(&org, &membership).await.is_err());
     let state: (String, i64) = sqlx_core::query_as::query_as(
@@ -1968,12 +1994,13 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
         device_ref: None,
     };
     let audit_service = service(&db, Arc::new(FailingAuditWriter));
-    let outbox_service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ));
+    let outbox_service =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
 
     for (audit_id, outbox_id, operation) in [
         (
@@ -2290,13 +2317,12 @@ async fn role_assignment_rolls_back_when_outbox_write_fails() {
     seed_active_membership(&db, org.as_str(), membership.as_str())
         .await
         .unwrap();
-    let tenancy = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new()).with_evidence(
-        TenancyEvidenceSink::new(
+    let tenancy = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+        .for_reference_with_evidence(TenancyEvidenceSink::new(
             db.runtime.clone(),
             Arc::new(PostgresAuditWriter::new()),
             Arc::new(FailingOutboxWriter),
-        ),
-    );
+        ));
     assert!(
         tenancy
             .assign_role(
@@ -2493,12 +2519,13 @@ async fn role_revocation_rolls_back_when_outbox_write_fails() {
         )
         .await
         .unwrap();
-    let failing_outbox = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ));
+    let failing_outbox =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
     assert!(
         failing_outbox
             .revoke_role(&org, &membership, Role::Cashier, actor)
@@ -2716,12 +2743,13 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails() {
         )
         .await;
     assert!(audit_failure.is_err());
-    let failing_outbox = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ));
+    let failing_outbox =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ));
     let outbox_input = input("grant-scope-outbox-failure");
     assert!(
         failing_outbox
@@ -2805,14 +2833,15 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails() {
         .revoke_scope_grant(&org, &audit_grant, actor())
         .await;
     assert!(audit_failure.is_err());
-    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ))
-        .revoke_scope_grant(&org, &outbox_grant, actor())
-        .await;
+    let outbox_failure =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ))
+            .revoke_scope_grant(&org, &outbox_grant, actor())
+            .await;
     assert!(outbox_failure.is_err());
 
     let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
@@ -3027,24 +3056,25 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures() {
         )
         .await;
     assert!(audit_failure.is_err());
-    let outbox_failure = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
-        .with_evidence(TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(FailingOutboxWriter),
-        ))
-        .accept_invitation(
-            "token-for-outbox-failure-case-12345678",
-            sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")
-                .unwrap(),
-            None,
-            ActorRef {
-                subject_ref: "caller".to_owned(),
-                membership_ref: None,
-                device_ref: None,
-            },
-        )
-        .await;
+    let outbox_failure =
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
+                db.runtime.clone(),
+                Arc::new(PostgresAuditWriter::new()),
+                Arc::new(FailingOutboxWriter),
+            ))
+            .accept_invitation(
+                "token-for-outbox-failure-case-12345678",
+                sitolo_domain::tenancy::RoleAssignmentId::new("assignment-accept-outbox-failure")
+                    .unwrap(),
+                None,
+                ActorRef {
+                    subject_ref: "caller".to_owned(),
+                    membership_ref: None,
+                    device_ref: None,
+                },
+            )
+            .await;
     assert!(outbox_failure.is_err());
     let state: (i64, i64, i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM invitations WHERE organization_id = $1 AND state = 'ISSUED'), (SELECT count(*) FROM organization_memberships WHERE organization_id = $1 AND state = 'INVITED'), (SELECT count(*) FROM role_assignments WHERE organization_id = $1), (SELECT count(*) FROM scope_grants WHERE organization_id = $1)",

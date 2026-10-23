@@ -27,6 +27,7 @@ Treat those as scoped test evidence. The live API authenticates linked identitie
 - Five owner-approved v1 lifecycle event names and validators. AUD-04 remains open until an independent Stage 06 audit confirms mappings and evidence.
 - Live Axum request authentication with exact linked identity and session ownership checks. Protected operations still stop fail-closed because no production membership/permission authority and command composition is installed.
 - PostgreSQL authorization reads for internal user ID, organization/membership/branch state, effective roles, permissions and grants within one repeatable-read tenant-scoped transaction. The authenticated-user entry point now refuses the in-memory reference store when no durable pool exists.
+- PostgreSQL-backed `member_roles`, `member_grants` and `member_permissions` reads, plus an explicit `TenancyService::new_postgres` constructor. The API runtime still does not compose this constructor with authenticated tenant authorization and protected commands; reference constructors remain for tests/reference use.
 - Bounded transport-neutral worker orchestration for claims, stale-lease recovery, event/version guards, retry, and quarantine.
 - Strict split between typed `SITOLO__` configuration and development secret values under `SITOLO_SECRET__`; example files are documentation for process-environment injection, not a dotenv loader.
 - Release workflow PostgreSQL services/DSNs and its documented successful branch-dispatch test.

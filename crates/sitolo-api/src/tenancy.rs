@@ -477,7 +477,7 @@ mod tests {
         use sitolo_persistence::TenancyDatabase;
         use std::sync::Arc;
 
-        let service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new());
+        let service = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new());
         let bad = CreateBranchRequest {
             branch_id: "".into(),
             name: "Branch".into(),
@@ -553,7 +553,7 @@ mod tests {
         use sitolo_persistence::TenancyDatabase;
         use std::sync::Arc;
 
-        let service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new());
+        let service = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new());
         let bad = CreateOrganizationRequest {
             organization_id: "".into(),
             organization_name: "M".into(),
@@ -574,7 +574,7 @@ mod tests {
         use sitolo_persistence::TenancyDatabase;
         use std::sync::Arc;
 
-        let service = TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new());
+        let service = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new());
 
         // Provision organization
         let req = CreateOrganizationRequest {

@@ -207,6 +207,30 @@ fn fallback_rule() -> RateLimitRule {
 }
 
 impl TenancyService {
+    /// Constructs a tenancy service with required PostgreSQL persistence and
+    /// transactional audit/outbox writers. The in-memory store supplied by
+    /// [`Self::new_reference`] is retained only as an inaccessible reference backing;
+    /// every supported operation selects the configured durable path and
+    /// unsupported mutations fail closed.
+    ///
+    /// # Errors
+    /// This constructor does not perform I/O and cannot fail. The runtime
+    /// must establish database readiness before publishing the service.
+    ///
+    /// # Panics
+    /// This constructor does not panic.
+    pub fn new_postgres(
+        abuse_rules: Vec<(AbuseClass, RateLimitRule)>,
+        sink: TenancyEvidenceSink,
+    ) -> Self {
+        Self {
+            db: Arc::new(TenancyDatabase::new()),
+            limiter: Mutex::new(RateLimiter::new()),
+            abuse_rules,
+            evidence: Some(sink),
+        }
+    }
+
     /// Changes one membership state and writes its mandatory evidence using
     /// the same PostgreSQL transaction. This is the authoritative path when
     /// the evidence sink is configured; the in-memory store remains a test
@@ -1198,7 +1222,20 @@ impl TenancyService {
         Ok(membership)
     }
 
-    pub fn new(db: Arc<TenancyDatabase>, abuse_rules: Vec<(AbuseClass, RateLimitRule)>) -> Self {
+    /// Constructs the in-memory reference implementation for tests and local
+    /// domain examples. It does not persist mandatory evidence and must not
+    /// be used by a served production runtime. Use [`Self::new_postgres`] for
+    /// production composition.
+    ///
+    /// # Errors
+    /// This constructor has no fallible I/O and cannot fail.
+    ///
+    /// # Panics
+    /// This constructor does not panic.
+    pub fn new_reference(
+        db: Arc<TenancyDatabase>,
+        abuse_rules: Vec<(AbuseClass, RateLimitRule)>,
+    ) -> Self {
         TenancyService {
             db,
             limiter: Mutex::new(RateLimiter::new()),
@@ -1207,10 +1244,17 @@ impl TenancyService {
         }
     }
 
-    /// Wires the Phase 4 Part 8 durable evidence sink. Additive: callers
-    /// that never invoke this keep the pre-Part-8 behavior.
+    /// Adds durable evidence to the explicit in-memory reference service.
+    /// Production composition must use [`Self::new_postgres`] so the
+    /// persistent capability is mandatory at construction time.
+    ///
+    /// # Errors
+    /// This builder does not perform I/O and cannot fail.
+    ///
+    /// # Panics
+    /// This builder does not panic.
     #[must_use]
-    pub fn with_evidence(mut self, sink: TenancyEvidenceSink) -> Self {
+    pub fn for_reference_with_evidence(mut self, sink: TenancyEvidenceSink) -> Self {
         self.evidence = Some(sink);
         self
     }
@@ -2646,6 +2690,11 @@ impl TenancyService {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
     ) -> Vec<RoleAssignment> {
+        if let Some(sink) = self.evidence.as_ref() {
+            return persisted_member_roles(&sink.pool, organization_id, membership_id)
+                .await
+                .unwrap_or_default();
+        }
         self.db
             .role_assignments_for(organization_id, membership_id)
             .await
@@ -2742,6 +2791,11 @@ impl TenancyService {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
     ) -> Vec<ScopeGrant> {
+        if let Some(sink) = self.evidence.as_ref() {
+            return persisted_member_grants(&sink.pool, organization_id, membership_id)
+                .await
+                .unwrap_or_default();
+        }
         self.db
             .scope_grants_for(organization_id, membership_id)
             .await
@@ -2757,6 +2811,11 @@ impl TenancyService {
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
     ) -> BTreeSet<Permission> {
+        if let Some(sink) = self.evidence.as_ref() {
+            return persisted_member_permissions(&sink.pool, organization_id, membership_id)
+                .await
+                .unwrap_or_default();
+        }
         let membership = self
             .db
             .membership_snapshot(organization_id, membership_id)
@@ -3441,6 +3500,161 @@ type PersistedScopeRow = (
     Option<i64>,
 );
 
+type PersistedRoleRow = (String, String, String, i64);
+type PersistedGrantRow = (String, String, Option<String>, String, i64);
+
+async fn persisted_role_assignments(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+) -> Result<Vec<RoleAssignment>, ScopeError> {
+    let rows: Vec<PersistedRoleRow> = sqlx_core::query_as::query_as(
+        "SELECT id, role, state, state_version FROM role_assignments \
+         WHERE organization_id = $1 AND membership_id = $2 ORDER BY id",
+    )
+    .bind(organization_id.as_str())
+    .bind(membership_id.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+
+    rows.into_iter()
+        .map(|(id, role, state, state_version)| {
+            let id = RoleAssignmentId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let role = Role::all()
+                .iter()
+                .copied()
+                .find(|candidate| candidate.as_str() == role)
+                .ok_or(ScopeError::AuthorityUnavailable)?;
+            let state =
+                persisted_role_assignment_state(&state).ok_or(ScopeError::AuthorityUnavailable)?;
+            let state_version =
+                u64::try_from(state_version).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            Ok(RoleAssignment {
+                id,
+                organization_id: organization_id.clone(),
+                membership_id: membership_id.clone(),
+                role,
+                state,
+                state_version,
+            })
+        })
+        .collect()
+}
+
+async fn persisted_scope_grants(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+) -> Result<Vec<ScopeGrant>, ScopeError> {
+    let rows: Vec<PersistedGrantRow> = sqlx_core::query_as::query_as(
+        "SELECT id, scope_kind, branch_id, state, state_version FROM scope_grants \
+         WHERE organization_id = $1 AND membership_id = $2 ORDER BY id",
+    )
+    .bind(organization_id.as_str())
+    .bind(membership_id.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+
+    rows.into_iter()
+        .map(|(id, scope_kind, branch, state, state_version)| {
+            let id = ScopeGrantId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            let scope = match (scope_kind.as_str(), branch) {
+                ("ORGANIZATION", None) => Scope::Organization {
+                    organization_id: organization_id.clone(),
+                },
+                ("BRANCH", Some(id)) => Scope::Branch {
+                    organization_id: organization_id.clone(),
+                    branch_id: BranchId::new(id).map_err(|_| ScopeError::AuthorityUnavailable)?,
+                },
+                _ => return Err(ScopeError::AuthorityUnavailable),
+            };
+            let state = match state.as_str() {
+                "ACTIVE" => ScopeGrantState::Active,
+                "REVOKED" => ScopeGrantState::Revoked,
+                _ => return Err(ScopeError::AuthorityUnavailable),
+            };
+            let state_version =
+                u64::try_from(state_version).map_err(|_| ScopeError::AuthorityUnavailable)?;
+            Ok(ScopeGrant {
+                id,
+                organization_id: organization_id.clone(),
+                membership_id: membership_id.clone(),
+                scope,
+                state,
+                state_version,
+            })
+        })
+        .collect()
+}
+
+async fn persisted_member_roles(
+    pool: &PgPool,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+) -> Result<Vec<RoleAssignment>, ScopeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    establish_scope_transaction(&mut tx, organization_id).await?;
+    let roles = persisted_role_assignments(&mut tx, organization_id, membership_id).await?;
+    tx.commit()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(roles)
+}
+
+async fn persisted_member_grants(
+    pool: &PgPool,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+) -> Result<Vec<ScopeGrant>, ScopeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    establish_scope_transaction(&mut tx, organization_id).await?;
+    let grants = persisted_scope_grants(&mut tx, organization_id, membership_id).await?;
+    tx.commit()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(grants)
+}
+
+async fn persisted_member_permissions(
+    pool: &PgPool,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+) -> Result<BTreeSet<Permission>, ScopeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    establish_scope_transaction(&mut tx, organization_id).await?;
+    let state: Option<(String,)> = sqlx_core::query_as::query_as(
+        "SELECT state FROM organization_memberships \
+         WHERE organization_id = $1 AND id = $2",
+    )
+    .bind(organization_id.as_str())
+    .bind(membership_id.as_str())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    let permissions = if matches!(state, Some((ref state,)) if state == "ACTIVE") {
+        resolve_permissions(
+            &persisted_role_assignments(&mut tx, organization_id, membership_id).await?,
+        )
+    } else {
+        BTreeSet::new()
+    };
+    tx.commit()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(permissions)
+}
+
 async fn establish_scope_transaction(
     tx: &mut Transaction<'_, Postgres>,
     organization_id: &OrganizationId,
@@ -3702,7 +3916,7 @@ mod tests {
     }
 
     fn service() -> TenancyService {
-        TenancyService::new(Arc::new(TenancyDatabase::new()), Vec::new())
+        TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new())
     }
 
     fn strict_service() -> TenancyService {
@@ -3712,7 +3926,7 @@ mod tests {
             window: Duration::from_secs(3_600),
             lockout: Duration::from_secs(3_600),
         };
-        TenancyService::new(
+        TenancyService::new_reference(
             Arc::new(TenancyDatabase::new()),
             vec![
                 (AbuseClass::InvitationCreate, rule),
@@ -3728,8 +3942,8 @@ mod tests {
             .connect_lazy("postgres://app_runtime@127.0.0.1:1/sitolo_test")
             .unwrap();
         let db = Arc::new(TenancyDatabase::new());
-        let service =
-            TenancyService::new(db.clone(), Vec::new()).with_evidence(TenancyEvidenceSink::new(
+        let service = TenancyService::new_reference(db.clone(), Vec::new())
+            .for_reference_with_evidence(TenancyEvidenceSink::new(
                 pool.clone(),
                 Arc::new(sitolo_persistence::audit_repository::PostgresAuditWriter::new()),
                 Arc::new(
