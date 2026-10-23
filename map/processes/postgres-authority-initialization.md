@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@43d6e04161964fc771481a325c20b7d8192f9231
+source_revision: feat/phase4-pr009-audit-outbox@0cdd771f5121234a512bf5b46fc9d94184ac281a
 source: crates/sitolo-persistence/src/runtime_pool.rs
 source_citation: crates/sitolo-persistence/src/runtime_pool.rs:43-154
 ---

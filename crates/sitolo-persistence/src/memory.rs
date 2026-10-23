@@ -12,6 +12,7 @@
 //! production wiring must use an OS CSPRNG through `sitolo_security::RandomSource`.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -145,10 +146,17 @@ impl IdentityDatabase {
     }
 
     fn random_hex(len: usize) -> String {
-        // Deterministic for tests; production wires OS CSPRNG.
+        // Deterministic, unique test identifiers; production wires an OS CSPRNG.
+        // A shared sequence keeps parallel tests from assigning the same session,
+        // refresh-family, or artifact ID to different users.
+        static NEXT_TEST_RANDOM: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT_TEST_RANDOM.fetch_add(1, Ordering::Relaxed).to_le_bytes();
         let mut out = vec![0u8; len];
-        for (i, byte) in out.iter_mut().enumerate() {
-            *byte = (i as u8).wrapping_add(42);
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = sequence
+                .get(index % sequence.len())
+                .copied()
+                .unwrap_or_default();
         }
         sitolo_auth::hex(&out)
     }
