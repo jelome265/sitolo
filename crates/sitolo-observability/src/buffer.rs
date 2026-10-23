@@ -11,54 +11,156 @@
 //! never dropped for debug noise; it is dropped only when the buffer holds
 //! nothing but `P0` records. Export drains the most important class first.
 
-/// Telemetry importance. Declaration order is significance order: `P0` is
-/// most important. Do not reorder without reviewing shedding semantics.
+/// Telemetry importance.
+///
+/// Declaration order is significance order: `P0` is most important. Do not
+/// reorder without reviewing shedding semantics, because the derived `Ord`
+/// implementation decides which queued class is displaced first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
+    /// Security-relevant records; never shed to admit a lower class.
     P0Security,
+    /// Business-critical records.
     P1Business,
+    /// Ordinary operational records.
     P2Normal,
+    /// Diagnostic records, shed first under pressure.
     P3Debug,
 }
 
-impl Priority {
-    fn index(self) -> usize {
-        self as usize
-    }
-}
-
+/// Occupancy band reported for a [`TelemetryBuffer`].
+///
+/// Bands are computed from the queued record count as an integer percentage
+/// of capacity: `Healthy` below 50%, `Degraded` from 50% to 74%, `Pressured`
+/// from 75% to 89%, `Dropping` from 90% to 99%, and `Blackout` at or above
+/// capacity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelemetryState {
+    /// Below 50% occupancy; all admissions are expected to succeed.
     Healthy,
+    /// 50% to 74% occupancy; the buffer is filling but not yet under pressure.
     Degraded,
+    /// 75% to 89% occupancy; shedding is likely for lower classes.
     Pressured,
+    /// 90% to 99% occupancy; most lower-class admissions will displace records.
     Dropping,
+    /// At or above capacity; every admission displaces or is dropped.
     Blackout,
 }
 
+/// Per-priority record counters.
+///
+/// A named-field layout makes every class addressable without an index, so
+/// accounting cannot panic and cannot silently drift from the public class
+/// set.
+#[derive(Debug, Clone, Copy, Default)]
+struct Counters {
+    security: u64,
+    business: u64,
+    normal: u64,
+    debug: u64,
+}
+
+impl Counters {
+    /// Reads the count for `priority`.
+    const fn get(&self, priority: Priority) -> u64 {
+        match priority {
+            Priority::P0Security => self.security,
+            Priority::P1Business => self.business,
+            Priority::P2Normal => self.normal,
+            Priority::P3Debug => self.debug,
+        }
+    }
+
+    /// Returns the mutable slot for `priority`.
+    fn slot_mut(&mut self, priority: Priority) -> &mut u64 {
+        match priority {
+            Priority::P0Security => &mut self.security,
+            Priority::P1Business => &mut self.business,
+            Priority::P2Normal => &mut self.normal,
+            Priority::P3Debug => &mut self.debug,
+        }
+    }
+
+    /// Adds one record to `priority`, saturating at [`u64::MAX`].
+    fn increment(&mut self, priority: Priority) {
+        let slot = self.slot_mut(priority);
+        *slot = slot.saturating_add(1);
+    }
+
+    /// Removes one record from `priority`, saturating at zero.
+    fn decrement(&mut self, priority: Priority) {
+        let slot = self.slot_mut(priority);
+        *slot = slot.saturating_sub(1);
+    }
+
+    /// Total records across every class.
+    ///
+    /// Saturation is unreachable while [`TelemetryBuffer`]'s capacity
+    /// invariant holds; it exists so accounting stays panic-free even if the
+    /// invariant is ever broken.
+    fn total(&self) -> u64 {
+        self.security
+            .saturating_add(self.business)
+            .saturating_add(self.normal)
+            .saturating_add(self.debug)
+    }
+}
+
+/// Fixed-capacity admission model for telemetry records.
+///
+/// The buffer tracks per-priority occupancy rather than payloads. Invariant:
+/// the sum of all queued counts never exceeds `capacity`, and each queued
+/// record belongs to exactly one class. [`TelemetryBuffer::push`] therefore
+/// either admits a record, displaces a less important queued class, or counts
+/// the incoming record as dropped.
 #[derive(Debug)]
 pub struct TelemetryBuffer {
-    capacity: usize,
-    queued: [u64; 4],
-    dropped: [u64; 4],
+    capacity: u64,
+    queued: Counters,
+    dropped: Counters,
 }
 
 impl TelemetryBuffer {
+    /// Creates an empty buffer that admits at most `capacity` records.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `capacity` is zero. A zero-capacity buffer could never
+    /// admit a record, so every push would be shed and the occupancy bands
+    /// would carry no information.
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0);
+        assert!(capacity > 0, "telemetry buffer capacity must be positive");
         Self {
-            capacity,
-            queued: [0; 4],
-            dropped: [0; 4],
+            // `usize` is at most 64 bits on every supported target, so this
+            // conversion is lossless; the fallback only guards a hypothetical
+            // wider pointer.
+            capacity: u64::try_from(capacity).unwrap_or(u64::MAX),
+            queued: Counters::default(),
+            dropped: Counters::default(),
         }
     }
 
     fn total_queued(&self) -> u64 {
-        self.queued.iter().sum()
+        self.queued.total()
     }
 
+    /// Reports the occupancy band for the currently queued records.
+    ///
+    /// The percentage is integer-truncated, so only a completely full buffer
+    /// reports [`TelemetryState::Blackout`]; every lower occupancy reports one
+    /// of the remaining bands.
+    #[must_use]
     pub fn state(&self) -> TelemetryState {
-        let percent = self.total_queued() * 100 / self.capacity as u64;
+        let queued = u128::from(self.total_queued());
+        let capacity = u128::from(self.capacity);
+        // `capacity` is non-zero by construction. A hypothetical zero capacity
+        // is reported as full instead of dividing by zero.
+        let percent = queued
+            .saturating_mul(100)
+            .checked_div(capacity)
+            .unwrap_or(100);
         match percent {
             0..=49 => TelemetryState::Healthy,
             50..=74 => TelemetryState::Degraded,
@@ -68,29 +170,34 @@ impl TelemetryBuffer {
         }
     }
 
-    /// Admits a record of priority `p`. When full, evicts one record from
-    /// the least important queued class if `p` outranks it; otherwise the
-    /// incoming record is dropped and counted.
+    /// Admits a record of priority `p`.
+    ///
+    /// Returns `true` when the record is queued. When the buffer is full, the
+    /// least important non-empty class below `p` is displaced and counted as
+    /// dropped; if no such class exists, `p` itself is counted as dropped and
+    /// `false` is returned.
     pub fn push(&mut self, p: Priority) -> bool {
-        if self.total_queued() < self.capacity as u64 {
-            self.queued[p.index()] += 1;
+        if self.total_queued() < self.capacity {
+            self.queued.increment(p);
             return true;
         }
         // Least important (highest discriminant) non-empty class first.
         for victim in [Priority::P3Debug, Priority::P2Normal, Priority::P1Business] {
-            if victim > p && self.queued[victim.index()] > 0 {
-                self.queued[victim.index()] -= 1;
-                self.dropped[victim.index()] += 1;
-                self.queued[p.index()] += 1;
+            if victim > p && self.queued.get(victim) > 0 {
+                self.queued.decrement(victim);
+                self.dropped.increment(victim);
+                self.queued.increment(p);
                 return true;
             }
         }
-        self.dropped[p.index()] += 1;
+        self.dropped.increment(p);
         false
     }
 
-    /// Exports one record, most important class first. Queue accounting
-    /// stays exact: one export removes exactly one queued record.
+    /// Exports one queued record, most important class first.
+    ///
+    /// Queue accounting stays exact: one export removes exactly one queued
+    /// record. Exporting an empty buffer is a silent no-op.
     pub fn export_one(&mut self) {
         for class in [
             Priority::P0Security,
@@ -98,19 +205,25 @@ impl TelemetryBuffer {
             Priority::P2Normal,
             Priority::P3Debug,
         ] {
-            if self.queued[class.index()] > 0 {
-                self.queued[class.index()] -= 1;
+            if self.queued.get(class) > 0 {
+                self.queued.decrement(class);
                 return;
             }
         }
     }
 
+    /// Number of records currently queued for priority `p`.
+    #[must_use]
     pub fn queued(&self, p: Priority) -> u64 {
-        self.queued[p.index()]
+        self.queued.get(p)
     }
 
+    /// Number of records of priority `p` shed since construction.
+    ///
+    /// Counters saturate at [`u64::MAX`] instead of overflowing.
+    #[must_use]
     pub fn dropped(&self, p: Priority) -> u64 {
-        self.dropped[p.index()]
+        self.dropped.get(p)
     }
 }
 

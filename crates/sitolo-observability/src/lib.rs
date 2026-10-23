@@ -25,6 +25,14 @@ pub const MAX_OPERATION: usize = 64;
 pub struct OperationName(String);
 
 impl OperationName {
+    /// Parses an operation name for use in telemetry fields.
+    ///
+    /// Returns `None` unless the value is non-empty, at most
+    /// [`MAX_OPERATION`] bytes long, and composed only of lowercase ASCII
+    /// alphanumerics plus `.`, `_`, or `-`. The accepted grammar keeps
+    /// request-derived text, secrets, and serialized objects out of metric
+    /// labels.
+    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         if value.is_empty()
             || value.len() > MAX_OPERATION
@@ -37,6 +45,8 @@ impl OperationName {
         Some(OperationName(value.to_string()))
     }
 
+    /// Borrows the validated operation name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -89,7 +99,7 @@ mod tests {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 self.0
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .extend_from_slice(buf);
                 Ok(buf.len())
             }
@@ -97,7 +107,7 @@ mod tests {
                 Ok(())
             }
         }
-        impl<'a> MakeWriter<'a> for Sink {
+        impl MakeWriter<'_> for Sink {
             type Writer = Sink;
             fn make_writer(&self) -> Sink {
                 self.clone()
@@ -120,7 +130,7 @@ mod tests {
         let output = String::from_utf8(
             sink.0
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone(),
         )?;
         // Schema version comes from the registry definition, and the
