@@ -27,13 +27,30 @@ const SUPPORTED_EVENT_VERSION: u32 = 1;
 pub struct DeliveryFailure {
     class: OutboxErrorClass,
     retry_class: RetryClass,
+    worker_unavailable: bool,
 }
 
 impl DeliveryFailure {
     /// Constructs a delivery failure with a bounded persisted error class.
     #[must_use]
     pub fn new(class: OutboxErrorClass, retry_class: RetryClass) -> Self {
-        Self { class, retry_class }
+        Self {
+            class,
+            retry_class,
+            worker_unavailable: false,
+        }
+    }
+
+    /// Marks a destination-wide permission or configuration failure. The
+    /// claimed event is released for retry and the worker then stops; it is
+    /// never quarantined as an individually poisonous event.
+    #[must_use]
+    pub fn unavailable(class: OutboxErrorClass) -> Self {
+        Self {
+            class,
+            retry_class: RetryClass::Retryable,
+            worker_unavailable: true,
+        }
     }
 }
 
@@ -101,6 +118,8 @@ pub enum WorkerError {
     InvalidPolicy,
     #[error("claimed outbox event has invalid lease state")]
     InvalidClaim,
+    #[error("event destination is unavailable or misconfigured")]
+    PublisherUnavailable,
     #[error(transparent)]
     Persistence(#[from] OutboxPersistenceError),
 }
@@ -174,6 +193,9 @@ impl RelayWorker {
                         .release_for_retry(&event.event_id, token, &failure.class, backoff)
                         .await?;
                     report.retried += 1;
+                    if failure.worker_unavailable {
+                        return Err(WorkerError::PublisherUnavailable);
+                    }
                 }
                 Err(failure) => {
                     self.reader
@@ -360,11 +382,15 @@ mod tests {
                 .expect("publisher lock")
                 .push(idempotency_key.to_owned());
             match &self.failure {
-                Some(failure) => Err(DeliveryFailure::new(
-                    OutboxErrorClass::new(failure.class.as_str().to_owned())
-                        .expect("copied class is valid"),
-                    failure.retry_class,
-                )),
+                Some(failure) => {
+                    let class = OutboxErrorClass::new(failure.class.as_str().to_owned())
+                        .expect("copied class is valid");
+                    if failure.worker_unavailable {
+                        Err(DeliveryFailure::unavailable(class))
+                    } else {
+                        Err(DeliveryFailure::new(class, failure.retry_class))
+                    }
+                }
                 None => Ok(()),
             }
         }
@@ -499,6 +525,33 @@ mod tests {
         assert_eq!(event_id, "evt-2");
         assert!(*backoff > Duration::ZERO);
         assert!(*backoff <= Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    async fn destination_wide_failure_releases_event_and_stops_without_quarantine() {
+        let failure = DeliveryFailure::unavailable(
+            OutboxErrorClass::new("sns_destination_unavailable").expect("error class"),
+        );
+        let (worker, reader, _) = worker(
+            vec![claimed_event("evt-10", "iam.organization.created", 1, 1)],
+            Some(failure),
+        );
+
+        let result = worker.process_batch().await;
+        assert!(
+            matches!(result, Err(WorkerError::PublisherUnavailable)),
+            "unexpected destination failure handling: {result:?}"
+        );
+        let transitions = reader.transitions.lock().expect("transition lock");
+        assert_eq!(transitions.retried.len(), 1);
+        assert_eq!(
+            transitions
+                .retried
+                .first()
+                .map(|(event_id, _)| event_id.as_str()),
+            Some("evt-10")
+        );
+        assert!(transitions.quarantined.is_empty());
     }
 
     #[tokio::test]

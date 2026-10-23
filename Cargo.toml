@@ -27,6 +27,8 @@ rust-version = "1.98.1"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+aws-config = { version = "1.13.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-sns = { version = "1.119.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 async-trait = { version = "0.1.83", default-features = false }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
