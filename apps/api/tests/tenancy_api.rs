@@ -132,6 +132,17 @@ async fn post_organization(
     session_id: Option<&str>,
     body: &str,
 ) -> StatusCode {
+    post_organization_response(app, authorization, session_id, body)
+        .await
+        .status()
+}
+
+async fn post_organization_response(
+    app: Router,
+    authorization: Option<&str>,
+    session_id: Option<&str>,
+    body: &str,
+) -> Response {
     let mut builder = Request::builder()
         .method("POST")
         .uri("/v1/organizations")
@@ -149,7 +160,6 @@ async fn post_organization(
     )
     .await
     .expect("Axum returns an HTTP response")
-    .status()
 }
 
 async fn post_branch(
@@ -243,7 +253,7 @@ async fn live_route_rejects_unknown_external_identity_without_mutating_tenancy()
         app,
         Some("Bearer syntactically-valid-token"),
         Some(session_id.as_str()),
-        r#"{"organization_id":"org-a","owner_user_id":"spoofed-owner"}"#,
+        r#"{"organization_id":"org-a","organization_name":"Org A","owner_membership_id":"member-a","default_branch_id":"branch-a","default_branch_name":"Main"}"#,
     )
     .await;
 
@@ -260,7 +270,7 @@ async fn live_route_rejects_session_owned_by_another_mapped_user() {
         app,
         Some("Bearer syntactically-valid-token"),
         Some(other_user_session.as_str()),
-        r#"{"organization_id":"org-a","owner_user_id":"spoofed-owner"}"#,
+        r#"{"organization_id":"org-a","organization_name":"Org A","owner_membership_id":"member-a","default_branch_id":"branch-a","default_branch_name":"Main"}"#,
     )
     .await;
 
@@ -268,7 +278,7 @@ async fn live_route_rejects_session_owned_by_another_mapped_user() {
 }
 
 #[tokio::test]
-async fn live_route_authenticates_mapped_identity_but_stays_closed_without_authorizer() {
+async fn live_organization_route_fails_closed_without_provision_command() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", true).await;
     let before = database
@@ -280,7 +290,7 @@ async fn live_route_authenticates_mapped_identity_but_stays_closed_without_autho
         app,
         Some("Bearer syntactically-valid-token"),
         Some(session_id.as_str()),
-        r#"{"organization_id":"org-a","owner_user_id":"spoofed-owner"}"#,
+        r#"{"organization_id":"org-a","organization_name":"Org A","owner_membership_id":"member-a","default_branch_id":"branch-a","default_branch_name":"Main"}"#,
     )
     .await;
 
@@ -375,6 +385,72 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
         runtime,
         schema,
     })
+}
+
+#[tokio::test]
+async fn live_organization_route_derives_owner_and_audit_actor_from_authenticated_subject()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = api_tenancy_db().await?;
+    let tenancy = Arc::new(TenancyService::new_postgres(
+        Vec::new(),
+        TenancyEvidenceSink::new(
+            db.runtime.clone(),
+            Arc::new(PostgresAuditWriter::new()),
+            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
+        ),
+    ));
+    let identities = identity_database();
+    let session_id = provision_identity(&identities, "user-1", true).await;
+    let app = router_with_identity_and_tenancy(Arc::clone(&identities), tenancy).await;
+    let authorization = Some("Bearer syntactically-valid-token");
+    let selector = Some(session_id.as_str());
+
+    let spoofed = post_organization_response(
+        app.clone(),
+        authorization,
+        selector,
+        r#"{"organization_id":"org-http-spoof","organization_name":"Spoof","owner_membership_id":"member-http-spoof","owner_user_id":"user-admin","actor_id":"user-admin","default_branch_id":"branch-http-spoof","default_branch_name":"Main"}"#,
+    )
+    .await;
+    assert_eq!(spoofed.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let denied_count: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM organizations WHERE id = 'org-http-spoof'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_count, 0);
+
+    let created = post_organization_response(
+        app,
+        authorization,
+        selector,
+        r#"{"organization_id":"org-http","organization_name":"HTTP Org","owner_membership_id":"member-http","default_branch_id":"branch-http","default_branch_name":"Main"}"#,
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+
+    let owner_user: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT user_id FROM organization_memberships WHERE organization_id = 'org-http' AND id = 'member-http'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(owner_user, "user-1");
+    let actor: (String, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT actor_subject_ref, actor_membership_ref FROM audit_events WHERE organization_id = 'org-http' AND event_name = 'iam.organization.created'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(actor, ("user-1".to_owned(), Some("member-http".to_owned())));
+
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    db.runtime.close().await;
+    db.admin.close().await;
+    Ok(())
 }
 
 #[tokio::test]

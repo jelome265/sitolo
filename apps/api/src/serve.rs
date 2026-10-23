@@ -13,6 +13,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::json;
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -29,10 +30,12 @@ use crate::shutdown::{
 use crate::state::AppState;
 use sitolo_api::{AppError, ProblemDetails};
 use sitolo_api::{
-    BranchResponse, CreateBranchRequest, map_authorized_tenancy_error, validate_create_branch_input,
+    BranchResponse, CreateBranchRequest, CreateOrganizationRequest,
+    ProvisionedOrganizationResponse, map_authorized_tenancy_error, validate_create_branch_input,
+    validate_create_organization_input,
 };
 use sitolo_auth::SecurityContext;
-use sitolo_domain::tenancy::{BranchId, OrganizationId};
+use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenantUserId};
 use sitolo_observability::RequestId;
 
 const MAX_INGRESS_BODY_BYTES: usize = 32 * 1024;
@@ -159,6 +162,16 @@ pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
                 get(readiness)
                     .layer::<_, Infallible>(body_limit)
                     .layer::<_, Infallible>(timeout),
+            ),
+            (Method::Post, "/v1/organizations", Access::Permission(_)) => router.route(
+                spec.path,
+                post(create_organization_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout)
+                    .route_layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        authenticate_protected_request,
+                    )),
             ),
             (
                 Method::Post,
@@ -311,6 +324,71 @@ async fn protected_route(State(state): State<Arc<AppState>>, request: Request<Bo
     {
         Ok(_security_context) => app_error_response(AppError::DependencyUnavailable),
         Err(error) => app_error_response(error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedCreateOrganizationBody {
+    organization_id: String,
+    organization_name: String,
+    owner_membership_id: String,
+    default_branch_id: String,
+    default_branch_name: String,
+}
+
+async fn create_organization_route(
+    State(state): State<Arc<AppState>>,
+    Extension(security_context): Extension<SecurityContext>,
+    axum::Json(body): axum::Json<AuthenticatedCreateOrganizationBody>,
+) -> Response {
+    let request = CreateOrganizationRequest {
+        organization_id: body.organization_id,
+        organization_name: body.organization_name,
+        owner_membership_id: body.owner_membership_id,
+        owner_user_id: security_context.principal.subject_id.as_str().to_owned(),
+        default_branch_id: body.default_branch_id,
+        default_branch_name: body.default_branch_name,
+    };
+    if let Err(error) = validate_create_organization_input(&request) {
+        return app_error_response(error);
+    }
+    let organization_id = match OrganizationId::new(request.organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let membership_id = match MembershipId::new(request.owner_membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let owner_user_id = match TenantUserId::new(request.owner_user_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(request.default_branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(AppError::DependencyUnavailable);
+    };
+    match service
+        .provision_organization(
+            organization_id,
+            &request.organization_name,
+            membership_id,
+            owner_user_id,
+            branch_id,
+            &request.default_branch_name,
+        )
+        .await
+    {
+        Ok(bundle) => (
+            StatusCode::CREATED,
+            axum::Json(ProvisionedOrganizationResponse::from(&bundle)),
+        )
+            .into_response(),
+        Err(error) => app_error_response(sitolo_api::map_tenancy_error(&error)),
     }
 }
 
