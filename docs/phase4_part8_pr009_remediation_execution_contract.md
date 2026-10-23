@@ -2,15 +2,15 @@
 
 **PR:** #49
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Implementation source:** `43d6e04161964fc771481a325c20b7d8192f9231`
-**Exact-source validation head:** `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`
+**Implementation source:** `a1d29ae692f6ff5c59e48ef7135f514ae979b222`
+**Prior validation head:** `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`
 **Status:** NOT READY; do not merge
 
 The previous 2026-09-24 execution contract is preserved at `docs/phase4_part8_pr009_remediation_execution_contract_2026-09-24_historical.md`. Its head-specific findings and CI statements are historical. This file is the current continuation guide.
 
 ## Current implementation state
 
-The API process now composes the managed production secret provider, Cognito OIDC issuer validation, PostgreSQL `app_runtime` pool and schema checks, persisted identity/session authority, and a durable tenancy evidence service. The live branch-create route authenticates bearer plus `session-id` and uses persisted membership, permission, and scope before its command. Other protected routes remain closed.
+The API process composes the managed production secret provider, Cognito OIDC issuer validation, PostgreSQL `app_runtime` pool and schema checks, persisted identity/session authority, and durable tenancy evidence service. Organization creation now rejects caller-supplied owner/actor fields and derives the owner from the verified principal; branch creation uses persisted membership, permission, and scope. Lifecycle and other protected routes remain closed.
 
 The existing bounded outbox relay engine and SNS FIFO publisher are present, but `apps/worker` still refuses startup. There is no SQS consumer, no inbox transaction coupled to an agreed business effect, no complete worker runtime/pool, and no authoritative migration/release path. These are implementation gaps, not CI-only gaps.
 
@@ -25,4 +25,4 @@ The existing bounded outbox relay engine and SNS FIFO publisher are present, but
 
 ## Current candidate local evidence
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --lib --all-features --locked`, `cargo test -p sitolo-integrations --lib --all-features --locked`, and `cargo deny check` passed. Database-backed tests were not run locally. Exact-source GitHub Actions, including PostgreSQL integration, passed on `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`; see `docs/phase4_part8_pr009_remediation_report.md` for run IDs and the precise evidence boundary.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --lib --all-features --locked`, `cargo test -p sitolo-integrations --lib --all-features --locked`, and `cargo deny check` passed. Database-backed tests were not run locally. Prior exact-source GitHub Actions, including PostgreSQL integration, passed on `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`. The current organization-route candidate requires refreshed exact-source checks; see `docs/phase4_part8_pr009_remediation_report.md`.
