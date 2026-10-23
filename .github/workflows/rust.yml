@@ -10,6 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Install architecture tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      # Independent, early gate: a crate that is unclassified or that crosses a
+      # declared layer boundary fails here, before formatting, lint or tests can
+      # hide it behind an unrelated failure.
+      - name: Enforce crate boundary contract
+        run: ./scripts/ci/check-architecture
+
   toolchain:
     runs-on: ubuntu-latest
     timeout-minutes: 10

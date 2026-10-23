@@ -11,6 +11,9 @@ echo "==> Verify toolchain"
 rustc --version
 cargo --version
 
+echo "==> Architecture check (early, fail-closed)"
+./scripts/ci/check-architecture
+
 echo "==> Verify lockfile (fails if stale)"
 cargo metadata --format-version 1 --locked >/dev/null
 
@@ -31,9 +34,6 @@ cargo test -p sitolo-persistence --test rls_security_tests --all-features --lock
 
 echo "==> Release build"
 cargo build --workspace --release --locked
-
-echo "==> Architecture check"
-./scripts/ci/check-architecture
 
 echo "==> Phase 2 policy check"
 ./scripts/ci/check-phase2-policy
