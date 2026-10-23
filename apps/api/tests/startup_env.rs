@@ -7,6 +7,11 @@
 //! environment. Environment mutation is `unsafe` in edition 2024 and is kept
 //! to this integration-test target.
 
+#![expect(
+    unsafe_code,
+    reason = "Rust 2024 process-environment mutation is unsafe and serialized by ENV_LOCK; EnvGuard removes test-owned keys on drop"
+)]
+
 use sitolo_api_bin::bootstrap::{Readiness, StartupContext, StartupError};
 
 const SENTINEL: &str = "TEST_ONLY_STARTUP_ENV_SECRET_001";
