@@ -907,7 +907,7 @@ impl IdentityStores for IdentityDatabase {
 }
 
 #[async_trait]
-impl crate::ports::RequestIdentityAuthority for IdentityDatabase {
+impl sitolo_auth::RequestIdentityAuthority for IdentityDatabase {
     async fn resolve_external_identity(
         &self,
         issuer: &str,

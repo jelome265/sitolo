@@ -20,12 +20,12 @@ pub use memory::{
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
 };
 pub use ports::IdentityStores;
-pub use sitolo_auth::RequestIdentityAuthority;
 pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
 };
 pub use runtime_pool::{PgRuntimePool, PgWorkerPool, RuntimePoolError};
+pub use sitolo_auth::RequestIdentityAuthority;
 pub use sitolo_domain::tenancy::ProvisionedOrganization;
 pub use tenancy::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, TenancyDatabase, TenancyStores,
