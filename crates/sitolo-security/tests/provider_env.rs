@@ -63,12 +63,16 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
 // SAFETY for the helpers below: every caller holds `ENV_LOCK`, and no other
 // test in this package reads process environment.
 unsafe fn set_var() {
+    // SAFETY: the caller holds `ENV_LOCK`, so no other thread in this test
+    // binary can observe or mutate the process environment concurrently.
     unsafe {
         std::env::set_var(VAR, SENTINEL);
     }
 }
 
 unsafe fn remove_var() {
+    // SAFETY: the caller holds `ENV_LOCK`, so no other thread in this test
+    // binary can observe or mutate the process environment concurrently.
     unsafe {
         std::env::remove_var(VAR);
     }
@@ -80,8 +84,11 @@ fn production_get_is_forbidden_without_reading_environment()
     // The sentinel proves the guard fires before any environment read:
     // even with a configured value present, production is refused.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test, so no
+    // other thread in this binary touches the process environment.
     unsafe { set_var() };
     let denied = block_on(EnvSecretProvider::new(true).get(&database_ref("prod/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert!(
         matches!(denied, Err(SecretError::LocalProviderForbidden)),
@@ -93,9 +100,11 @@ fn production_get_is_forbidden_without_reading_environment()
 #[test]
 fn development_resolves_configured_value() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { set_var() };
     let value =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))??;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert_eq!(value.into_string(), SENTINEL);
     Ok(())
@@ -109,12 +118,18 @@ fn configuration_namespace_is_not_a_secret_value_source() -> Result<(), Box<dyn 
     // than treated as a secret, so a leftover variable cannot silently become
     // the credential.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe {
         std::env::remove_var(VAR);
+    }
+    // SAFETY: `_guard` still holds `ENV_LOCK`; this block performs a single
+    // environment mutation.
+    unsafe {
         std::env::set_var(CONFIG_VAR, SENTINEL);
     }
     let value =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { std::env::remove_var(CONFIG_VAR) };
     assert!(
         matches!(&value, Err(SecretError::Missing { .. })),
@@ -126,6 +141,7 @@ fn configuration_namespace_is_not_a_secret_value_source() -> Result<(), Box<dyn 
 #[test]
 fn missing_and_empty_secrets_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { remove_var() };
     let missing =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
@@ -133,11 +149,13 @@ fn missing_and_empty_secrets_fail_closed() -> Result<(), Box<dyn std::error::Err
         matches!(missing, Err(SecretError::Missing { .. })),
         "absent secret must fail closed, got: {missing:?}"
     );
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe {
         std::env::set_var(VAR, "");
     }
     let empty =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert!(
         matches!(empty, Err(SecretError::Missing { .. })),
@@ -151,11 +169,13 @@ fn class_only_mapping_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
     // F-013, Model 1: two references of the same class resolve through the
     // same variable by design; the path selects nothing.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { set_var() };
     let first =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-a")?))??;
     let second =
         block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-b")?))??;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert_eq!(first.into_string(), SENTINEL);
     assert_eq!(second.into_string(), SENTINEL);

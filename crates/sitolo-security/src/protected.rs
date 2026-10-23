@@ -15,8 +15,11 @@ use thiserror::Error;
 /// Errors produced by secret-at-rest stores.
 #[derive(Debug, Error)]
 pub enum SecretAtRestError {
+    /// The requested reference was never sealed or has already been destroyed.
     #[error("sealed reference not found")]
     NotFound,
+    /// The backing store cannot service the request, so the operation fails
+    /// closed rather than returning unprotected material.
     #[error("secret-at-rest store unavailable")]
     Unavailable,
 }
@@ -32,6 +35,7 @@ impl SealedRef {
         SealedRef(value.into())
     }
     /// The reference string. Not secret material; a storage pointer only.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -46,8 +50,19 @@ impl fmt::Display for SealedRef {
 /// Seal/open boundary for high-value authenticator material (§18, §34.2).
 pub trait SecretAtRest: Send + Sync {
     /// Encrypts/protects `material` and returns its opaque reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecretAtRestError::Unavailable`] when the backing store cannot
+    /// persist the sealed material.
     fn seal(&self, material: &[u8]) -> Result<SealedRef, SecretAtRestError>;
     /// Opens a sealed reference for a narrow verification operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecretAtRestError::NotFound`] when the reference was never
+    /// sealed or has been destroyed, and [`SecretAtRestError::Unavailable`]
+    /// when the store cannot be reached.
     fn open(&self, reference: &SealedRef) -> Result<Vec<u8>, SecretAtRestError>;
     /// Permanently removes sealed material (authenticator revocation §17.2).
     fn destroy(&self, reference: &SealedRef);
@@ -63,6 +78,13 @@ pub struct InMemoryProtectedStore {
     next: Mutex<u64>,
 }
 
+impl fmt::Debug for InMemoryProtectedStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The map values are sealed material; never render them.
+        f.write_str("InMemoryProtectedStore(***)")
+    }
+}
+
 impl InMemoryProtectedStore {
     /// Acquires the items lock, recovering from mutex poisoning.
     ///
@@ -73,14 +95,14 @@ impl InMemoryProtectedStore {
     fn items_lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
         self.items
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Acquires the id-counter lock, recovering from mutex poisoning.
     fn next_lock(&self) -> std::sync::MutexGuard<'_, u64> {
         self.next
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -128,6 +150,16 @@ mod tests {
         let store = InMemoryProtectedStore::default();
         let reference = store.seal(b"super-secret-seed")?;
         let text = reference.to_string();
+        assert!(!text.contains("super-secret-seed"));
+        Ok(())
+    }
+
+    #[test]
+    fn debug_never_carries_sealed_material() -> Result<(), Box<dyn std::error::Error>> {
+        let store = InMemoryProtectedStore::default();
+        store.seal(b"super-secret-seed")?;
+        let text = format!("{store:?}");
+        assert_eq!(text, "InMemoryProtectedStore(***)");
         assert!(!text.contains("super-secret-seed"));
         Ok(())
     }

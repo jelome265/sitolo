@@ -36,21 +36,42 @@ pub const SECRET_ENV_PREFIX: &str = "SITOLO_SECRET__";
 /// naming, so they never enter error strings, logs, or telemetry.
 #[derive(Debug, Error)]
 pub enum SecretError {
+    /// The secret authority holds no value for the requested reference.
     #[error("secret missing: {class} ref {reference}")]
     Missing {
+        /// Operational class of the secret that could not be resolved.
         class: SecretClass,
+        /// Non-secret reference fingerprint, for correlation only.
         reference: String,
     },
+    /// The secret authority could not be reached.
     #[error("secret provider unavailable for {class}")]
-    Unavailable { class: SecretClass },
+    Unavailable {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The secret authority refused access to the credential.
     #[error("secret provider denied access for {class}")]
-    ProviderAuthorizationDenied { class: SecretClass },
+    ProviderAuthorizationDenied {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The resolved material failed validation for its class.
     #[error("secret invalid for {class}")]
-    Invalid { class: SecretClass },
+    Invalid {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The resolved material is past its expiry.
     #[error("secret expired for {class}")]
-    Expired { class: SecretClass },
+    Expired {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The development environment provider was selected in production.
     #[error("local secret provider is forbidden in the current environment")]
     LocalProviderForbidden,
+    /// The provider failed for a reason it cannot classify more precisely.
     #[error("secret provider failure: {0}")]
     Other(String),
 }
@@ -74,6 +95,7 @@ pub trait SecretProvider: Send + Sync {
 /// secret *class* maps to a variable. Two references of the same class
 /// therefore resolve through the same variable by design. Changing a path
 /// does not change which credential is selected.
+#[derive(Debug)]
 pub struct EnvSecretProvider {
     production: bool,
     /// Maps a `SecretClass` to the environment variable name it should read.
@@ -82,6 +104,7 @@ pub struct EnvSecretProvider {
 
 impl EnvSecretProvider {
     /// `production = true` hard-fails all reads.
+    #[must_use]
     pub fn new(production: bool) -> Self {
         EnvSecretProvider {
             production,

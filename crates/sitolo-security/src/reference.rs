@@ -34,6 +34,7 @@ pub enum SecretClass {
 impl SecretClass {
     /// A short, stable, lowercase identifier suitable for safe audit metadata
     /// and telemetry (bounded grammar).
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             SecretClass::Database => "database",
@@ -67,10 +68,16 @@ pub struct SecretRef {
 /// Error produced while constructing a `SecretRef`.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SecretRefError {
+    /// The reference path was empty.
     #[error("secret reference path is empty")]
     EmptyPath,
+    /// The reference path exceeded the bounded length limit.
     #[error("secret reference path is too long (max {max} bytes)")]
-    TooLong { max: usize },
+    TooLong {
+        /// Maximum accepted path length, in bytes.
+        max: usize,
+    },
+    /// The reference path contained a character outside the allowed grammar.
     #[error("secret reference path contains forbidden characters")]
     ForbiddenChars,
 }
@@ -80,6 +87,13 @@ const MAX_PATH_BYTES: usize = 256;
 impl SecretRef {
     /// Creates a `SecretRef`. The reference itself carries no secret value and
     /// is safe to log and fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecretRefError::EmptyPath`] for an empty path,
+    /// [`SecretRefError::TooLong`] when the path exceeds the 256-byte limit,
+    /// and [`SecretRefError::ForbiddenChars`] when the path contains bytes
+    /// outside the `[A-Za-z0-9/._:-]` grammar.
     pub fn new(class: SecretClass, path: impl Into<String>) -> Result<Self, SecretRefError> {
         let path = path.into();
         if path.is_empty() {
@@ -102,12 +116,14 @@ impl SecretRef {
     }
 
     /// The secret class this reference belongs to.
+    #[must_use]
     pub fn class(&self) -> SecretClass {
         self.class
     }
 
     /// A non-secret reference fingerprint for correlation in audit/telemetry,
     /// derived from the reference string, not the secret value.
+    #[must_use]
     pub fn reference_fingerprint(&self) -> String {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -117,6 +133,7 @@ impl SecretRef {
 
     /// The bounded provider path. Intended for internal adapter use only and
     /// never for broad logging.
+    #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
