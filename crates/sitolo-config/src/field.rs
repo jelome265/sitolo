@@ -182,6 +182,41 @@ const CATALOGUE: &[ConfigField] = &[
         "security",
         "boolean; false in production"
     ),
+    field!(
+        "EVENTS__RELAY__AWS_REGION",
+        Static,
+        false,
+        "platform",
+        "AWS region identifier"
+    ),
+    field!(
+        "EVENTS__RELAY__SNS_TOPIC_ARN",
+        Static,
+        false,
+        "platform",
+        "SNS FIFO topic ARN"
+    ),
+    field!(
+        "EVENTS__RELAY__BATCH_SIZE",
+        Tunable,
+        true,
+        "platform",
+        "positive u32 <= 100"
+    ),
+    field!(
+        "EVENTS__RELAY__MAX_ATTEMPTS",
+        Tunable,
+        true,
+        "platform",
+        "positive u32 <= 10"
+    ),
+    field!(
+        "EVENTS__RELAY__BACKOFF_MAX_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= 1 hour"
+    ),
 ];
 pub fn catalogue() -> &'static [ConfigField] {
     CATALOGUE
@@ -212,4 +247,9 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "TELEMETRY__TRACE_SAMPLE_RATIO",
     "LOG__LEVEL",
     "SECRETS__ALLOW_LOCAL_PROVIDER",
+    "EVENTS__RELAY__AWS_REGION",
+    "EVENTS__RELAY__SNS_TOPIC_ARN",
+    "EVENTS__RELAY__BATCH_SIZE",
+    "EVENTS__RELAY__MAX_ATTEMPTS",
+    "EVENTS__RELAY__BACKOFF_MAX_MS",
 ];

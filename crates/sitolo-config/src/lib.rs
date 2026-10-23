@@ -225,4 +225,45 @@ mod contract_tests {
         parser_keys.sort_unstable();
         assert_eq!(catalogue_keys, parser_keys);
     }
+
+    #[test]
+    fn relay_settings_are_typed_and_invalid_values_fail_closed() {
+        let builder = EnvLoader::from_pairs([
+            (
+                "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
+                "af-south-1".into(),
+            ),
+            (
+                "SITOLO__EVENTS__RELAY__SNS_TOPIC_ARN".into(),
+                "arn:aws:sns:af-south-1:123456789012:sitolo-iam-events-prod.fifo".into(),
+            ),
+            ("SITOLO__EVENTS__RELAY__BATCH_SIZE".into(), "10".into()),
+            ("SITOLO__EVENTS__RELAY__MAX_ATTEMPTS".into(), "10".into()),
+            (
+                "SITOLO__EVENTS__RELAY__BACKOFF_MAX_MS".into(),
+                "3600000".into(),
+            ),
+        ])
+        .unwrap();
+        let config = validate(builder).unwrap();
+        assert_eq!(config.relay_aws_region.as_deref(), Some("af-south-1"));
+        assert_eq!(
+            config.relay_sns_topic_arn.as_deref(),
+            Some("arn:aws:sns:af-south-1:123456789012:sitolo-iam-events-prod.fifo")
+        );
+        assert_eq!(config.relay_batch_size, 10);
+        assert_eq!(config.relay_max_attempts, 10);
+        assert_eq!(config.relay_backoff_max_ms, 3_600_000);
+
+        let invalid =
+            EnvLoader::from_pairs([("SITOLO__EVENTS__RELAY__BATCH_SIZE".into(), "0".into())])
+                .unwrap();
+        assert!(validate(invalid).is_err());
+        let incomplete = EnvLoader::from_pairs([(
+            "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
+            "af-south-1".into(),
+        )])
+        .unwrap();
+        assert!(validate(incomplete).is_err());
+    }
 }

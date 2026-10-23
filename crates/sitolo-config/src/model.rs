@@ -122,6 +122,12 @@ pub struct AppConfig {
     pub log_level: LogLevel,
     pub allow_local_secret_provider: bool,
     pub config_schema_version: u32,
+    /// Optional SNS relay destination; credentials are always workload-provided.
+    pub relay_aws_region: Option<String>,
+    pub relay_sns_topic_arn: Option<String>,
+    pub relay_batch_size: u32,
+    pub relay_max_attempts: u32,
+    pub relay_backoff_max_ms: u64,
 }
 
 /// Validated, non-connecting PostgreSQL runtime intent.
@@ -225,6 +231,11 @@ pub mod defaults {
         pub log_level: LogLevel,
         pub allow_local_secret_provider: bool,
         pub config_schema_version: u32,
+        pub relay_aws_region: Option<String>,
+        pub relay_sns_topic_arn: Option<String>,
+        pub relay_batch_size: u32,
+        pub relay_max_attempts: u32,
+        pub relay_backoff_max_ms: u64,
         /// `None` until a secret reference is supplied from an upper layer.
         pub db_password_ref: Option<SecretRef>,
     }
@@ -253,6 +264,11 @@ pub mod defaults {
                 log_level: LogLevel::Info,
                 allow_local_secret_provider: true,
                 config_schema_version: ceilings::CONFIG_SCHEMA_VERSION,
+                relay_aws_region: None,
+                relay_sns_topic_arn: None,
+                relay_batch_size: 10,
+                relay_max_attempts: 10,
+                relay_backoff_max_ms: 3_600_000,
                 db_password_ref: None,
             }
         }

@@ -87,6 +87,31 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
         "allow_local_secret_provider",
         &config.allow_local_secret_provider.to_string(),
     );
+    line(
+        &mut output,
+        "relay_aws_region",
+        config.relay_aws_region.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "relay_sns_topic_arn",
+        config.relay_sns_topic_arn.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "relay_batch_size",
+        &config.relay_batch_size.to_string(),
+    );
+    line(
+        &mut output,
+        "relay_max_attempts",
+        &config.relay_max_attempts.to_string(),
+    );
+    line(
+        &mut output,
+        "relay_backoff_max_ms",
+        &config.relay_backoff_max_ms.to_string(),
+    );
     output
 }
 
@@ -177,6 +202,14 @@ mod tests {
         changed!(log_level, LogLevel::Warn);
         changed!(allow_local_secret_provider, false);
         changed!(config_schema_version, 3);
+        changed!(relay_aws_region, Some("af-south-1".into()));
+        changed!(
+            relay_sns_topic_arn,
+            Some("arn:aws:sns:af-south-1:123456789012:events.fifo".into())
+        );
+        changed!(relay_batch_size, 11);
+        changed!(relay_max_attempts, 9);
+        changed!(relay_backoff_max_ms, 3_000_000);
     }
 
     #[test]

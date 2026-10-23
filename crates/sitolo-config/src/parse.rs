@@ -105,6 +105,11 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
             b.allow_local_secret_provider = value.parse().map_err(|_| UnknownKey(key.into()))?
         }
         "RUNTIME__CONFIG_SCHEMA_VERSION" => b.config_schema_version = number(key, value)?,
+        "EVENTS__RELAY__AWS_REGION" => b.relay_aws_region = Some(value.into()),
+        "EVENTS__RELAY__SNS_TOPIC_ARN" => b.relay_sns_topic_arn = Some(value.into()),
+        "EVENTS__RELAY__BATCH_SIZE" => b.relay_batch_size = number(key, value)?,
+        "EVENTS__RELAY__MAX_ATTEMPTS" => b.relay_max_attempts = number(key, value)?,
+        "EVENTS__RELAY__BACKOFF_MAX_MS" => b.relay_backoff_max_ms = number(key, value)?,
         // Defense in depth: `ACCEPTED_KEYS` is checked above, so this arm is
         // not expected to be reached. It is intentionally a structured
         // error rather than `unreachable!()` so that a future maintenance

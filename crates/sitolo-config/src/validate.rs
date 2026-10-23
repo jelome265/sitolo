@@ -227,6 +227,63 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "required secret reference absent",
         );
     }
+    if b.relay_aws_region.as_ref().is_some_and(|region| {
+        region.is_empty()
+            || region.len() > 64
+            || !region
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "relay_aws_region",
+            "must be a bounded AWS region identifier",
+        );
+    }
+    if b.relay_sns_topic_arn.as_ref().is_some_and(|arn| {
+        let parts: Vec<_> = arn.split(':').collect();
+        parts.len() != 6
+            || parts[0] != "arn"
+            || parts[1] != "aws"
+            || parts[2] != "sns"
+            || parts[4].len() != 12
+            || !parts[4].bytes().all(|c| c.is_ascii_digit())
+            || !parts[5].ends_with(".fifo")
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "relay_sns_topic_arn",
+            "must be an SNS FIFO topic ARN",
+        );
+    }
+    if b.relay_aws_region.is_some() != b.relay_sns_topic_arn.is_some() {
+        add(
+            ValidationLayer::CrossField,
+            "relay_destination",
+            "region and topic ARN must be configured together",
+        );
+    }
+    if b.relay_batch_size == 0 || b.relay_batch_size > 100 {
+        add(
+            ValidationLayer::Security,
+            "relay_batch_size",
+            "must be positive and at most 100",
+        );
+    }
+    if b.relay_max_attempts == 0 || b.relay_max_attempts > 10 {
+        add(
+            ValidationLayer::Security,
+            "relay_max_attempts",
+            "must be positive and at most 10",
+        );
+    }
+    if b.relay_backoff_max_ms == 0 || b.relay_backoff_max_ms > 3_600_000 {
+        add(
+            ValidationLayer::Security,
+            "relay_backoff_max_ms",
+            "must be positive and at most one hour",
+        );
+    }
     if !KNOWN_SCHEMA_VERSIONS.contains(&b.config_schema_version) {
         add(
             ValidationLayer::Environment,
@@ -260,5 +317,10 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         log_level: b.log_level,
         allow_local_secret_provider: b.allow_local_secret_provider,
         config_schema_version: b.config_schema_version,
+        relay_aws_region: b.relay_aws_region,
+        relay_sns_topic_arn: b.relay_sns_topic_arn,
+        relay_batch_size: b.relay_batch_size,
+        relay_max_attempts: b.relay_max_attempts,
+        relay_backoff_max_ms: b.relay_backoff_max_ms,
     })
 }
