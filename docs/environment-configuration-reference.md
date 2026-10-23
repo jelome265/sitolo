@@ -84,6 +84,7 @@ database identity and a production secret reference.
 | `TELEMETRY__TRACE_SAMPLE_RATIO` | `0.1` | Inclusive range `0.0..=1.0` |
 | `LOG__LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`; production ceiling is `info` |
 | `SECRETS__ALLOW_LOCAL_PROVIDER` | `true` | Must be `false` in production; validation rejects a local provider there |
+| `SECRETS__AWS_REGION` | absent | Required by production process bootstrap for ECS-role-backed AWS Secrets Manager lookup; bounded AWS region identifier |
 
 The source of truth for this table is
 `crates/sitolo-config/src/field.rs`; the typed model and defaults live in
@@ -114,11 +115,13 @@ variable by design.
 ## Production limits
 
 - Production rejects `SITOLO__SECRETS__ALLOW_LOCAL_PROVIDER=true`.
-- No managed production secret provider is implemented yet. Production startup
-  fails closed instead of falling back to the development provider.
-- The worker is a separate binary. It refuses to start without an approved relay
-  adapter. `.env.example` is an API configuration reference, not a production
-  deployment manifest.
+- Production API bootstrap uses AWS Secrets Manager with explicit ECS task-role
+  credentials when `SECRETS__AWS_REGION` is set. It resolves only the configured
+  database reference and never falls back to `SITOLO_SECRET__...`.
+- The worker is a separate binary. An SNS FIFO publisher exists, but the worker
+  executable remains fail-closed until its restricted database and relay runtime
+  are composed. `.env.example` is an API configuration reference, not a
+  production deployment manifest.
 - Production and staging require explicit database host, name, user, and secret
   reference; the development defaults and the `development/` secret namespace
   are rejected.

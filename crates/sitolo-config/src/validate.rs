@@ -188,6 +188,19 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "forbidden in production",
         );
     }
+    if b.secrets_aws_region.as_ref().is_some_and(|region| {
+        region.is_empty()
+            || region.len() > 32
+            || !region
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "secrets_aws_region",
+            "must be a bounded AWS region identifier",
+        );
+    }
     if b.environment.is_production() && b.log_level < LogLevel::PRODUCTION_CEILING {
         add(
             ValidationLayer::Environment,
@@ -323,5 +336,6 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         relay_batch_size: b.relay_batch_size,
         relay_max_attempts: b.relay_max_attempts,
         relay_backoff_max_ms: b.relay_backoff_max_ms,
+        secrets_aws_region: b.secrets_aws_region,
     })
 }

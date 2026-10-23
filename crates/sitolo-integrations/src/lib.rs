@@ -6,5 +6,6 @@
 #![forbid(unsafe_code)]
 
 pub mod oidc;
+pub mod secrets;
 
 pub use oidc::{CognitoOidcConfig, CognitoOidcProvider};

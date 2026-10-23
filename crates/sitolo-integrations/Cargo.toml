@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+aws-config.workspace = true
+aws-sdk-secretsmanager.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 http-body-util.workspace = true

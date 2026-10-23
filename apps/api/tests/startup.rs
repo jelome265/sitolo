@@ -128,10 +128,10 @@ async fn staging_boots_with_explicit_database_identity() {
 }
 
 #[tokio::test]
-async fn production_fails_closed_without_managed_provider() {
-    // Validation passes, but no managed secret adapter exists yet, so
-    // startup refuses instead of using the local provider. No listener is
-    // ever bound on this path.
+async fn injected_production_bootstrap_without_provider_fails_closed() {
+    // Injected startup deliberately does not discover ECS task credentials.
+    // Without an explicitly supplied provider it refuses rather than using
+    // the local provider. No listener is ever bound on this path.
     let production = StartupContext::build_from_pairs([
         pair("RUNTIME__ENVIRONMENT", "production"),
         pair("DATABASE__HOST", "db.internal"),
@@ -150,8 +150,8 @@ async fn production_fails_closed_without_managed_provider() {
 
 #[tokio::test]
 async fn explicit_provider_is_honored_in_production() {
-    // The seam for the future managed adapter: an explicitly supplied
-    // provider is used even in production.
+    // The explicit injection seam is used by tests and controlled composition;
+    // the process entry point constructs the ECS-backed provider itself.
     let production = StartupContext::build_from_pairs_with_provider(
         [
             pair("RUNTIME__ENVIRONMENT", "production"),

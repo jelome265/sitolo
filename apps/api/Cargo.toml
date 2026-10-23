@@ -25,6 +25,7 @@ sitolo-auth.workspace = true
 sitolo-application = { path = "../../crates/sitolo-application" }
 sitolo-config.workspace = true
 sitolo-domain = { path = "../../crates/sitolo-domain" }
+sitolo-integrations = { path = "../../crates/sitolo-integrations" }
 sitolo-observability.workspace = true
 sitolo-persistence = { path = "../../crates/sitolo-persistence" }
 sitolo-security.workspace = true

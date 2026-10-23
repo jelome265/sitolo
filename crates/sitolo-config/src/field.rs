@@ -183,6 +183,13 @@ const CATALOGUE: &[ConfigField] = &[
         "boolean; false in production"
     ),
     field!(
+        "SECRETS__AWS_REGION",
+        Static,
+        false,
+        "security",
+        "AWS region identifier for ECS workload secret provider"
+    ),
+    field!(
         "EVENTS__RELAY__AWS_REGION",
         Static,
         false,
@@ -247,6 +254,7 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "TELEMETRY__TRACE_SAMPLE_RATIO",
     "LOG__LEVEL",
     "SECRETS__ALLOW_LOCAL_PROVIDER",
+    "SECRETS__AWS_REGION",
     "EVENTS__RELAY__AWS_REGION",
     "EVENTS__RELAY__SNS_TOPIC_ARN",
     "EVENTS__RELAY__BATCH_SIZE",

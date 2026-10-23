@@ -128,6 +128,8 @@ pub struct AppConfig {
     pub relay_batch_size: u32,
     pub relay_max_attempts: u32,
     pub relay_backoff_max_ms: u64,
+    /// Explicit AWS region for managed production secret retrieval.
+    pub secrets_aws_region: Option<String>,
 }
 
 /// Validated, non-connecting PostgreSQL runtime intent.
@@ -236,6 +238,7 @@ pub mod defaults {
         pub relay_batch_size: u32,
         pub relay_max_attempts: u32,
         pub relay_backoff_max_ms: u64,
+        pub secrets_aws_region: Option<String>,
         /// `None` until a secret reference is supplied from an upper layer.
         pub db_password_ref: Option<SecretRef>,
     }
@@ -269,6 +272,7 @@ pub mod defaults {
                 relay_batch_size: 10,
                 relay_max_attempts: 10,
                 relay_backoff_max_ms: 3_600_000,
+                secrets_aws_region: None,
                 db_password_ref: None,
             }
         }

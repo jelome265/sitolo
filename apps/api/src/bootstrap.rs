@@ -15,15 +15,17 @@
 //!   -> publish readiness
 //! ```
 //!
-//! The HTTP listener binds only after [`StartupContext`] exists. Managed
-//! production secret adapters do not exist yet, so production startup fails
-//! closed rather than falling back to the development provider.
+//! The HTTP listener binds only after [`StartupContext`] exists. Production
+//! secrets use the ECS task role and AWS Secrets Manager; production never
+//! falls back to the development environment-secret provider.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sitolo_config::{
     AppConfig, DatabaseRuntimeConfig, EnvLoader, LogLevel, config_fingerprint, validate,
 };
+use sitolo_integrations::secrets::AwsSecretsManagerProvider;
 use sitolo_observability::TelemetryBuffer;
 use sitolo_security::{EnvSecretProvider, SecretProvider};
 use thiserror::Error;
@@ -56,13 +58,26 @@ impl StartupContext {
     pub async fn build() -> Result<Self, StartupError> {
         let raw = EnvLoader::load()
             .map_err(|unknown| StartupError::UnknownConfigKey { key: unknown.0 })?;
-        // Environment-appropriate default provider, selected from the
-        // already-parsed (not yet validated) builder.
-        let default: Option<Arc<dyn SecretProvider>> = match raw.environment {
-            sitolo_config::Environment::Production => None,
-            _ => Some(Arc::new(EnvSecretProvider::new(false))),
+        let config = validate(raw).map_err(|invalid| StartupError::ConfigRejected {
+            problems: invalid.problems.len(),
+        })?;
+        let provider: Arc<dyn SecretProvider> = match config.environment {
+            sitolo_config::Environment::Production => {
+                let region = production_secret_region(&config)?;
+                let managed = AwsSecretsManagerProvider::from_ecs_task_role(
+                    region,
+                    config.db_secret_ref().clone(),
+                    Duration::from_secs(5),
+                )
+                .await
+                .map_err(|_| StartupError::SecretProviderUnavailable)?;
+                Arc::new(managed)
+            }
+            sitolo_config::Environment::Development | sitolo_config::Environment::Staging => {
+                Arc::new(EnvSecretProvider::new(false))
+            }
         };
-        Self::assemble(raw, default).await
+        Self::assemble_validated(config, Some(provider)).await
     }
 
     /// Builds from injected pairs with the environment-default provider.
@@ -76,9 +91,8 @@ impl StartupContext {
             .iter()
             .find(|(key, _)| key == "SITOLO__RUNTIME__ENVIRONMENT")
             .map(|(_, value)| value.as_str());
-        // Environment-appropriate default provider. Production has no
-        // managed adapter yet, so it resolves to nothing and fails closed
-        // below instead of silently using the development provider.
+        // Injected-pair builds keep production fail-closed unless a provider
+        // is supplied explicitly; they do not discover AWS task credentials.
         let default: Option<Arc<dyn SecretProvider>> = match selector {
             None | Some("development") | Some("staging") => {
                 Some(Arc::new(EnvSecretProvider::new(false)))
@@ -110,13 +124,20 @@ impl StartupContext {
             problems: invalid.problems.len(),
         })?;
 
+        Self::assemble_validated(config, provider).await
+    }
+
+    async fn assemble_validated(
+        config: AppConfig,
+        provider: Option<Arc<dyn SecretProvider>>,
+    ) -> Result<Self, StartupError> {
         init_logging(config.log_level);
         let telemetry = Arc::new(Mutex::new(TelemetryBuffer::new(
             config.otel_max_queue as usize,
         )));
 
-        // F-020 fail-closed startup: without an explicit provider there is
-        // nothing production-safe to use, so startup refuses.
+        // Injected production compositions must provide an explicit authority;
+        // the real process path constructs its ECS provider before this call.
         let provider = provider.ok_or(StartupError::SecretProviderUnavailable)?;
 
         // Startup secret probe: proves the reference resolves through the
@@ -221,6 +242,13 @@ fn init_logging(level: LogLevel) {
         .try_init();
 }
 
+fn production_secret_region(config: &AppConfig) -> Result<&str, StartupError> {
+    config
+        .secrets_aws_region
+        .as_deref()
+        .ok_or(StartupError::SecretProviderUnavailable)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +277,29 @@ mod tests {
             logging_level(LogLevel::Error),
             tracing::level_filters::LevelFilter::ERROR
         );
+    }
+
+    #[test]
+    fn production_requires_an_explicit_managed_secret_region() {
+        let mut builder = sitolo_config::defaults::Builder::production();
+        builder.db_host = "db.internal".into();
+        builder.db_name = "sitolo".into();
+        builder.db_user = "sitolo_api".into();
+        builder.db_password_ref = Some(
+            sitolo_security::SecretRef::new(
+                sitolo_security::SecretClass::Database,
+                "production/sitolo/api/runtime-db-password",
+            )
+            .expect("static test reference is valid"),
+        );
+        let config = validate(builder.clone()).expect("production database config validates");
+        assert_eq!(
+            production_secret_region(&config),
+            Err(StartupError::SecretProviderUnavailable)
+        );
+
+        builder.secrets_aws_region = Some("af-south-1".into());
+        let config = validate(builder).expect("production AWS region validates");
+        assert_eq!(production_secret_region(&config), Ok("af-south-1"));
     }
 }

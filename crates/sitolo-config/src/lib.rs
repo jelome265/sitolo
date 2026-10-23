@@ -279,4 +279,20 @@ mod contract_tests {
         .unwrap();
         assert!(validate(mismatched).is_err());
     }
+
+    #[test]
+    fn managed_secret_region_is_typed_bounded_and_fingerprinted() {
+        let builder =
+            EnvLoader::from_pairs([("SITOLO__SECRETS__AWS_REGION".into(), "af-south-1".into())])
+                .unwrap();
+        let config = validate(builder).unwrap();
+        assert_eq!(config.secrets_aws_region.as_deref(), Some("af-south-1"));
+
+        let invalid = EnvLoader::from_pairs([(
+            "SITOLO__SECRETS__AWS_REGION".into(),
+            "https://aws.example".into(),
+        )])
+        .unwrap();
+        assert!(validate(invalid).is_err());
+    }
 }

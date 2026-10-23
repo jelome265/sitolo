@@ -112,6 +112,11 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
         "relay_backoff_max_ms",
         &config.relay_backoff_max_ms.to_string(),
     );
+    line(
+        &mut output,
+        "secrets_aws_region",
+        config.secrets_aws_region.as_deref().unwrap_or("<none>"),
+    );
     output
 }
 
@@ -210,6 +215,7 @@ mod tests {
         changed!(relay_batch_size, 11);
         changed!(relay_max_attempts, 9);
         changed!(relay_backoff_max_ms, 3_000_000);
+        changed!(secrets_aws_region, Some("af-south-1".into()));
     }
 
     #[test]
