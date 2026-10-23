@@ -1,6 +1,6 @@
 # PR #49 mandatory mutation transaction matrix
 
-**Source basis:** implementation candidate after `f7fde675ba4c27d478a4c7c7e466e46cb13b25e2` (working-tree changes pending exact-head CI). This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. Database evidence must be checked against the exact current head.
+**Source basis:** `619168b3f9d8ef077deeb0bbbc1b8301a9841a8f`. This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. Database evidence must be checked against the exact current head.
 
 The transaction statements below describe PostgreSQL paths selected when `TenancyEvidenceSink` is configured. `TenancyService::new_postgres` now explicitly requires that durable sink, and role/grant/permission reads use its persisted authority snapshot. Reference constructors remain available, however, and the API runtime does not compose `new_postgres` with authenticated tenant authorization and protected commands. Most request-driven mutations still accept `ActorRef`; these are material gaps even where a transaction test passes.
 

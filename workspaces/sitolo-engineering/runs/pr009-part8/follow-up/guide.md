@@ -6,7 +6,7 @@
 
 ### Current verification snapshot — 2026-10-23
 
-The current PR head is `f7fde675ba4c27d478a4c7c7e466e46cb13b25e2`. All reported checks passed on this exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39892929159), [canonical verification](https://github.com/jelome265/sitolo/actions/runs/39892929109), [policy](https://github.com/jelome265/sitolo/actions/runs/39892929041), [security, dependencies, advisories, secrets and offensive regression](https://github.com/jelome265/sitolo/actions/runs/39892929090), and [CodeQL](https://github.com/jelome265/sitolo/runs/120218047210). PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
+The current PR head is `619168b3f9d8ef077deeb0bbbc1b8301a9841a8f`. PostgreSQL integration, canonical verification, policy, toolchain, advisories, dependency policy, secrets, and offensive regression have passed on this exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39894711683), [canonical verification and toolchain](https://github.com/jelome265/sitolo/actions/runs/39894711685), [policy](https://github.com/jelome265/sitolo/actions/runs/39894711777), [security, dependencies, advisories, secrets and offensive regression](https://github.com/jelome265/sitolo/actions/runs/39894711698). CodeQL is still pending. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
@@ -36,7 +36,7 @@ Treat those as scoped test evidence. The live API authenticates linked identitie
 
 - End-to-end live HTTP tenant authorization and protected command invocation, including cross-tenant/suspended membership denial and spoofed actor/owner regression with no mutation.
 - Production API PostgreSQL composition and a managed production secret provider.
-- A complete independently reviewed transition/actor-provenance matrix and a production service constructor that requires persistent authority and cannot silently fall back to reference storage.
+- Production API composition of `TenancyService::new_postgres`, verified actor provenance for mutations, and an independently reviewed transition matrix. The explicit durable constructor exists, but the live runtime does not use it yet.
 - Concrete SNS FIFO publisher, per-consumer durable inbox/effect transaction, production worker composition, and actual delivery/acknowledgement/retry/quarantine evidence.
 - Real readiness probes for managed secret, database identities/schema, identity provider, tenancy authority and relay dependencies.
 - Independent Stage 06 audit of the final source head and required human PR review.
