@@ -15,9 +15,11 @@ use sitolo_events::{
 };
 use sitolo_persistence::outbox_repository::{OutboxPersistenceError, OutboxReader};
 use thiserror::Error;
+use uuid::Uuid;
 
 const MIN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const MIN_RETRY_DELAY: Duration = Duration::from_millis(1);
 const SUPPORTED_EVENT_VERSION: u32 = 1;
 
 /// A classified failure returned by the concrete transport adapter.
@@ -69,7 +71,7 @@ impl RelayPolicy {
         if !(MIN_POLL_INTERVAL..=MAX_POLL_INTERVAL).contains(&poll_interval) {
             return Err(WorkerError::InvalidPolicy);
         }
-        if retry_base.is_zero() || retry_max < retry_base || retry_max > MAX_BACKOFF {
+        if retry_base < MIN_RETRY_DELAY || retry_max < retry_base || retry_max > MAX_BACKOFF {
             return Err(WorkerError::InvalidPolicy);
         }
         Ok(Self {
@@ -162,10 +164,11 @@ impl RelayWorker {
                     report.published += 1;
                 }
                 Err(failure) if failure.retry_class == RetryClass::Retryable => {
-                    let backoff = retry_backoff(
+                    let backoff = retry_backoff_with_random(
                         self.policy.retry_base,
                         self.policy.retry_max,
                         event.attempt_count,
+                        fresh_jitter_entropy(),
                     );
                     self.reader
                         .release_for_retry(&event.event_id, token, &failure.class, backoff)
@@ -227,9 +230,26 @@ fn is_registered_event(event: &OutboxEvent) -> bool {
         && validate_iam_payload(&event.event_name, event.event_version, &event.payload).is_ok()
 }
 
-fn retry_backoff(base: Duration, ceiling: Duration, attempt_count: u32) -> Duration {
+fn retry_backoff_with_random(
+    base: Duration,
+    ceiling: Duration,
+    attempt_count: u32,
+    random: u64,
+) -> Duration {
     let exponent = attempt_count.saturating_sub(1).min(31);
-    base.saturating_mul(1_u32 << exponent).min(ceiling)
+    let cap = base.saturating_mul(1_u32 << exponent).min(ceiling);
+    let cap_millis = u64::try_from(cap.as_millis()).unwrap_or(u64::MAX);
+    // PostgreSQL stores timestamps at microsecond precision. A 1ms floor
+    // preserves a measurable positive delay while keeping full jitter bounded
+    // by the exponential cap.
+    let jittered_millis = ((u128::from(random) * u128::from(cap_millis)) >> 64) + 1;
+    Duration::from_millis(u64::try_from(jittered_millis).unwrap_or(cap_millis))
+}
+
+fn fresh_jitter_entropy() -> u64 {
+    let [_, _, _, _, _, _, _, _, b8, b9, b10, b11, b12, b13, b14, b15] =
+        Uuid::new_v4().as_u128().to_le_bytes();
+    u64::from_le_bytes([b8, b9, b10, b11, b12, b13, b14, b15])
 }
 
 #[cfg(test)]
@@ -461,7 +481,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retryable_failure_uses_bounded_exponential_backoff() {
+    async fn retryable_failure_uses_bounded_full_jitter_backoff() {
         let failure = DeliveryFailure::new(
             OutboxErrorClass::new("transport_timeout").expect("error class"),
             RetryClass::Retryable,
@@ -473,10 +493,12 @@ mod tests {
 
         let report = worker.process_batch().await.expect("batch succeeds");
         assert_eq!(report.retried, 1);
-        assert_eq!(
-            reader.transitions.lock().expect("transition lock").retried,
-            [("evt-2".to_owned(), Duration::from_secs(8))]
-        );
+        let transitions = reader.transitions.lock().expect("transition lock");
+        assert_eq!(transitions.retried.len(), 1);
+        let (event_id, backoff) = transitions.retried.first().expect("retry transition");
+        assert_eq!(event_id, "evt-2");
+        assert!(*backoff > Duration::ZERO);
+        assert!(*backoff <= Duration::from_secs(8));
     }
 
     #[tokio::test]
@@ -568,6 +590,15 @@ mod tests {
             RelayPolicy::new(
                 claim,
                 Duration::from_secs(1),
+                Duration::from_nanos(999_999),
+                Duration::from_secs(1)
+            )
+            .is_err()
+        );
+        assert!(
+            RelayPolicy::new(
+                claim,
+                Duration::from_secs(1),
                 Duration::from_secs(2),
                 Duration::from_secs(1)
             )
@@ -585,21 +616,28 @@ mod tests {
     }
 
     #[test]
-    fn retry_backoff_saturates_at_configured_ceiling() {
+    fn retry_backoff_uses_full_jitter_within_exponential_ceiling() {
+        let base = Duration::from_secs(2);
+        let ceiling = Duration::from_secs(20);
+
         assert_eq!(
-            retry_backoff(Duration::from_secs(2), Duration::from_secs(20), 1),
+            retry_backoff_with_random(base, ceiling, 1, 0),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            retry_backoff_with_random(base, ceiling, 1, u64::MAX),
             Duration::from_secs(2)
         );
         assert_eq!(
-            retry_backoff(Duration::from_secs(2), Duration::from_secs(20), 4),
+            retry_backoff_with_random(base, ceiling, 4, u64::MAX),
             Duration::from_secs(16)
         );
         assert_eq!(
-            retry_backoff(Duration::from_secs(2), Duration::from_secs(20), 5),
+            retry_backoff_with_random(base, ceiling, 5, u64::MAX),
             Duration::from_secs(20)
         );
         assert_eq!(
-            retry_backoff(Duration::from_secs(2), Duration::from_secs(20), u32::MAX),
+            retry_backoff_with_random(base, ceiling, u32::MAX, u64::MAX),
             Duration::from_secs(20)
         );
     }
