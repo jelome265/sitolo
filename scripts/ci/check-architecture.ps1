@@ -45,7 +45,7 @@ Write-Output "==> Crate boundary contract"
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
 if (-not $python) { Write-Output "Crate boundary check requires Python 3.11+ (tomllib)"; exit 2 }
-if ($python.Name -eq "py") { & py -3 scripts/ci/check-crate-boundaries.py } else { & python scripts/ci/check-crate-boundaries.py }
+if ($python.Name -like "py*") { & py -3 scripts/ci/check-crate-boundaries.py } else { & python scripts/ci/check-crate-boundaries.py }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Output "Architecture check PASSED"
