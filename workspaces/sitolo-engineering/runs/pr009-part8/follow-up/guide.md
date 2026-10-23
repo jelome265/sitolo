@@ -2,49 +2,54 @@
 
 **Purpose:** hand the next engineer/reviewer a precise starting point for the remaining work without reopening findings already fixed.  
 **Current PR:** [#49](https://github.com/jelome265/sitolo/pull/49) — open, unmerged, review required.  
-**Packet:** [Audit](audit.md) · [Remediation plan](remediation-plan.md) · [Stage 09 delivery record](../09-delivery-pr009-part8.md).
+**Packet:** [Audit](audit.md) · [Remediation plan](remediation-plan.md) · [Mutation transaction matrix](pr49-mandatory-mutation-transaction-matrix-2026-10-23.md) · [Stage 09 delivery record](../09-delivery-pr009-part8.md).
 
-### Current verification snapshot — 2026-10-22
+### Current verification snapshot — 2026-10-23
 
-The current PR head is `bf6b7b04edc5de9fb5fe459d72d0d42d7755814b`. GitHub reports all **10/10** associated check runs completed successfully on this exact SHA: `verify`, `toolchain`, PostgreSQL integration, policy, dependency policy, advisories, secrets, CodeQL workflow, offensive regression, and the separate CodeQL check. The PR remains `OPEN`, with `REVIEW_REQUIRED` and merge state `BLOCKED`.
+The current PR head is `f7fde675ba4c27d478a4c7c7e466e46cb13b25e2`. All reported checks passed on this exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39892929159), [canonical verification](https://github.com/jelome265/sitolo/actions/runs/39892929109), [policy](https://github.com/jelome265/sitolo/actions/runs/39892929041), [security, dependencies, advisories, secrets and offensive regression](https://github.com/jelome265/sitolo/actions/runs/39892929090), and [CodeQL](https://github.com/jelome265/sitolo/runs/120218047210). PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
 
-This updates the earlier verification snapshot below; it does not update the code head reviewed by the static audit (`e49de42`) or close AUD-01 through AUD-05. The checks establish only their exercised paths. The relay contract and adapter, authenticated API authority, full IAM transaction coverage, event decisions, and managed production composition still require their stated closure evidence.
+These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
 ## 1. Read the current state correctly
 
 The repository owner approved the three choices on 2026-10-22. The [decision index](decisions/README.md) records the approval scope. Decision selection is no longer blocked; implementation, integration proof, cloud account provisioning, readiness safeguards and human PR review remain.
 
-The code head reviewed for this packet is `e49de425b74c0095fee0737612ae40dbc50c770a`; the delivery/documentation tip at the start was `d863bd2be3eec72fedb9f48709caf1a07a11f2f6`. The delivery record lists 10/10 passing PR checks at that tip and the separate successful release-workflow dispatch, run [39703940077](https://github.com/jelome265/sitolo/actions/runs/39703940077), on `144a284`.
+The `e49de425b74c0095fee0737612ae40dbc50c770a` audit and `d863bd2be3eec72fedb9f48709caf1a07a11f2f6` delivery tip below are historical snapshots, not current source evidence. Older passing checks and release dispatches do not transfer to the current head.
 
-Treat those as scoped test evidence. Do not infer that the live API has authentication, that all IAM transitions are transactionally audited, or that a real event reached a consumer. The current worker executable refuses to start without an approved relay adapter. Production API bootstrap also fails closed because no managed production secret provider is implemented.
+Treat those as scoped test evidence. The live API authenticates linked identities and owned sessions, but does not yet authorize tenant permissions or invoke protected commands. The mutation transaction matrix identifies tested PostgreSQL paths and production composition gaps. No real event delivery to a consumer is proven. The worker executable refuses to start without an approved relay adapter. Production API bootstrap fails closed because no managed production secret provider is implemented.
 
-### Implemented and evidenced
+### Implemented and evidenced (scoped)
 
 - Restricted PostgreSQL LOGIN identities for runtime and worker connections; the administrative identity is not the normal request identity.
 - Part 8 provisioning DDL and a dedicated exact-predicate verifier tied to that DDL, with negative PostgreSQL tests for tenant-blind SELECT and INSERT policies.
 - Organization provisioning success, audit/outbox failure rollback, retry/divergence, and concurrent same-payload evidence in the PostgreSQL integration suite.
+- PostgreSQL transaction paths and rollback/race/idempotency coverage for organization and branch lifecycles, branch creation, membership transitions, invitation issue/accept/withdraw/expiry, and role/scope assignment changes; see the current integration tests and the remediation report for their exact scope.
+- Five owner-approved v1 lifecycle event names and validators. AUD-04 remains open until an independent Stage 06 audit confirms mappings and evidence.
+- Live Axum request authentication with exact linked identity and session ownership checks. Protected operations still stop fail-closed because no production membership/permission authority and command composition is installed.
+- PostgreSQL authorization reads for internal user ID, organization/membership/branch state, effective roles, permissions and grants within one repeatable-read tenant-scoped transaction. The authenticated-user entry point now refuses the in-memory reference store when no durable pool exists.
 - Bounded transport-neutral worker orchestration for claims, stale-lease recovery, event/version guards, retry, and quarantine.
 - Strict split between typed `SITOLO__` configuration and development secret values under `SITOLO_SECRET__`; example files are documentation for process-environment injection, not a dotenv loader.
 - Release workflow PostgreSQL services/DSNs and its documented successful branch-dispatch test.
 
 ### Not implemented or not generally proven
 
-- Authenticated principal-derived owner/actor/tenant authority in the live HTTP route.
+- End-to-end live HTTP tenant authorization and protected command invocation, including cross-tenant/suspended membership denial and spoofed actor/owner regression with no mutation.
 - Production API PostgreSQL composition and a managed production secret provider.
-- Atomic state + audit + outbox coupling for every mandatory IAM mutation. The proof is strongest for organization provisioning; many other methods mutate through the current store before the separate evidence transaction.
-- Canonical audit-event mapping for every IAM lifecycle transition.
-- An approved destination contract, concrete publisher adapter, production worker composition, real acknowledgement semantics, and idempotent consumer evidence.
+- A complete independently reviewed transition/actor-provenance matrix and a production service constructor that requires persistent authority and cannot silently fall back to reference storage.
+- Concrete SNS FIFO publisher, per-consumer durable inbox/effect transaction, production worker composition, and actual delivery/acknowledgement/retry/quarantine evidence.
+- Real readiness probes for managed secret, database identities/schema, identity provider, tenancy authority and relay dependencies.
+- Independent Stage 06 audit of the final source head and required human PR review.
 
 ## 2. Follow this order
 
-1. **Review the proposals and capture explicit owner approval.** Start with [the decision index](decisions/README.md), then review the [relay contract](decisions/relay-delivery-contract-proposal.md), [lifecycle event mapping](decisions/iam-lifecycle-event-mapping-proposal.md), and [identity/runtime/secret provider](decisions/identity-production-runtime-proposal.md). These documents recommend a concrete AWS baseline but do not approve it. Replace any choice that fails the actual hosting, commercial or operational constraints.
-2. **Establish trusted authority.** Connect the verified session/principal to each command. Derive the actor and initial owner on the server; tenant IDs supplied by a client select a resource but do not authorize it.
-3. **Close the transaction boundary.** Refactor every mandatory state mutation so that business state, the audit row, and outbox intent use one authoritative PostgreSQL transaction. Add rollback tests for audit and outbox failures, not just success tests.
-4. **Compose real runtime dependencies.** Implement the approved production secret provider and actual API/worker database pools, preserving separate runtime and worker identities. Keep startup fail-closed until all required dependencies are valid.
-5. **Build delivery against the approved contract.** Use the real adapter and prove the acknowledgement point, duplicate behavior, retry/lease recovery, quarantine, and consumer idempotency.
-6. **Run exact-source verification and re-audit.** Update evidence against the final code SHA, request human review, and leave merge to the authorized reviewer.
+1. **Complete the live authority path.** Compose production OIDC/session and PostgreSQL tenancy authority. Derive owner and actor from the verified principal; request tenant IDs remain selectors. Keep writes disabled until permission and resource scope are resolved before the command.
+2. **Require one production repository path.** Separate reference/test construction from production construction. Complete the transition and actor-provenance matrix, and ensure each required mutation uses one PostgreSQL transaction for state, audit and outbox with rollback/race/idempotency evidence.
+3. **Finish AUD-04 with independent audit.** Trace all five owner-approved payloads from state transition through construction, persistence and relay acceptance. Do not self-certify Stage 06.
+4. **Build delivery against the approved contract.** Implement the SNS FIFO adapter with explicit region/topic configuration and ECS task credentials, then the consumer inbox/effect transaction and SQS delete-after-commit behavior. Prove service behavior in a contract-faithful environment; do not invent resource identifiers.
+5. **Compose production runtime and readiness.** Add managed secrets and restricted API/worker database pools, include required schemas in controlled migrations, and fail readiness on missing identity, DB, tenancy or relay dependencies.
+6. **Run exact-source verification, re-audit and human review.** Keep PR #49 open and unmerged until all required checks and reviews are complete.
 
-The detailed tasks and acceptance criteria are in the [remediation plan](remediation-plan.md).
+The detailed tasks and acceptance criteria are in the [remediation plan](remediation-plan.md). The [mutation transaction matrix](pr49-mandatory-mutation-transaction-matrix-2026-10-23.md) maps current mutation paths and tests but explicitly records the remaining production actor/composition and independent-audit gaps.
 
 ## 3. Environment and test safety
 
