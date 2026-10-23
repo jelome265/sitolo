@@ -16,6 +16,6 @@ pub use error::{AppError, ErrorFamily, ProblemDetails, PublicError, Retryability
 pub use tenancy::{
     BranchResponse, CreateBranchRequest, CreateOrganizationRequest, OrganizationResponse,
     ProvisionedOrganizationResponse, bounds as tenancy_bounds, ensure_body_bounded,
-    map_tenancy_error, validate_create_branch_input, validate_create_organization_input,
-    validate_identifier, validate_name,
+    map_authorized_tenancy_error, map_tenancy_error, validate_create_branch_input,
+    validate_create_organization_input, validate_identifier, validate_name,
 };

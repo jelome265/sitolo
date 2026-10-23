@@ -48,7 +48,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
-use sitolo_auth::{AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter};
+use sitolo_auth::{
+    AbuseClass, AuditEventId, RateLimitDecision, RateLimitRule, RateLimiter, SecurityContext,
+};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, InvitationState, Permission, Role,
     RoleAssignment, RoleAssignmentState, Scope, ScopeGrant, ScopeGrantState, authorize_scope,
@@ -193,6 +195,18 @@ pub struct TenancyService {
     /// intentionally see the pre-Part-8 behavior (no evidence emitted)
     /// rather than a hard failure, so this stays additive.
     evidence: Option<TenancyEvidenceSink>,
+}
+
+/// Combined failure from an authenticated tenancy command.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AuthorizedTenancyError {
+    /// Persisted membership, permission, or scope denied the command.
+    #[error(transparent)]
+    Authorization(#[from] ScopeError),
+    /// The domain command or mandatory evidence transaction failed.
+    #[error(transparent)]
+    Tenancy(#[from] TenancyError),
 }
 
 /// Fallback abuse rules when the deployment supplies none. These are
@@ -1675,6 +1689,126 @@ impl TenancyService {
             }),
         )
         .await?;
+        Ok(branch)
+    }
+
+    /// Creates a branch after authorizing the verified principal against
+    /// current PostgreSQL authority while holding the organization's mutation
+    /// lock.
+    /// Business state, audit evidence and outbox intent commit together.
+    ///
+    /// # Errors
+    /// Returns [`AuthorizedTenancyError::Authorization`] when current
+    /// persisted membership, role, permission or scope denies the request;
+    /// returns [`AuthorizedTenancyError::Tenancy`] for invalid or conflicting
+    /// branch state and mandatory evidence failures.
+    ///
+    /// # Panics
+    /// This method does not panic.
+    pub async fn create_branch_for_authenticated_user(
+        &self,
+        security_context: &SecurityContext,
+        id: BranchId,
+        organization_id: OrganizationId,
+        name: &str,
+    ) -> Result<Branch, AuthorizedTenancyError> {
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(ScopeError::AuthorityUnavailable)?;
+        let user_id = TenantUserId::new(security_context.principal.subject_id.as_str())?;
+        let mut branch = Branch::provision(id.clone(), organization_id.clone(), name)?;
+        branch.activate()?;
+
+        let mut tx = sink.pool.begin().await.map_err(|_| {
+            AuthorizedTenancyError::Tenancy(TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_branch_create_begin",
+                sqlstate: None,
+            })
+        })?;
+        establish_authorized_mutation_transaction(&mut tx, &organization_id).await?;
+        let locked_organization_state: Option<String> =
+            sqlx_core::query_scalar::query_scalar("SELECT lock_organization_mutations($1)")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+        if locked_organization_state.is_none() {
+            return Err(ScopeError::OrganizationDenied.into());
+        }
+        let organization_state: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT state FROM organizations WHERE id = $1")
+                .bind(organization_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ScopeError::AuthorityUnavailable)?;
+        if organization_state.as_ref().map(|(state,)| state.as_str()) != Some("ACTIVE") {
+            return Err(ScopeError::OrganizationNotActive.into());
+        }
+        let scope = authorize_postgres_operation_in_transaction(
+            &mut tx,
+            &organization_id,
+            MembershipSelector::User(&user_id),
+            None,
+            Permission::BranchCreate,
+        )
+        .await?;
+
+        query("INSERT INTO branches (id, organization_id, name, state, state_version) VALUES ($1, $2, $3, 'ACTIVE', 2)")
+            .bind(id.as_str())
+            .bind(organization_id.as_str())
+            .bind(&branch.name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| {
+                let sqlstate = match &error {
+                    SqlxError::Database(database_error) => {
+                        database_error.code().map(|code| code.into_owned())
+                    }
+                    _ => None,
+                };
+                if sqlstate.as_deref() == Some("23505") {
+                    AuthorizedTenancyError::Tenancy(TenancyError::Conflict)
+                } else {
+                    AuthorizedTenancyError::Tenancy(
+                        TenancyError::EvidencePersistenceFailedAt {
+                            stage: "authorized_branch_create_insert",
+                            sqlstate,
+                        },
+                    )
+                }
+            })?;
+        self.record_evidence_in_transaction(
+            &mut tx,
+            IamEventName::BranchCreated,
+            &organization_id,
+            Some(&id),
+            TargetRef::Branch(id.clone()),
+            ActorRef {
+                subject_ref: security_context.principal.subject_id.as_str().to_owned(),
+                membership_ref: Some(scope.membership_id.as_str().to_owned()),
+                device_ref: security_context
+                    .principal
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.as_str().to_owned()),
+            },
+            "create_branch",
+            "branch",
+            id.to_string(),
+            serde_json::json!({
+                "organization_id": organization_id.as_str(),
+                "branch_id": id.as_str(),
+                "branch_name": branch.name,
+            }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|_| TenancyError::EvidencePersistenceFailedAt {
+                stage: "authorized_branch_create_commit",
+                sqlstate: None,
+            })?;
         Ok(branch)
     }
 
@@ -3671,6 +3805,26 @@ async fn establish_scope_transaction(
     Ok(())
 }
 
+async fn establish_authorized_mutation_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+) -> Result<(), ScopeError> {
+    // READ COMMITTED gives each statement a fresh snapshot after the advisory
+    // lock is acquired. This matters when a request waits behind membership,
+    // role, or scope revocation: its subsequent authority reads must see the
+    // revocation before the command proceeds.
+    query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    query("SELECT set_config('app.organization_id', $1, true)")
+        .bind(organization_id.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(())
+}
+
 async fn load_effective_scope(
     tx: &mut Transaction<'_, Postgres>,
     organization_id: &OrganizationId,
@@ -3785,14 +3939,35 @@ async fn authorize_postgres_operation(
         .await
         .map_err(|_| ScopeError::AuthorityUnavailable)?;
     establish_scope_transaction(&mut tx, organization_id).await?;
-    let mut scope = load_effective_scope(&mut tx, organization_id, selector, branch_id).await?;
+    let scope = authorize_postgres_operation_in_transaction(
+        &mut tx,
+        organization_id,
+        selector,
+        branch_id,
+        permission,
+    )
+    .await?;
+    tx.commit()
+        .await
+        .map_err(|_| ScopeError::AuthorityUnavailable)?;
+    Ok(scope)
+}
+
+async fn authorize_postgres_operation_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: &OrganizationId,
+    selector: MembershipSelector<'_>,
+    branch_id: Option<&BranchId>,
+    permission: Permission,
+) -> Result<EffectiveScope, ScopeError> {
+    let mut scope = load_effective_scope(tx, organization_id, selector, branch_id).await?;
     let assignments: Vec<(String, String, i64)> = sqlx_core::query_as::query_as(
         "SELECT id, role, state_version FROM role_assignments \
          WHERE organization_id = $1 AND membership_id = $2 AND state = 'EFFECTIVE'",
     )
     .bind(organization_id.as_str())
     .bind(scope.membership_id.as_str())
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|_| ScopeError::AuthorityUnavailable)?;
     let assignments = assignments
@@ -3827,7 +4002,7 @@ async fn authorize_postgres_operation(
     )
     .bind(organization_id.as_str())
     .bind(scope.membership_id.as_str())
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|_| ScopeError::AuthorityUnavailable)?;
     let grants = grants
@@ -3868,9 +4043,6 @@ async fn authorize_postgres_operation(
         return Err(ScopeError::ScopeDenied);
     }
     scope.permissions = permissions;
-    tx.commit()
-        .await
-        .map_err(|_| ScopeError::AuthorityUnavailable)?;
     Ok(scope)
 }
 

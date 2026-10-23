@@ -1357,15 +1357,19 @@ dependencies = [
  "sitolo-application",
  "sitolo-auth",
  "sitolo-config",
+ "sitolo-domain",
  "sitolo-observability",
  "sitolo-persistence",
  "sitolo-security",
+ "sqlx-core",
+ "sqlx-postgres",
  "thiserror",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

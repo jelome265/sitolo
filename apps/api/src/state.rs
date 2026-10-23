@@ -7,6 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use sitolo_api::{AppError, authenticate_request, extract_bearer, map_auth_error};
+use sitolo_application::TenancyService;
 use sitolo_auth::{IdentityProviderPort, SecurityContext, SessionId};
 use sitolo_config::DatabaseTarget;
 use sitolo_observability::RequestId;
@@ -24,6 +25,7 @@ pub struct AppState {
     telemetry: Arc<Mutex<TelemetryBuffer>>,
     identity_provider: Option<Arc<dyn IdentityProviderPort>>,
     identity_authority: Option<Arc<dyn RequestIdentityAuthority>>,
+    tenancy_service: Option<Arc<TenancyService>>,
     runtime_ready: bool,
 }
 
@@ -43,6 +45,7 @@ impl AppState {
             telemetry,
             identity_provider: None,
             identity_authority: None,
+            tenancy_service: None,
             runtime_ready: false,
         }
     }
@@ -59,6 +62,32 @@ impl AppState {
         self.identity_provider = Some(identity_provider);
         self.identity_authority = Some(identity_authority);
         self
+    }
+
+    /// Adds the durable tenancy command service to an explicitly composed
+    /// runtime. The production bootstrap must provide `new_postgres`; no
+    /// in-memory default is installed here.
+    ///
+    /// # Errors
+    /// This builder performs no I/O and cannot fail.
+    ///
+    /// # Panics
+    /// This builder does not panic.
+    #[must_use]
+    pub fn with_tenancy_service(mut self, tenancy_service: Arc<TenancyService>) -> Self {
+        self.tenancy_service = Some(tenancy_service);
+        self
+    }
+
+    /// Returns the configured tenancy service, if one was explicitly composed.
+    ///
+    /// # Errors
+    /// This accessor has no error result.
+    ///
+    /// # Panics
+    /// This accessor does not panic.
+    pub fn tenancy_service(&self) -> Option<&TenancyService> {
+        self.tenancy_service.as_deref()
     }
 
     /// Marks readiness only after the durable database, identity, tenancy,

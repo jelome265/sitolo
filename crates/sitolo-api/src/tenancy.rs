@@ -9,6 +9,7 @@
 //! unknown fields are rejected (§10.1).
 
 use serde::{Deserialize, Serialize};
+use sitolo_application::AuthorizedTenancyError;
 #[cfg(test)]
 use sitolo_application::TenancyService;
 #[cfg(test)]
@@ -17,6 +18,7 @@ use sitolo_domain::tenancy::{Branch, BranchState, Organization, OrganizationStat
 #[cfg(test)]
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenantUserId};
 use sitolo_persistence::ProvisionedOrganization;
+use sitolo_tenancy::ScopeError;
 
 use crate::error::AppError;
 
@@ -226,6 +228,19 @@ pub fn map_tenancy_error(err: &TenancyError) -> AppError {
         // downstream persistence outage, not a problem with the request.
         TenancyError::EvidencePersistenceFailed
         | TenancyError::EvidencePersistenceFailedAt { .. } => AppError::DependencyUnavailable,
+    }
+}
+
+/// Maps an authenticated command result without disclosing tenant state.
+#[must_use]
+pub fn map_authorized_tenancy_error(error: &AuthorizedTenancyError) -> AppError {
+    match error {
+        AuthorizedTenancyError::Authorization(ScopeError::AuthorityUnavailable) => {
+            AppError::DependencyUnavailable
+        }
+        AuthorizedTenancyError::Authorization(_) => AppError::Authorization,
+        AuthorizedTenancyError::Tenancy(error) => map_tenancy_error(error),
+        _ => AppError::Internal,
     }
 }
 

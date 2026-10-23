@@ -24,6 +24,7 @@ sitolo-api = { path = "../../crates/sitolo-api" }
 sitolo-auth.workspace = true
 sitolo-application = { path = "../../crates/sitolo-application" }
 sitolo-config.workspace = true
+sitolo-domain = { path = "../../crates/sitolo-domain" }
 sitolo-observability.workspace = true
 sitolo-persistence = { path = "../../crates/sitolo-persistence" }
 sitolo-security.workspace = true
@@ -36,4 +37,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 tokio.workspace = true
+uuid.workspace = true

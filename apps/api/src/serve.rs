@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::error_handling::HandleErrorLayer;
-use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -27,6 +28,11 @@ use crate::shutdown::{
 };
 use crate::state::AppState;
 use sitolo_api::{AppError, ProblemDetails};
+use sitolo_api::{
+    BranchResponse, CreateBranchRequest, map_authorized_tenancy_error, validate_create_branch_input,
+};
+use sitolo_auth::SecurityContext;
+use sitolo_domain::tenancy::{BranchId, OrganizationId};
 use sitolo_observability::RequestId;
 
 const MAX_INGRESS_BODY_BYTES: usize = 32 * 1024;
@@ -124,8 +130,9 @@ pub enum ServeError {
 
 /// Builds the single live router from its validated permission/body/deadline inventory.
 ///
-/// Protected handlers authenticate requests but return dependency unavailable until
-/// the PostgreSQL tenant authorization and command path is fully composed.
+/// The branch-create route authenticates before typed request extraction and
+/// invokes only the durable, transaction-authorized command when supplied.
+/// Other protected routes remain closed until their command paths are composed.
 ///
 /// # Errors
 /// Returns [`ServeError::InvalidRouteInventory`] if declarations are invalid or the
@@ -152,6 +159,20 @@ pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
                 get(readiness)
                     .layer::<_, Infallible>(body_limit)
                     .layer::<_, Infallible>(timeout),
+            ),
+            (
+                Method::Post,
+                "/v1/organizations/{organization_id}/branches",
+                Access::Permission(_),
+            ) => router.route(
+                spec.path,
+                post(create_branch_route)
+                    .layer::<_, Infallible>(body_limit)
+                    .layer::<_, Infallible>(timeout)
+                    .route_layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        authenticate_protected_request,
+                    )),
             ),
             (Method::Post, _, Access::Permission(_)) => router.route(
                 spec.path,
@@ -262,6 +283,25 @@ async fn readiness(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+async fn authenticate_protected_request(
+    State(state): State<Arc<AppState>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    let authorization = header_text(request.headers(), header::AUTHORIZATION);
+    let session_selector = header_text(request.headers(), "session-id");
+    match state
+        .authenticate_request(authorization, session_selector)
+        .await
+    {
+        Ok(security_context) => {
+            request.extensions_mut().insert(security_context);
+            next.run(request).await
+        }
+        Err(error) => app_error_response(error),
+    }
+}
+
 async fn protected_route(State(state): State<Arc<AppState>>, request: Request<Body>) -> Response {
     let authorization = header_text(request.headers(), header::AUTHORIZATION);
     let session_selector = header_text(request.headers(), "session-id");
@@ -271,6 +311,40 @@ async fn protected_route(State(state): State<Arc<AppState>>, request: Request<Bo
     {
         Ok(_security_context) => app_error_response(AppError::DependencyUnavailable),
         Err(error) => app_error_response(error),
+    }
+}
+
+async fn create_branch_route(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<String>,
+    Extension(security_context): Extension<SecurityContext>,
+    axum::Json(request): axum::Json<CreateBranchRequest>,
+) -> Response {
+    if let Err(error) = validate_create_branch_input(&organization_id, &request) {
+        return app_error_response(error);
+    }
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(request.branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(AppError::DependencyUnavailable);
+    };
+    match service
+        .create_branch_for_authenticated_user(
+            &security_context,
+            branch_id,
+            organization_id,
+            &request.name,
+        )
+        .await
+    {
+        Ok(branch) => axum::Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
     }
 }
 
