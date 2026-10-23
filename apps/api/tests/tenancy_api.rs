@@ -711,7 +711,10 @@ async fn live_branch_activation_authenticates_and_commits_authorized_transition(
     let identities = identity_database();
     let session_id = provision_identity(&identities, "user-1", true).await;
     let denied_session = provision_identity(&identities, "user-2", false).await;
-    assert_ne!(session_id, denied_session, "test identities must receive distinct session IDs");
+    assert_ne!(
+        session_id, denied_session,
+        "test identities must receive distinct session IDs"
+    );
     identities
         .bind_external_identity(
             "test-issuer".to_owned(),
@@ -805,7 +808,10 @@ async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
     let identities = identity_database();
     let owner_session = provision_identity(&identities, "user-1", true).await;
     let cashier_session = provision_identity(&identities, "user-2", false).await;
-    assert_ne!(owner_session, cashier_session, "test identities must receive distinct session IDs");
+    assert_ne!(
+        owner_session, cashier_session,
+        "test identities must receive distinct session IDs"
+    );
     identities
         .bind_external_identity(
             "test-issuer".to_owned(),

@@ -10,7 +10,7 @@ This document is normative. Every rule has an ID, a severity and an enforcement 
 ## 0. Authority and precedence
 
 1. This rulebook is the floor. A project may be stricter, never looser, unless a documented exception exists with an owner, a reason and an expiry date.
-2. Project-local files (`CLAUDE.md`, `AGENTS.md`, `clippy.toml`, `rustfmt.toml`, `deny.toml`, `[workspace.lints]`) are read first. If they relax a BP rule without an exception record, that is a finding (see audit skill, AUD-CFG rules).
+2. Project-local files ([root ICM router](../../../CLAUDE.md), [root Codex entry point](../../../AGENTS.md), `clippy.toml`, `rustfmt.toml`, `deny.toml`, `[workspace.lints]`) are read first. If they relax a BP rule without an exception record, that is a finding (see audit skill, AUD-CFG rules).
 3. Security rules (SEC-*) live in `rust-enterprise-harden`. Audit procedures live in `rust-enterprise-audit`. Build procedures live in `rust-enterprise-implement`. Those skills cite BP rules; they do not override them.
 4. "It compiles" and "clippy is green" are necessary, not sufficient.
 

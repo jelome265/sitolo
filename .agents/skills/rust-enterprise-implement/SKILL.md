@@ -22,7 +22,7 @@ Before modifying code, follow the binding execution procedure in `references/har
 
 Run and read, in this order:
 
-1. Project instruction files: `CLAUDE.md`, `AGENTS.md`, and the same names in `.claude/`, `.cursor/`, `.codex/` if present. These rules apply in addition to the BP rulebook. If they relax a BP rule, record the conflict and follow the stricter rule unless the user confirms an exception.
+1. Project instruction files: [root ICM router](../../../CLAUDE.md), [root Codex entry point](../../../AGENTS.md), and the same names in `.claude/`, `.cursor/`, `.codex/` if present. These rules apply in addition to the BP rulebook. If they relax a BP rule, record the conflict and follow the stricter rule unless the user confirms an exception.
 2. Toolchain and policy: `rust-toolchain.toml`, `Cargo.toml` (`[workspace]`, `[workspace.lints]`, `[workspace.dependencies]`, `[profile.*]`), `clippy.toml`, `rustfmt.toml`, `deny.toml`, `supply-chain/` (cargo-vet), `.github/workflows/` or equivalent CI, `Dockerfile`s.
 3. Architecture docs: `docs/`, ADRs under `docs/adr/`, bounded-context maps, API specs (OpenAPI, protobuf, JSON Schema), event schemas.
 4. Current state: `cargo metadata --locked --format-version 1 > /dev/null`, `cargo test --workspace --locked` (record baseline), `cargo clippy --workspace --all-targets --locked -- -D warnings` (record baseline).

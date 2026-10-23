@@ -12,8 +12,8 @@
 //! production wiring must use an OS CSPRNG through `sitolo_security::RandomSource`.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -150,7 +150,9 @@ impl IdentityDatabase {
         // A shared sequence keeps parallel tests from assigning the same session,
         // refresh-family, or artifact ID to different users.
         static NEXT_TEST_RANDOM: AtomicU64 = AtomicU64::new(1);
-        let sequence = NEXT_TEST_RANDOM.fetch_add(1, Ordering::Relaxed).to_le_bytes();
+        let sequence = NEXT_TEST_RANDOM
+            .fetch_add(1, Ordering::Relaxed)
+            .to_le_bytes();
         let mut out = vec![0u8; len];
         for (index, byte) in out.iter_mut().enumerate() {
             *byte = sequence
