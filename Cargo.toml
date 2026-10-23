@@ -71,6 +71,12 @@ sitolo-observability = { path = "crates/sitolo-observability" }
 sitolo-persistence = { path = "crates/sitolo-persistence" }
 sitolo-config = { path = "crates/sitolo-config" }
 
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+non_ascii_idents = "deny"
+
 [profile.dev]
 overflow-checks = true
 
@@ -80,9 +86,18 @@ lto = "thin"
 debug = "line-tables-only"
 
 [workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 unimplemented = "deny"
 todo = "deny"
 unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+mem_forget = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"

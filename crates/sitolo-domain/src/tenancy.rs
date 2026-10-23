@@ -443,6 +443,16 @@ impl Membership {
     }
 }
 
+/// The domain projection committed when an organization is provisioned with
+/// its owner membership and default branch. Persistence adapters return this
+/// value only after the atomic provisioning transaction succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedOrganization {
+    pub organization: Organization,
+    pub owner_membership: Membership,
+    pub default_branch: Branch,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,10 +14,11 @@ use sitolo_application::AuthorizedTenancyError;
 use sitolo_application::TenancyService;
 #[cfg(test)]
 use sitolo_audit::ActorRef;
-use sitolo_domain::tenancy::{Branch, BranchState, Organization, OrganizationState, TenancyError};
+use sitolo_domain::tenancy::{
+    Branch, BranchState, Organization, OrganizationState, ProvisionedOrganization, TenancyError,
+};
 #[cfg(test)]
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenantUserId};
-use sitolo_persistence::ProvisionedOrganization;
 use sitolo_tenancy::ScopeError;
 
 use crate::error::AppError;

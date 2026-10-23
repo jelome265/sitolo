@@ -25,6 +25,7 @@ rustls.workspace = true
 sqlx-core.workspace = true
 sqlx-postgres.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

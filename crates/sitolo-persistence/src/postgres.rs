@@ -351,8 +351,9 @@ impl PgAuthorityPools {
 
                     if norm_qual != expected_canonical_norm || norm_check != expected_canonical_norm
                     {
-                        eprintln!(
-                            "RLS policy expression mismatch for table {table}:\nGot qual raw: {qual}\nGot qual norm: {norm_qual}\nExpected norm: {expected_canonical_norm}"
+                        tracing::error!(
+                            table = %table,
+                            "RLS policy expression mismatch"
                         );
                         return Err(PgAuthorityError::SecurityViolation);
                     }
@@ -392,7 +393,11 @@ pub async fn verify_part8_provisioning_rls_metadata(
 ) -> Result<(), PgAuthorityError> {
     macro_rules! violation {
         ($table:expr, $reason:expr) => {{
-            eprintln!("Part 8 RLS contract violation on {}: {}", $table, $reason);
+            tracing::error!(
+                table = %$table,
+                reason = %$reason,
+                "Part 8 RLS contract violation"
+            );
             return Err(PgAuthorityError::SecurityViolation);
         }};
     }

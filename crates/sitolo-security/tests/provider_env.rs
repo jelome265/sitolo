@@ -4,6 +4,10 @@
 //! `unsafe` in edition 2024 and library sources forbid unsafe code outright.
 //! Each test scopes its mutation and no other test target in this package
 //! reads process environment, so a scoped set/remove cannot race a reader.
+#![expect(
+    unsafe_code,
+    reason = "Rust 2024 requires unsafe environment mutation in this serialized integration-test harness"
+)]
 
 use std::future::Future;
 use std::pin::Pin;

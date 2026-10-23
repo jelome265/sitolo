@@ -64,7 +64,8 @@ use sitolo_authz::{
 };
 use sitolo_domain::tenancy::{
     Branch, BranchId, InvitationId, Membership, MembershipId, MembershipState, Organization,
-    OrganizationId, RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
+    OrganizationId, ProvisionedOrganization, RoleAssignmentId, ScopeGrantId, TenancyError,
+    TenantUserId,
 };
 
 /// The atomic result of accepting an invitation: the claimed invitation,
@@ -101,16 +102,6 @@ pub struct CreateInvitationInput {
     pub raw_token: String,
     pub ttl: Duration,
     pub now: SystemTime,
-}
-
-/// The atomic result of provisioning an organization (Phase 4 section 7.1):
-/// organization, owner membership, and default branch committed together.
-/// There is no observable state with an organization but no owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvisionedOrganization {
-    pub organization: Organization,
-    pub owner_membership: Membership,
-    pub default_branch: Branch,
 }
 
 /// Tenant topology persistence port.

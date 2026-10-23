@@ -25,9 +25,9 @@ pub use runtime::{
     PersistenceFailureKind, PersistenceInitError,
 };
 pub use runtime_pool::{PgRuntimePool, PgWorkerPool, RuntimePoolError};
+pub use sitolo_domain::tenancy::ProvisionedOrganization;
 pub use tenancy::{
-    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
-    TenancyDatabase, TenancyStores,
+    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, TenancyDatabase, TenancyStores,
 };
 
 pub mod audit_repository;

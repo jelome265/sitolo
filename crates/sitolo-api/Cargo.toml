@@ -13,12 +13,12 @@ sitolo-audit.workspace = true
 sitolo-auth = { path = "../sitolo-auth" }
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-observability = { path = "../sitolo-observability" }
-sitolo-persistence = { path = "../sitolo-persistence" }
 sitolo-security = { path = "../sitolo-security" }
 sitolo-tenancy = { path = "../sitolo-tenancy" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+sitolo-persistence = { path = "../sitolo-persistence" }
 tokio = { workspace = true }
 
 [lints]
