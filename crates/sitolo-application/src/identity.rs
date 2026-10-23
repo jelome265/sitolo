@@ -67,7 +67,10 @@ pub struct IdentityService {
     db: Arc<IdentityDatabase>,
     hasher: Arc<dyn PasswordHasher>,
     // Wired for future OIDC provider use; not yet consulted by reference use cases.
-    #[expect(dead_code, reason = "The optional provider injection is reserved for the planned OIDC reference flow; request authentication uses the authority port today.")]
+    #[expect(
+        dead_code,
+        reason = "The optional provider injection is reserved for the planned OIDC reference flow; request authentication uses the authority port today."
+    )]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
     policy: IdentityPolicy,
