@@ -64,7 +64,8 @@ use sitolo_authz::{
 };
 use sitolo_domain::tenancy::{
     Branch, BranchId, InvitationId, Membership, MembershipId, MembershipState, Organization,
-    OrganizationId, RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
+    OrganizationId, ProvisionedOrganization, RoleAssignmentId, ScopeGrantId, TenancyError,
+    TenantUserId,
 };
 
 /// The atomic result of accepting an invitation: the claimed invitation,
@@ -101,16 +102,6 @@ pub struct CreateInvitationInput {
     pub raw_token: String,
     pub ttl: Duration,
     pub now: SystemTime,
-}
-
-/// The atomic result of provisioning an organization (Phase 4 section 7.1):
-/// organization, owner membership, and default branch committed together.
-/// There is no observable state with an organization but no owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvisionedOrganization {
-    pub organization: Organization,
-    pub owner_membership: Membership,
-    pub default_branch: Branch,
 }
 
 /// Tenant topology persistence port.
@@ -758,7 +749,7 @@ impl TenancyStores for TenancyDatabase {
         let assignment = state
             .assignments
             .get_mut(&target)
-            .expect("indexed assignment exists");
+            .ok_or(TenancyError::NotFound)?;
         assignment.revoke()?;
         Ok(assignment.clone())
     }
@@ -876,8 +867,8 @@ impl TenancyStores for TenancyDatabase {
                 && existing.membership_id == membership_id
                 && existing.proposed_role == proposed_role
                 && existing.proposed_scope == proposed_scope
-                && existing.contact == contact
-                && existing.token_hash == token_hash;
+                && existing.contact.as_ref() == Some(&contact)
+                && existing.token_hash == Some(token_hash);
             if same {
                 let membership = state
                     .memberships
@@ -981,6 +972,7 @@ impl TenancyStores for TenancyDatabase {
                     .ok_or(InvitationError::Invalid)?;
                 let _ = invitation.accept(now);
             }
+            state.by_token_hash.remove(&token_hash);
             if let Some(invitation) = state.invitations.get(&invitation_id).cloned() {
                 expire_linked_membership(&mut state, &invitation);
             }
@@ -1061,6 +1053,7 @@ impl TenancyStores for TenancyDatabase {
             .ok_or(InvitationError::Invalid)?;
         invitation.accept(now)?;
         let invitation = invitation.clone();
+        state.by_token_hash.remove(&token_hash);
         Ok(AcceptedInvitation {
             invitation,
             membership,
@@ -1081,12 +1074,19 @@ impl TenancyStores for TenancyDatabase {
             .filter(|invitation| invitation.organization_id == *organization_id)
             .map(|invitation| invitation.id.clone())
             .ok_or(InvitationError::Invalid)?;
+        let token_hash = state
+            .invitations
+            .get(&target)
+            .and_then(|invitation| invitation.token_hash);
         {
             let invitation = state
                 .invitations
                 .get_mut(&target)
                 .ok_or(InvitationError::Invalid)?;
             invitation.revoke()?;
+        }
+        if let Some(token_hash) = token_hash {
+            state.by_token_hash.remove(&token_hash);
         }
         // Withdrawing the invitation releases the linked membership for
         // re-enrollment: Invited -> Pending -> Expired.
@@ -1113,8 +1113,15 @@ impl TenancyStores for TenancyDatabase {
             .collect();
         let mut expired = 0u64;
         for id in lapsed {
+            let token_hash = state
+                .invitations
+                .get(&id)
+                .and_then(|invitation| invitation.token_hash);
             if let Some(invitation) = state.invitations.get_mut(&id) {
                 let _ = invitation.accept(now);
+            }
+            if let Some(token_hash) = token_hash {
+                state.by_token_hash.remove(&token_hash);
             }
             if let Some(invitation) = state.invitations.get(&id).cloned() {
                 expire_linked_membership(&mut state, &invitation);
@@ -1363,20 +1370,25 @@ mod tests {
     use sitolo_authz::ContactKind;
     use sitolo_domain::tenancy::{BranchState, MembershipState, OrganizationState};
 
+    #[expect(
+        clippy::unwrap_used,
+        reason = "unit-test organization identifiers are fixed valid fixture literals"
+    )]
     fn org_id(value: &str) -> OrganizationId {
         OrganizationId::new(value).unwrap()
     }
 
+    #[expect(
+        clippy::unwrap_used,
+        reason = "unit-test user identifiers are fixed valid fixture literals"
+    )]
     fn user(value: &str) -> TenantUserId {
         TenantUserId::new(value).unwrap()
     }
 
-    async fn active_org(db: &TenancyDatabase, id: &str) -> Organization {
-        let org = db
-            .create_organization(org_id(id), "Merchant")
-            .await
-            .unwrap();
-        db.activate_organization(&org.id).await.unwrap()
+    async fn active_org(db: &TenancyDatabase, id: &str) -> Result<Organization, TenancyError> {
+        let org = db.create_organization(org_id(id), "Merchant").await?;
+        db.activate_organization(&org.id).await
     }
 
     #[test]
@@ -1385,33 +1397,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn organization_create_is_idempotent_on_same_payload() {
+    async fn organization_create_is_idempotent_on_same_payload()
+    -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        let first = db
-            .create_organization(org_id("o1"), "Merchant")
-            .await
-            .unwrap();
-        let retry = db
-            .create_organization(org_id("o1"), "Merchant")
-            .await
-            .unwrap();
+        let first = db.create_organization(org_id("o1"), "Merchant").await?;
+        let retry = db.create_organization(org_id("o1"), "Merchant").await?;
         assert_eq!(first, retry);
         // Same id with divergent semantics conflicts (section 56).
         assert_eq!(
             db.create_organization(org_id("o1"), "Other Name").await,
             Err(TenancyError::Conflict)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn organization_lifecycle_persists() {
+    async fn organization_lifecycle_persists() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        let org = active_org(&db, "o1").await;
+        let org = active_org(&db, "o1").await?;
         assert!(org.can_operate());
-        let suspended = db.suspend_organization(&org.id).await.unwrap();
+        let suspended = db.suspend_organization(&org.id).await?;
         assert!(!suspended.can_operate());
         assert_eq!(
-            db.organization_snapshot(&org.id).await.unwrap().state,
+            db.organization_snapshot(&org.id)
+                .await
+                .ok_or_else(|| std::io::Error::other("organization snapshot exists"))?
+                .state,
             OrganizationState::Suspended
         );
         assert_eq!(
@@ -1422,51 +1433,49 @@ mod tests {
             db.suspend_organization(&org_id("missing")).await,
             Err(TenancyError::NotFound)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn branch_requires_operating_organization() {
+    async fn branch_requires_operating_organization() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
         // Missing organization behaves as absent.
         assert_eq!(
-            db.create_branch(BranchId::new("b1").unwrap(), org_id("o-missing"), "Branch")
+            db.create_branch(BranchId::new("b1")?, org_id("o-missing"), "Branch")
                 .await,
             Err(TenancyError::NotFound)
         );
         // Provisioning organizations cannot gain branches outside the bundle.
-        db.create_organization(org_id("o1"), "Merchant")
-            .await
-            .unwrap();
+        db.create_organization(org_id("o1"), "Merchant").await?;
         assert_eq!(
-            db.create_branch(BranchId::new("b1").unwrap(), org_id("o1"), "Branch")
+            db.create_branch(BranchId::new("b1")?, org_id("o1"), "Branch")
                 .await,
             Err(TenancyError::InvalidTransition)
         );
         // Active organizations can.
-        db.activate_organization(&org_id("o1")).await.unwrap();
+        db.activate_organization(&org_id("o1")).await?;
         let branch = db
-            .create_branch(BranchId::new("b1").unwrap(), org_id("o1"), "Branch")
-            .await
-            .unwrap();
+            .create_branch(BranchId::new("b1")?, org_id("o1"), "Branch")
+            .await?;
         assert_eq!(branch.state, BranchState::Provisioning);
         // Closed organizations cannot.
-        db.begin_close_organization(&org_id("o1")).await.unwrap();
+        db.begin_close_organization(&org_id("o1")).await?;
         assert_eq!(
-            db.create_branch(BranchId::new("b2").unwrap(), org_id("o1"), "Other")
+            db.create_branch(BranchId::new("b2")?, org_id("o1"), "Other")
                 .await,
             Err(TenancyError::InvalidTransition)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn branch_reads_enforce_tenant_predicate() {
+    async fn branch_reads_enforce_tenant_predicate() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        active_org(&db, "o2").await;
+        active_org(&db, "o1").await?;
+        active_org(&db, "o2").await?;
         let branch = db
-            .create_branch(BranchId::new("b1").unwrap(), org_id("o1"), "Branch")
-            .await
-            .unwrap();
+            .create_branch(BranchId::new("b1")?, org_id("o1"), "Branch")
+            .await?;
         // Cross-tenant read behaves as absence (section 27.1).
         assert!(
             db.branch_snapshot(&org_id("o2"), &branch.id)
@@ -1483,61 +1492,53 @@ mod tests {
             db.suspend_branch(&org_id("o2"), &branch.id).await,
             Err(TenancyError::NotFound)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn membership_uniqueness_holds_per_org_user() {
+    async fn membership_uniqueness_holds_per_org_user() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
+        active_org(&db, "o1").await?;
         let first = db
-            .invite_membership(MembershipId::new("m1").unwrap(), org_id("o1"), user("u1"))
-            .await
-            .unwrap();
+            .invite_membership(MembershipId::new("m1")?, org_id("o1"), user("u1"))
+            .await?;
         assert_eq!(first.state, MembershipState::Invited);
         // A second live membership for the same pair conflicts (8.1.3).
         assert_eq!(
-            db.invite_membership(MembershipId::new("m2").unwrap(), org_id("o1"), user("u1"))
+            db.invite_membership(MembershipId::new("m2")?, org_id("o1"), user("u1"))
                 .await,
             Err(TenancyError::Conflict)
         );
         // Same membership id with the same payload is a safe retry.
         let retry = db
-            .invite_membership(MembershipId::new("m1").unwrap(), org_id("o1"), user("u1"))
-            .await
-            .unwrap();
+            .invite_membership(MembershipId::new("m1")?, org_id("o1"), user("u1"))
+            .await?;
         assert_eq!(first, retry);
         // Same membership id with divergent payload conflicts.
         assert_eq!(
-            db.invite_membership(MembershipId::new("m1").unwrap(), org_id("o1"), user("u2"))
+            db.invite_membership(MembershipId::new("m1")?, org_id("o1"), user("u2"))
                 .await,
             Err(TenancyError::Conflict)
         );
         // After revocation the user may be re-enrolled with a new record.
-        db.advance_membership(&org_id("o1"), &first.id)
-            .await
-            .unwrap();
-        db.activate_membership(&org_id("o1"), &first.id)
-            .await
-            .unwrap();
-        db.revoke_membership(&org_id("o1"), &first.id)
-            .await
-            .unwrap();
+        db.advance_membership(&org_id("o1"), &first.id).await?;
+        db.activate_membership(&org_id("o1"), &first.id).await?;
+        db.revoke_membership(&org_id("o1"), &first.id).await?;
         let second = db
-            .invite_membership(MembershipId::new("m2").unwrap(), org_id("o1"), user("u1"))
-            .await
-            .unwrap();
+            .invite_membership(MembershipId::new("m2")?, org_id("o1"), user("u1"))
+            .await?;
         assert_eq!(second.state, MembershipState::Invited);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn membership_reads_are_scope_aware() {
+    async fn membership_reads_are_scope_aware() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        active_org(&db, "o2").await;
+        active_org(&db, "o1").await?;
+        active_org(&db, "o2").await?;
         let membership = db
-            .invite_membership(MembershipId::new("m1").unwrap(), org_id("o1"), user("u1"))
-            .await
-            .unwrap();
+            .invite_membership(MembershipId::new("m1")?, org_id("o1"), user("u1"))
+            .await?;
         assert!(
             db.membership_snapshot(&org_id("o2"), &membership.id)
                 .await
@@ -1557,13 +1558,14 @@ mod tests {
             db.revoke_membership(&org_id("o2"), &membership.id).await,
             Err(TenancyError::NotFound)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn concurrent_invites_allow_exactly_one() {
+    async fn concurrent_invites_allow_exactly_one() -> Result<(), Box<dyn std::error::Error>> {
         let db = std::sync::Arc::new(TenancyDatabase::new());
         // Already inside the test runtime: seed directly without nesting.
-        active_org(&db, "o1").await;
+        active_org(&db, "o1").await?;
         let outcomes: Vec<_> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..8)
                 .map(|i| {
@@ -1572,9 +1574,9 @@ mod tests {
                         let runtime = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .unwrap();
+                            .map_err(|_| TenancyError::Conflict)?;
                         runtime.block_on(db.invite_membership(
-                            MembershipId::new(format!("m-race-{i}")).unwrap(),
+                            MembershipId::new(format!("m-race-{i}"))?,
                             org_id("o1"),
                             user("u-race"),
                         ))
@@ -1583,31 +1585,35 @@ mod tests {
                 .collect();
             handles
                 .into_iter()
-                .map(|handle| handle.join().expect("thread"))
-                .collect()
-        });
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| std::io::Error::other("invite thread panicked"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
         assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
         assert!(
             outcomes
                 .iter()
                 .all(|r| r.is_ok() || *r == Err(TenancyError::Conflict))
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn provision_bundle_is_atomic() {
+    async fn provision_bundle_is_atomic() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
         let bundle = db
             .provision_organization(
                 org_id("o1"),
                 "Merchant",
-                MembershipId::new("m-owner").unwrap(),
+                MembershipId::new("m-owner")?,
                 user("owner"),
-                BranchId::new("b1").unwrap(),
+                BranchId::new("b1")?,
                 "Main Branch",
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(bundle.organization.can_operate());
         assert!(bundle.owner_membership.has_authority());
         assert!(bundle.default_branch.can_operate());
@@ -1624,27 +1630,28 @@ mod tests {
             db.provision_organization(
                 org_id("o1"),
                 "Merchant",
-                MembershipId::new("m-owner-2").unwrap(),
+                MembershipId::new("m-owner-2")?,
                 user("owner"),
-                BranchId::new("b2").unwrap(),
+                BranchId::new("b2")?,
                 "Other Branch",
             )
             .await,
             Err(TenancyError::Conflict)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn provision_bundle_leaves_no_partial_state() {
+    async fn provision_bundle_leaves_no_partial_state() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
         // Invalid branch name fails validation before any mutation (7.1).
         assert_eq!(
             db.provision_organization(
                 org_id("o1"),
                 "Merchant",
-                MembershipId::new("m-owner").unwrap(),
+                MembershipId::new("m-owner")?,
                 user("owner"),
-                BranchId::new("b1").unwrap(),
+                BranchId::new("b1")?,
                 "",
             )
             .await,
@@ -1652,7 +1659,7 @@ mod tests {
         );
         assert!(db.organization_snapshot(&org_id("o1")).await.is_none());
         assert!(
-            db.branch_snapshot(&org_id("o1"), &BranchId::new("b1").unwrap())
+            db.branch_snapshot(&org_id("o1"), &BranchId::new("b1")?)
                 .await
                 .is_none()
         );
@@ -1661,6 +1668,7 @@ mod tests {
                 .await
                 .is_none()
         );
+        Ok(())
     }
 
     async fn active_member(
@@ -1668,40 +1676,30 @@ mod tests {
         org: &str,
         member: &str,
         user_id: &str,
-    ) -> Membership {
+    ) -> Result<Membership, Box<dyn std::error::Error>> {
         let membership = db
-            .invite_membership(
-                MembershipId::new(member).unwrap(),
-                org_id(org),
-                user(user_id),
-            )
-            .await
-            .unwrap();
-        db.advance_membership(&org_id(org), &membership.id)
-            .await
-            .unwrap();
-        db.activate_membership(&org_id(org), &membership.id)
-            .await
-            .unwrap()
+            .invite_membership(MembershipId::new(member)?, org_id(org), user(user_id))
+            .await?;
+        db.advance_membership(&org_id(org), &membership.id).await?;
+        Ok(db.activate_membership(&org_id(org), &membership.id).await?)
     }
 
     #[tokio::test]
-    async fn role_grant_lifecycle_preserves_history() {
+    async fn role_grant_lifecycle_preserves_history() -> Result<(), Box<dyn std::error::Error>> {
         use sitolo_authz::RoleAssignmentState;
 
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        let membership = active_member(&db, "o1", "m1", "u1").await;
+        active_org(&db, "o1").await?;
+        let membership = active_member(&db, "o1", "m1", "u1").await?;
 
         let grant = db
             .assign_role(
                 org_id("o1"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-1").unwrap(),
+                RoleAssignmentId::new("ra-1")?,
                 Role::Cashier,
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(grant.state, RoleAssignmentState::Effective);
 
         // Same assignment id with the same payload is a safe retry.
@@ -1709,11 +1707,10 @@ mod tests {
             .assign_role(
                 org_id("o1"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-1").unwrap(),
+                RoleAssignmentId::new("ra-1")?,
                 Role::Cashier,
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(grant, retry);
 
         // A second live grant of the same role conflicts rather than
@@ -1722,7 +1719,7 @@ mod tests {
             db.assign_role(
                 org_id("o1"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-2").unwrap(),
+                RoleAssignmentId::new("ra-2")?,
                 Role::Cashier,
             )
             .await,
@@ -1731,8 +1728,7 @@ mod tests {
 
         let revoked = db
             .revoke_role(&org_id("o1"), &membership.id, Role::Cashier)
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(revoked.state, RoleAssignmentState::Revoked);
         // Revoking again finds no effective grant.
         assert_eq!(
@@ -1746,29 +1742,29 @@ mod tests {
             .assign_role(
                 org_id("o1"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-3").unwrap(),
+                RoleAssignmentId::new("ra-3")?,
                 Role::Cashier,
             )
-            .await
-            .unwrap();
+            .await?;
         assert_ne!(second.id, revoked.id);
         let history = db.role_assignments_for(&org_id("o1"), &membership.id).await;
         assert_eq!(history.len(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn role_grants_enforce_membership_scope() {
+    async fn role_grants_enforce_membership_scope() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        active_org(&db, "o2").await;
-        let membership = active_member(&db, "o1", "m1", "u1").await;
+        active_org(&db, "o1").await?;
+        active_org(&db, "o2").await?;
+        let membership = active_member(&db, "o1", "m1", "u1").await?;
 
         // A grant naming a foreign organization is denied as absent.
         assert_eq!(
             db.assign_role(
                 org_id("o2"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-x").unwrap(),
+                RoleAssignmentId::new("ra-x")?,
                 Role::Cashier,
             )
             .await,
@@ -1787,62 +1783,59 @@ mod tests {
         );
 
         // Terminal memberships cannot receive authority.
-        db.revoke_membership(&org_id("o1"), &membership.id)
-            .await
-            .unwrap();
+        db.revoke_membership(&org_id("o1"), &membership.id).await?;
         assert_eq!(
             db.assign_role(
                 org_id("o1"),
                 membership.id.clone(),
-                RoleAssignmentId::new("ra-y").unwrap(),
+                RoleAssignmentId::new("ra-y")?,
                 Role::Cashier,
             )
             .await,
             Err(TenancyError::InvalidTransition)
         );
+        Ok(())
     }
 
     const INVITE_TOKEN: &str = "tok-invite-repo-0123456789abcdef";
     const INVITE_TOKEN_2: &str = "tok-invite-repo-second-0123456789";
 
-    fn mailto(value: &str) -> InvitationContact {
-        InvitationContact::new(ContactKind::Email, value).unwrap()
+    fn mailto(value: &str) -> Result<InvitationContact, Box<dyn std::error::Error>> {
+        Ok(InvitationContact::new(ContactKind::Email, value)?)
     }
 
-    fn invite_input(token: &str) -> CreateInvitationInput {
-        CreateInvitationInput {
+    fn invite_input(token: &str) -> Result<CreateInvitationInput, Box<dyn std::error::Error>> {
+        Ok(CreateInvitationInput {
             organization_id: org_id("o1"),
-            invitation_id: InvitationId::new("inv-1").unwrap(),
-            membership_id: MembershipId::new("m-invited").unwrap(),
+            invitation_id: InvitationId::new("inv-1")?,
+            membership_id: MembershipId::new("m-invited")?,
             user_id: user("invitee"),
             proposed_role: Role::Cashier,
             proposed_scope: None,
-            contact: mailto("invitee@example.com"),
+            contact: mailto("invitee@example.com")?,
             raw_token: token.to_string(),
             ttl: Duration::from_secs(3_600),
             now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
-        }
+        })
     }
 
     #[tokio::test]
-    async fn invitation_create_validates_before_mutating() {
+    async fn invitation_create_validates_before_mutating() -> Result<(), Box<dyn std::error::Error>>
+    {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
+        active_org(&db, "o1").await?;
 
-        let created = db
-            .create_invitation(invite_input(INVITE_TOKEN))
-            .await
-            .unwrap();
+        let created = db.create_invitation(invite_input(INVITE_TOKEN)?).await?;
         assert!(!created.membership.has_authority());
         assert_eq!(
             created.invitation.token_hash,
-            Invitation::hash_token(INVITE_TOKEN)
+            Some(Invitation::hash_token(INVITE_TOKEN))
         );
 
         // Raw-token reuse across invitations conflicts (replay safety).
-        let mut clash = invite_input(INVITE_TOKEN);
-        clash.invitation_id = InvitationId::new("inv-2").unwrap();
-        clash.membership_id = MembershipId::new("m-other").unwrap();
+        let mut clash = invite_input(INVITE_TOKEN)?;
+        clash.invitation_id = InvitationId::new("inv-2")?;
+        clash.membership_id = MembershipId::new("m-other")?;
         clash.user_id = user("other");
         assert_eq!(
             db.create_invitation(clash).await,
@@ -1851,8 +1844,8 @@ mod tests {
 
         // Invalid contact leaves no membership behind. The repository
         // revalidates caller-built records instead of trusting them.
-        let mut bad_contact = invite_input(INVITE_TOKEN_2);
-        bad_contact.membership_id = MembershipId::new("m-bad").unwrap();
+        let mut bad_contact = invite_input(INVITE_TOKEN_2)?;
+        bad_contact.membership_id = MembershipId::new("m-bad")?;
         bad_contact.user_id = user("bad");
         bad_contact.contact = InvitationContact {
             kind: ContactKind::Email,
@@ -1868,8 +1861,8 @@ mod tests {
                 .is_none()
         );
         // Invalid token shape likewise mutates nothing.
-        let mut bad_token = invite_input("short");
-        bad_token.membership_id = MembershipId::new("m-bad2").unwrap();
+        let mut bad_token = invite_input("short")?;
+        bad_token.membership_id = MembershipId::new("m-bad2")?;
         bad_token.user_id = user("bad2");
         assert_eq!(
             db.create_invitation(bad_token).await,
@@ -1880,42 +1873,55 @@ mod tests {
                 .await
                 .is_none()
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn invitation_accept_is_atomic_and_single_use() {
+    async fn invitation_accept_is_atomic_and_single_use() -> Result<(), Box<dyn std::error::Error>>
+    {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        let created = db
-            .create_invitation(invite_input(INVITE_TOKEN))
-            .await
-            .unwrap();
+        active_org(&db, "o1").await?;
+        let created = db.create_invitation(invite_input(INVITE_TOKEN)?).await?;
         let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
 
         let accepted = db
             .accept_invitation(
                 Invitation::hash_token(INVITE_TOKEN),
-                RoleAssignmentId::new("ra-inv").unwrap(),
+                RoleAssignmentId::new("ra-inv")?,
                 None,
                 at,
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(accepted.membership.has_authority());
         assert_eq!(accepted.assignment.role, Role::Cashier);
         assert_eq!(accepted.scope_grant, None);
 
-        // Replay reports prior acceptance; no duplicate grant exists.
+        // Terminalization deletes the token hash, so replay is indistinguishable
+        // from an unknown token; no duplicate grant exists.
         assert_eq!(
             db.accept_invitation(
                 Invitation::hash_token(INVITE_TOKEN),
-                RoleAssignmentId::new("ra-replay").unwrap(),
+                RoleAssignmentId::new("ra-replay")?,
                 None,
                 at,
             )
             .await,
-            Err(InvitationError::AlreadyAccepted)
+            Err(InvitationError::Invalid)
         );
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN))
+            );
+            let terminal = state
+                .invitations
+                .get(&created.invitation.id)
+                .ok_or_else(|| std::io::Error::other("terminal invitation exists"))?;
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
         assert_eq!(
             db.role_assignments_for(&org_id("o1"), &created.membership.id)
                 .await
@@ -1926,29 +1932,30 @@ mod tests {
         assert_eq!(
             db.accept_invitation(
                 Invitation::hash_token("tok-unknown-0123456789abcdefghijkl"),
-                RoleAssignmentId::new("ra-ghost").unwrap(),
+                RoleAssignmentId::new("ra-ghost")?,
                 None,
                 at,
             )
             .await,
             Err(InvitationError::Invalid)
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn invitation_expiry_releases_membership() {
+    async fn invitation_expiry_releases_membership() -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        active_org(&db, "o1").await;
-        let mut input = invite_input(INVITE_TOKEN);
+        active_org(&db, "o1").await?;
+        let mut input = invite_input(INVITE_TOKEN)?;
         input.ttl = Duration::from_secs(60);
-        let created = db.create_invitation(input).await.unwrap();
+        let created = db.create_invitation(input).await?;
 
         // Acceptance after expiry fails and cascades membership expiry.
         let late = SystemTime::UNIX_EPOCH + Duration::from_secs(1_061);
         assert_eq!(
             db.accept_invitation(
                 Invitation::hash_token(INVITE_TOKEN),
-                RoleAssignmentId::new("ra-late").unwrap(),
+                RoleAssignmentId::new("ra-late")?,
                 None,
                 late,
             )
@@ -1958,28 +1965,56 @@ mod tests {
         let membership = db
             .membership_snapshot(&org_id("o1"), &created.membership.id)
             .await
-            .unwrap();
+            .ok_or_else(|| std::io::Error::other("expired invitation membership exists"))?;
         assert!(!membership.has_authority());
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN))
+            );
+            let terminal = state
+                .invitations
+                .get(&created.invitation.id)
+                .ok_or_else(|| std::io::Error::other("terminal invitation exists"))?;
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
 
         // The sweeper collects lapsed invitations without acceptance attempts.
-        let mut second = invite_input(INVITE_TOKEN_2);
-        second.invitation_id = InvitationId::new("inv-2").unwrap();
-        second.membership_id = MembershipId::new("m-2").unwrap();
+        let mut second = invite_input(INVITE_TOKEN_2)?;
+        second.invitation_id = InvitationId::new("inv-2")?;
+        second.membership_id = MembershipId::new("m-2")?;
         second.user_id = user("u2");
         second.ttl = Duration::from_secs(60);
-        db.create_invitation(second).await.unwrap();
+        db.create_invitation(second).await?;
         assert_eq!(db.expire_invitations(late).await, 1);
         assert_eq!(db.expire_invitations(late).await, 0);
+        {
+            let state = db.lock();
+            assert!(
+                !state
+                    .by_token_hash
+                    .contains_key(&Invitation::hash_token(INVITE_TOKEN_2))
+            );
+            let invitation_id = InvitationId::new("inv-2")?;
+            let terminal = state
+                .invitations
+                .get(&invitation_id)
+                .ok_or_else(|| std::io::Error::other("terminal invitation exists"))?;
+            assert!(terminal.contact.is_none());
+            assert!(terminal.token_hash.is_none());
+        }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn concurrent_accepts_allow_exactly_one() {
+    async fn concurrent_accepts_allow_exactly_one() -> Result<(), Box<dyn std::error::Error>> {
         let db = std::sync::Arc::new(TenancyDatabase::new());
         // Already inside the test runtime: seed directly without nesting.
-        active_org(&db, "o1").await;
-        db.create_invitation(invite_input(INVITE_TOKEN))
-            .await
-            .unwrap();
+        active_org(&db, "o1").await?;
+        db.create_invitation(invite_input(INVITE_TOKEN)?).await?;
         let hash = Invitation::hash_token(INVITE_TOKEN);
         let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
         let outcomes: Vec<_> = std::thread::scope(|scope| {
@@ -1990,27 +2025,29 @@ mod tests {
                         let runtime = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .unwrap();
-                        runtime.block_on(db.accept_invitation(
-                            hash,
-                            RoleAssignmentId::new(format!("ra-race-{i}")).unwrap(),
-                            None,
-                            at,
-                        ))
+                            .map_err(|_| InvitationError::Invalid)?;
+                        let assignment = RoleAssignmentId::new(format!("ra-race-{i}"))
+                            .map_err(|_| InvitationError::Invalid)?;
+                        runtime.block_on(db.accept_invitation(hash, assignment, None, at))
                     })
                 })
                 .collect();
             handles
                 .into_iter()
-                .map(|handle| handle.join().expect("thread"))
-                .collect()
-        });
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| std::io::Error::other("accept thread panicked"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
         assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
         assert!(
             outcomes
                 .iter()
-                .all(|r| r.is_ok() || *r == Err(InvitationError::AlreadyAccepted))
+                .all(|r| r.is_ok() || *r == Err(InvitationError::Invalid))
         );
+        Ok(())
     }
 
     /// Repository scope predicate enforcement (§27.1, §26.1, §25.2).
@@ -2022,27 +2059,22 @@ mod tests {
     /// (§25.2) is proven by the scope-grant branch check: a grant whose scope
     /// branch belongs to another organization cannot be created.
     #[tokio::test]
-    async fn repository_scope_predicates_enforce_tenant_isolation() {
+    async fn repository_scope_predicates_enforce_tenant_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
         // Two tenants with distinct branches and memberships.
-        active_org(&db, "o-a").await;
-        active_org(&db, "o-b").await;
+        active_org(&db, "o-a").await?;
+        active_org(&db, "o-b").await?;
         let branch_a = db
-            .create_branch(BranchId::new("b-a").unwrap(), org_id("o-a"), "Branch A")
-            .await
-            .unwrap();
-        db.activate_branch(&org_id("o-a"), &branch_a.id)
-            .await
-            .unwrap();
+            .create_branch(BranchId::new("b-a")?, org_id("o-a"), "Branch A")
+            .await?;
+        db.activate_branch(&org_id("o-a"), &branch_a.id).await?;
         let branch_b = db
-            .create_branch(BranchId::new("b-b").unwrap(), org_id("o-b"), "Branch B")
-            .await
-            .unwrap();
-        db.activate_branch(&org_id("o-b"), &branch_b.id)
-            .await
-            .unwrap();
-        let member_a = active_member(&db, "o-a", "m-a", "u-a").await;
-        let member_b = active_member(&db, "o-b", "m-b", "u-b").await;
+            .create_branch(BranchId::new("b-b")?, org_id("o-b"), "Branch B")
+            .await?;
+        db.activate_branch(&org_id("o-b"), &branch_b.id).await?;
+        let member_a = active_member(&db, "o-a", "m-a", "u-a").await?;
+        let member_b = active_member(&db, "o-b", "m-b", "u-b").await?;
 
         // branch_snapshot: cross-tenant behaves as absence (§27.1).
         assert!(
@@ -2086,11 +2118,10 @@ mod tests {
             .assign_role(
                 org_id("o-a"),
                 member_a.id.clone(),
-                RoleAssignmentId::new("ra-a").unwrap(),
+                RoleAssignmentId::new("ra-a")?,
                 Role::Cashier,
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(
             db.role_assignments_for(&org_id("o-b"), &member_a.id)
                 .await
@@ -2100,7 +2131,7 @@ mod tests {
             db.assign_role(
                 org_id("o-b"),
                 member_a.id.clone(),
-                RoleAssignmentId::new("ra-x").unwrap(),
+                RoleAssignmentId::new("ra-x")?,
                 Role::Cashier,
             )
             .await,
@@ -2127,11 +2158,10 @@ mod tests {
             .grant_scope(
                 org_id("o-a"),
                 member_a.id.clone(),
-                ScopeGrantId::new("g-a").unwrap(),
+                ScopeGrantId::new("g-a")?,
                 scope_a.clone(),
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(
             db.scope_grants_for(&org_id("o-b"), &member_a.id)
                 .await
@@ -2146,7 +2176,7 @@ mod tests {
             db.grant_scope(
                 org_id("o-a"),
                 member_a.id.clone(),
-                ScopeGrantId::new("g-foreign").unwrap(),
+                ScopeGrantId::new("g-foreign")?,
                 foreign_branch_scope,
             )
             .await,
@@ -2156,17 +2186,17 @@ mod tests {
         // invitations: revocation and lookup respect org binding; foreign org cannot revoke.
         let inv_input = crate::tenancy::CreateInvitationInput {
             organization_id: org_id("o-a"),
-            invitation_id: InvitationId::new("inv-scope").unwrap(),
-            membership_id: MembershipId::new("m-inv-scope").unwrap(),
+            invitation_id: InvitationId::new("inv-scope")?,
+            membership_id: MembershipId::new("m-inv-scope")?,
             user_id: user("u-inv"),
             proposed_role: Role::Viewer,
             proposed_scope: None,
-            contact: InvitationContact::new(ContactKind::Email, "u-inv@example.com").unwrap(),
+            contact: InvitationContact::new(ContactKind::Email, "u-inv@example.com")?,
             raw_token: INVITE_TOKEN.to_string(),
             ttl: Duration::from_secs(3_600),
             now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
         };
-        let created = db.create_invitation(inv_input.clone()).await.unwrap();
+        let created = db.create_invitation(inv_input.clone()).await?;
         // Foreign org cannot revoke even with correct invitation id.
         assert_eq!(
             db.revoke_invitation(&org_id("o-b"), &created.invitation.id)
@@ -2175,16 +2205,17 @@ mod tests {
         );
         // Branch creation itself enforces tenant predicate: foreign org cannot create under it.
         assert!(
-            db.create_branch(BranchId::new("b-leak").unwrap(), org_id("o-b"), "Leak")
+            db.create_branch(BranchId::new("b-leak")?, org_id("o-b"), "Leak")
                 .await
                 .is_ok()
         );
         // But the branch just created is correctly owned by o-b, not o-a.
         assert!(
-            db.branch_snapshot(&org_id("o-a"), &BranchId::new("b-leak").unwrap())
+            db.branch_snapshot(&org_id("o-a"), &BranchId::new("b-leak")?)
                 .await
                 .is_none()
         );
         let _ = inv_input;
+        Ok(())
     }
 }

@@ -89,11 +89,32 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             );
         }
     }
-    if b.db_host.is_empty() || b.db_name.is_empty() || b.db_user.is_empty() {
+    if b.db_host.is_empty()
+        || b.db_name.is_empty()
+        || b.db_user.is_empty()
+        || b.db_schema.is_empty()
+    {
         add(
             ValidationLayer::Semantic,
             "database",
             "identity fields must be non-empty",
+        );
+    }
+    if b.db_schema.len() > 63
+        || !b
+            .db_schema
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        || !b
+            .db_schema
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        add(
+            ValidationLayer::Security,
+            "db_schema",
+            "must be a bounded lowercase PostgreSQL identifier",
         );
     }
     for (field, value) in [
@@ -116,6 +137,13 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             ValidationLayer::Semantic,
             "db_port",
             "must be a non-zero TCP port",
+        );
+    }
+    if b.environment != crate::Environment::Development && b.db_user != "app_runtime" {
+        add(
+            ValidationLayer::Security,
+            "db_user",
+            "staging and production API pools must authenticate directly as app_runtime",
         );
     }
     if b.max_request_body_bytes == 0
@@ -188,6 +216,51 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "forbidden in production",
         );
     }
+    let oidc_values = [
+        ("oidc_issuer", b.oidc_issuer.as_deref()),
+        ("oidc_client_id", b.oidc_client_id.as_deref()),
+        ("oidc_token_endpoint", b.oidc_token_endpoint.as_deref()),
+        ("oidc_redirect_uri", b.oidc_redirect_uri.as_deref()),
+    ];
+    let oidc_count = oidc_values
+        .iter()
+        .filter(|(_, value)| value.is_some())
+        .count();
+    if (b.environment != crate::Environment::Development && oidc_count != oidc_values.len())
+        || (oidc_count != 0 && oidc_count != oidc_values.len())
+    {
+        add(
+            ValidationLayer::Environment,
+            "oidc",
+            "production requires all OIDC settings and partial configuration is invalid",
+        );
+    }
+    for (field, value) in oidc_values {
+        if value.is_some_and(|value| {
+            value.is_empty()
+                || value.len() > ceilings::MAX_BOUNDED_STRING_BYTES
+                || value.bytes().any(|byte| byte.is_ascii_control())
+        }) {
+            add(
+                ValidationLayer::Security,
+                field,
+                "must be bounded, non-empty, and contain no control characters",
+            );
+        }
+    }
+    if b.secrets_aws_region.as_ref().is_some_and(|region| {
+        region.is_empty()
+            || region.len() > 32
+            || !region
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "secrets_aws_region",
+            "must be a bounded AWS region identifier",
+        );
+    }
     if b.environment.is_production() && b.log_level < LogLevel::PRODUCTION_CEILING {
         add(
             ValidationLayer::Environment,
@@ -227,6 +300,84 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
             "required secret reference absent",
         );
     }
+    if b.worker_db_password_ref.is_some()
+        != (b.relay_aws_region.is_some() && b.relay_sns_topic_arn.is_some())
+    {
+        add(
+            ValidationLayer::CrossField,
+            "worker_db_password_ref",
+            "worker credential and complete relay destination must be configured together",
+        );
+    }
+    if b.environment.is_production()
+        && b.worker_db_password_ref
+            .as_ref()
+            .is_some_and(|reference| reference.path().starts_with("development/"))
+    {
+        add(
+            ValidationLayer::Environment,
+            "worker_db_password_ref",
+            "production must not use a development secret namespace",
+        );
+    }
+    if b.relay_aws_region.as_ref().is_some_and(|region| {
+        region.is_empty()
+            || region.len() > 32
+            || !region
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "relay_aws_region",
+            "must be a bounded AWS region identifier",
+        );
+    }
+    if b.relay_sns_topic_arn.as_ref().is_some_and(|arn| {
+        let parts: Vec<_> = arn.split(':').collect();
+        parts.len() != 6
+            || parts[0] != "arn"
+            || parts[1] != "aws"
+            || parts[2] != "sns"
+            || b.relay_aws_region.as_deref() != Some(parts[3])
+            || parts[4].len() != 12
+            || !parts[4].bytes().all(|c| c.is_ascii_digit())
+            || !parts[5].ends_with(".fifo")
+    }) {
+        add(
+            ValidationLayer::Semantic,
+            "relay_sns_topic_arn",
+            "must be an SNS FIFO topic ARN",
+        );
+    }
+    if b.relay_aws_region.is_some() != b.relay_sns_topic_arn.is_some() {
+        add(
+            ValidationLayer::CrossField,
+            "relay_destination",
+            "region and topic ARN must be configured together",
+        );
+    }
+    if b.relay_batch_size == 0 || b.relay_batch_size > 100 {
+        add(
+            ValidationLayer::Security,
+            "relay_batch_size",
+            "must be positive and at most 100",
+        );
+    }
+    if b.relay_max_attempts == 0 || b.relay_max_attempts > 10 {
+        add(
+            ValidationLayer::Security,
+            "relay_max_attempts",
+            "must be positive and at most 10",
+        );
+    }
+    if b.relay_backoff_max_ms == 0 || b.relay_backoff_max_ms > 3_600_000 {
+        add(
+            ValidationLayer::Security,
+            "relay_backoff_max_ms",
+            "must be positive and at most one hour",
+        );
+    }
     if !KNOWN_SCHEMA_VERSIONS.contains(&b.config_schema_version) {
         add(
             ValidationLayer::Environment,
@@ -237,6 +388,15 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
     if !p.is_empty() {
         return Err(ConfigValidationError { problems: p });
     }
+    let Some(db_password_ref) = b.db_password_ref else {
+        return Err(ConfigValidationError {
+            problems: vec![crate::ConfigProblem {
+                layer: ValidationLayer::Security,
+                field: "db_password_ref",
+                reason: "required secret reference absent",
+            }],
+        });
+    };
     Ok(AppConfig {
         environment: b.environment,
         service_name: b.service_name,
@@ -248,8 +408,14 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         db_host: b.db_host,
         db_port: b.db_port,
         db_name: b.db_name,
+        db_schema: b.db_schema,
         db_user: b.db_user,
-        db_password_ref: b.db_password_ref.expect("validated"),
+        oidc_issuer: b.oidc_issuer,
+        oidc_client_id: b.oidc_client_id,
+        oidc_token_endpoint: b.oidc_token_endpoint,
+        oidc_redirect_uri: b.oidc_redirect_uri,
+        db_password_ref,
+        worker_db_password_ref: b.worker_db_password_ref,
         db_pool_min: b.db_pool_min,
         db_pool_max: b.db_pool_max,
         db_acquire_timeout_ms: b.db_acquire_timeout_ms,
@@ -260,5 +426,11 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         log_level: b.log_level,
         allow_local_secret_provider: b.allow_local_secret_provider,
         config_schema_version: b.config_schema_version,
+        relay_aws_region: b.relay_aws_region,
+        relay_sns_topic_arn: b.relay_sns_topic_arn,
+        relay_batch_size: b.relay_batch_size,
+        relay_max_attempts: b.relay_max_attempts,
+        relay_backoff_max_ms: b.relay_backoff_max_ms,
+        secrets_aws_region: b.secrets_aws_region,
     })
 }

@@ -471,21 +471,22 @@ pub fn resolve_permissions(assignments: &[RoleAssignment]) -> BTreeSet<Permissio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
-    fn assignment(role: Role) -> RoleAssignment {
-        RoleAssignment::request(
-            RoleAssignmentId::new("ra-1").unwrap(),
-            OrganizationId::new("o1").unwrap(),
-            MembershipId::new("m1").unwrap(),
+    fn assignment(role: Role) -> Result<RoleAssignment, Box<dyn Error>> {
+        Ok(RoleAssignment::request(
+            RoleAssignmentId::new("ra-1")?,
+            OrganizationId::new("o1")?,
+            MembershipId::new("m1")?,
             role,
-        )
+        ))
     }
 
-    fn effective(role: Role) -> RoleAssignment {
-        let mut assignment = assignment(role);
-        assignment.begin_validation().unwrap();
-        assignment.mark_effective().unwrap();
-        assignment
+    fn effective(role: Role) -> Result<RoleAssignment, Box<dyn Error>> {
+        let mut assignment = assignment(role)?;
+        assignment.begin_validation()?;
+        assignment.mark_effective()?;
+        Ok(assignment)
     }
 
     #[test]
@@ -545,69 +546,73 @@ mod tests {
     }
 
     #[test]
-    fn assignment_lifecycle_follows_section_19() {
-        let mut assignment = assignment(Role::Cashier);
+    fn assignment_lifecycle_follows_section_19() -> Result<(), Box<dyn Error>> {
+        let mut assignment = assignment(Role::Cashier)?;
         assert_eq!(assignment.state, RoleAssignmentState::Requested);
         // Cannot skip validation.
         assert_eq!(
             assignment.mark_effective(),
             Err(AssignmentError::InvalidTransition)
         );
-        assignment.begin_validation().unwrap();
-        assignment.mark_effective().unwrap();
+        assignment.begin_validation()?;
+        assignment.mark_effective()?;
         assert!(assignment.state.grants_authority());
-        assignment.revoke().unwrap();
+        assignment.revoke()?;
         assert_eq!(assignment.state, RoleAssignmentState::Revoked);
         assert!(!assignment.state.grants_authority());
+        Ok(())
     }
 
     #[test]
-    fn approval_branch_requires_approval_before_effective() {
-        let mut assignment = assignment(Role::OrgAdmin);
-        assignment.begin_validation().unwrap();
-        assignment.require_approval().unwrap();
+    fn approval_branch_requires_approval_before_effective() -> Result<(), Box<dyn Error>> {
+        let mut assignment = assignment(Role::OrgAdmin)?;
+        assignment.begin_validation()?;
+        assignment.require_approval()?;
         // Approval-gated grants cannot become effective early.
         assert_eq!(
             assignment.mark_effective(),
             Err(AssignmentError::InvalidTransition)
         );
-        assignment.approve().unwrap();
-        assignment.mark_effective().unwrap();
+        assignment.approve()?;
+        assignment.mark_effective()?;
         assert!(assignment.state.grants_authority());
+        Ok(())
     }
 
     #[test]
-    fn rejection_and_revocation_are_terminal() {
-        let mut rejected = assignment(Role::Cashier);
-        rejected.begin_validation().unwrap();
-        rejected.reject().unwrap();
+    fn rejection_and_revocation_are_terminal() -> Result<(), Box<dyn Error>> {
+        let mut rejected = assignment(Role::Cashier)?;
+        rejected.begin_validation()?;
+        rejected.reject()?;
         assert_eq!(
             rejected.mark_effective(),
             Err(AssignmentError::TerminalState)
         );
         assert_eq!(rejected.revoke(), Err(AssignmentError::TerminalState));
 
-        let mut revoked = effective(Role::Cashier);
-        revoked.revoke().unwrap();
+        let mut revoked = effective(Role::Cashier)?;
+        revoked.revoke()?;
         assert_eq!(
             revoked.begin_validation(),
             Err(AssignmentError::TerminalState)
         );
+        Ok(())
     }
 
     #[test]
-    fn resolution_counts_only_effective_assignments() {
-        let active = effective(Role::Cashier);
-        let mut pending = assignment(Role::BranchManager);
-        pending.begin_validation().unwrap();
-        let mut revoked = effective(Role::InventoryClerk);
-        revoked.revoke().unwrap();
+    fn resolution_counts_only_effective_assignments() -> Result<(), Box<dyn Error>> {
+        let active = effective(Role::Cashier)?;
+        let mut pending = assignment(Role::BranchManager)?;
+        pending.begin_validation()?;
+        let mut revoked = effective(Role::InventoryClerk)?;
+        revoked.revoke()?;
         let permissions = resolve_permissions(&[active, pending, revoked]);
         assert_eq!(
             permissions,
             BTreeSet::from([Permission::SaleCreate, Permission::SaleView])
         );
         assert!(resolve_permissions(&[]).is_empty());
+        Ok(())
     }
 
     #[test]

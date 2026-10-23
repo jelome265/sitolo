@@ -6,7 +6,12 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownKey(pub String);
 
-/// Loads only the canonical `SITOLO__` namespace and rejects unknown keys.
+/// Loads only the canonical `SITOLO__` configuration namespace and rejects
+/// unknown keys.
+///
+/// The disjoint `SITOLO_SECRET__` namespace belongs to the development secret
+/// provider and is deliberately not parsed here. It cannot match the
+/// `SITOLO__` prefix because the character after `SITOLO_` differs.
 pub struct EnvLoader;
 impl EnvLoader {
     pub fn load() -> Result<defaults::Builder, UnknownKey> {
@@ -65,9 +70,19 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
         "DATABASE__HOST" => b.db_host = value.into(),
         "DATABASE__PORT" => b.db_port = number(key, value)?,
         "DATABASE__NAME" => b.db_name = value.into(),
+        "DATABASE__SCHEMA" => b.db_schema = value.into(),
         "DATABASE__USER" => b.db_user = value.into(),
+        "IDENTITY__OIDC__ISSUER" => b.oidc_issuer = Some(value.into()),
+        "IDENTITY__OIDC__CLIENT_ID" => b.oidc_client_id = Some(value.into()),
+        "IDENTITY__OIDC__TOKEN_ENDPOINT" => b.oidc_token_endpoint = Some(value.into()),
+        "IDENTITY__OIDC__REDIRECT_URI" => b.oidc_redirect_uri = Some(value.into()),
         "DATABASE__PASSWORD_REF" => {
             b.db_password_ref = Some(
+                SecretRef::new(SecretClass::Database, value).map_err(|_| UnknownKey(key.into()))?,
+            )
+        }
+        "WORKER__DATABASE__PASSWORD_REF" => {
+            b.worker_db_password_ref = Some(
                 SecretRef::new(SecretClass::Database, value).map_err(|_| UnknownKey(key.into()))?,
             )
         }
@@ -100,6 +115,12 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
             b.allow_local_secret_provider = value.parse().map_err(|_| UnknownKey(key.into()))?
         }
         "RUNTIME__CONFIG_SCHEMA_VERSION" => b.config_schema_version = number(key, value)?,
+        "EVENTS__RELAY__AWS_REGION" => b.relay_aws_region = Some(value.into()),
+        "EVENTS__RELAY__SNS_TOPIC_ARN" => b.relay_sns_topic_arn = Some(value.into()),
+        "EVENTS__RELAY__BATCH_SIZE" => b.relay_batch_size = number(key, value)?,
+        "EVENTS__RELAY__MAX_ATTEMPTS" => b.relay_max_attempts = number(key, value)?,
+        "EVENTS__RELAY__BACKOFF_MAX_MS" => b.relay_backoff_max_ms = number(key, value)?,
+        "SECRETS__AWS_REGION" => b.secrets_aws_region = Some(value.into()),
         // Defense in depth: `ACCEPTED_KEYS` is checked above, so this arm is
         // not expected to be reached. It is intentionally a structured
         // error rather than `unreachable!()` so that a future maintenance

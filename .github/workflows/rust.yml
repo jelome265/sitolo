@@ -47,12 +47,20 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install mandatory policy tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Install mandatory security tooling
         run: |
-          cargo install cargo-deny --locked || true
-          cargo install cargo-audit --locked || true
+          cargo install cargo-deny --locked
+          cargo install cargo-audit --locked
       - name: Run canonical verification
         env:
+          # The admin DSN is used only for schema and role setup. Runtime and
+          # worker authenticate as their own restricted LOGIN roles, which the
+          # isolated-schema fixture creates before the pools connect.
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
           RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
+          WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test
         run: ./scripts/ci/verify

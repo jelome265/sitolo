@@ -44,6 +44,12 @@ macro_rules! tenant_id {
                 &self.0
             }
         }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
     };
 }
 
@@ -92,6 +98,19 @@ pub enum TenancyError {
     InvalidInvitation,
     #[error("invitation rate limited")]
     RateLimited,
+    /// Mandatory Phase 4 Part 8 audit/outbox evidence could not be durably
+    /// recorded for an authoritative transition (contract §5, §10:
+    /// mandatory evidence blocks the transition it describes).
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailed,
+    /// Safe, non-sensitive diagnostic stage for infrastructure logs and
+    /// integration-test failures. The display text intentionally remains
+    /// generic so callers do not receive persistence internals.
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailedAt {
+        stage: &'static str,
+        sqlstate: Option<String>,
+    },
 }
 
 fn validate_name(name: &str) -> Result<String, TenancyError> {
@@ -424,39 +443,49 @@ impl Membership {
     }
 }
 
+/// The domain projection committed when an organization is provisioned with
+/// its owner membership and default branch. Persistence adapters return this
+/// value only after the atomic provisioning transaction succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedOrganization {
+    pub organization: Organization,
+    pub owner_membership: Membership,
+    pub default_branch: Branch,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn org_id(value: &str) -> OrganizationId {
-        OrganizationId::new(value).unwrap()
+    fn org_id(value: &str) -> Result<OrganizationId, TenancyError> {
+        OrganizationId::new(value)
     }
 
-    fn branch_id(value: &str) -> BranchId {
-        BranchId::new(value).unwrap()
+    fn branch_id(value: &str) -> Result<BranchId, TenancyError> {
+        BranchId::new(value)
     }
 
-    fn active_org(id: &str) -> Organization {
-        let mut org = Organization::provision(org_id(id), "Test Merchant").unwrap();
-        org.activate().unwrap();
-        org
+    fn active_org(id: &str) -> Result<Organization, TenancyError> {
+        let mut org = Organization::provision(org_id(id)?, "Test Merchant")?;
+        org.activate()?;
+        Ok(org)
     }
 
-    fn active_branch(id: &str, org: &str) -> Branch {
-        let mut branch = Branch::provision(branch_id(id), org_id(org), "Main Branch").unwrap();
-        branch.activate().unwrap();
-        branch
+    fn active_branch(id: &str, org: &str) -> Result<Branch, TenancyError> {
+        let mut branch = Branch::provision(branch_id(id)?, org_id(org)?, "Main Branch")?;
+        branch.activate()?;
+        Ok(branch)
     }
 
-    fn active_membership(id: &str, org: &str, user: &str) -> Membership {
+    fn active_membership(id: &str, org: &str, user: &str) -> Result<Membership, TenancyError> {
         let mut membership = Membership::invite(
-            MembershipId::new(id).unwrap(),
-            org_id(org),
-            TenantUserId::new(user).unwrap(),
+            MembershipId::new(id)?,
+            org_id(org)?,
+            TenantUserId::new(user)?,
         );
-        membership.mark_pending().unwrap();
-        membership.activate().unwrap();
-        membership
+        membership.mark_pending()?;
+        membership.activate()?;
+        Ok(membership)
     }
 
     #[test]
@@ -472,18 +501,19 @@ mod tests {
     }
 
     #[test]
-    fn names_are_presentation_data_with_bounds() {
-        assert!(Organization::provision(org_id("o1"), "").is_err());
-        assert!(Organization::provision(org_id("o1"), "   ").is_err());
-        assert!(Organization::provision(org_id("o1"), &"n".repeat(257)).is_err());
+    fn names_are_presentation_data_with_bounds() -> Result<(), TenancyError> {
+        assert!(Organization::provision(org_id("o1")?, "").is_err());
+        assert!(Organization::provision(org_id("o1")?, "   ").is_err());
+        assert!(Organization::provision(org_id("o1")?, &"n".repeat(257)).is_err());
         // Names are not unique security identifiers: duplicates are allowed.
-        assert!(Organization::provision(org_id("o1"), "Same Name").is_ok());
-        assert!(Organization::provision(org_id("o2"), "Same Name").is_ok());
+        assert!(Organization::provision(org_id("o1")?, "Same Name").is_ok());
+        assert!(Organization::provision(org_id("o2")?, "Same Name").is_ok());
+        Ok(())
     }
 
     #[test]
-    fn organization_lifecycle_follows_section_6() {
-        let mut org = Organization::provision(org_id("o1"), "Merchant").unwrap();
+    fn organization_lifecycle_follows_section_6() -> Result<(), TenancyError> {
+        let mut org = Organization::provision(org_id("o1")?, "Merchant")?;
         assert_eq!(org.state, OrganizationState::Provisioning);
         assert!(!org.can_operate());
 
@@ -491,67 +521,70 @@ mod tests {
         assert_eq!(org.suspend(), Err(TenancyError::InvalidTransition));
         assert_eq!(org.begin_close(), Err(TenancyError::InvalidTransition));
 
-        org.activate().unwrap();
+        org.activate()?;
         assert!(org.can_operate());
 
-        org.suspend().unwrap();
+        org.suspend()?;
         assert!(!org.can_operate());
-        org.resume().unwrap();
+        org.resume()?;
         assert!(org.can_operate());
 
         // Suspended cannot begin closing; only Active can (section 6 diagram).
-        org.suspend().unwrap();
+        org.suspend()?;
         assert_eq!(org.begin_close(), Err(TenancyError::InvalidTransition));
-        org.resume().unwrap();
+        org.resume()?;
 
-        org.begin_close().unwrap();
+        org.begin_close()?;
         assert!(!org.can_operate());
         // Closing cannot return to Active.
         assert_eq!(org.resume(), Err(TenancyError::InvalidTransition));
         assert_eq!(org.activate(), Err(TenancyError::InvalidTransition));
 
-        org.close().unwrap();
+        org.close()?;
         assert_eq!(org.state, OrganizationState::Closed);
         assert!(!org.can_operate());
+        Ok(())
     }
 
     #[test]
-    fn closed_organization_is_terminal() {
-        let mut org = active_org("o1");
-        org.begin_close().unwrap();
-        org.close().unwrap();
+    fn closed_organization_is_terminal() -> Result<(), TenancyError> {
+        let mut org = active_org("o1")?;
+        org.begin_close()?;
+        org.close()?;
         assert_eq!(org.activate(), Err(TenancyError::TerminalState));
         assert_eq!(org.suspend(), Err(TenancyError::TerminalState));
         assert_eq!(org.resume(), Err(TenancyError::TerminalState));
         assert_eq!(org.begin_close(), Err(TenancyError::TerminalState));
         assert_eq!(org.close(), Err(TenancyError::TerminalState));
+        Ok(())
     }
 
     #[test]
-    fn branch_lifecycle_follows_section_14() {
-        let mut branch = Branch::provision(branch_id("b1"), org_id("o1"), "Branch").unwrap();
+    fn branch_lifecycle_follows_section_14() -> Result<(), TenancyError> {
+        let mut branch = Branch::provision(branch_id("b1")?, org_id("o1")?, "Branch")?;
         assert_eq!(branch.state, BranchState::Provisioning);
         assert!(!branch.can_operate());
 
         assert_eq!(branch.suspend(), Err(TenancyError::InvalidTransition));
-        branch.activate().unwrap();
+        branch.activate()?;
         assert!(branch.can_operate());
 
-        branch.suspend().unwrap();
+        branch.suspend()?;
         assert!(!branch.can_operate());
-        branch.resume().unwrap();
+        branch.resume()?;
         assert!(branch.can_operate());
 
-        branch.begin_close().unwrap();
+        branch.begin_close()?;
         assert!(!branch.can_operate());
-        branch.close().unwrap();
+        branch.close()?;
         assert_eq!(branch.state, BranchState::Closed);
         assert_eq!(branch.resume(), Err(TenancyError::TerminalState));
+        Ok(())
     }
 
     #[test]
-    fn branch_organization_binding_is_immutable() {
-        let branch = active_branch("b1", "o1");
+    fn branch_organization_binding_is_immutable() -> Result<(), TenancyError> {
+        let branch = active_branch("b1", "o1")?;
         assert_eq!(branch.organization_id.as_str(), "o1");
         // No setter exists: the binding can only be established at creation.
         // This test pins the struct shape against accidental mutability.
@@ -559,14 +592,15 @@ mod tests {
             organization_id, ..
         } = &branch;
         assert_eq!(organization_id.as_str(), "o1");
+        Ok(())
     }
 
     #[test]
-    fn membership_lifecycle_follows_section_8() {
+    fn membership_lifecycle_follows_section_8() -> Result<(), TenancyError> {
         let mut membership = Membership::invite(
-            MembershipId::new("m1").unwrap(),
-            org_id("o1"),
-            TenantUserId::new("u1").unwrap(),
+            MembershipId::new("m1")?,
+            org_id("o1")?,
+            TenantUserId::new("u1")?,
         );
         assert_eq!(membership.state, MembershipState::Invited);
         assert!(!membership.has_authority());
@@ -575,69 +609,74 @@ mod tests {
         assert_eq!(membership.activate(), Err(TenancyError::InvalidTransition));
         assert_eq!(membership.revoke(), Err(TenancyError::InvalidTransition));
 
-        membership.mark_pending().unwrap();
+        membership.mark_pending()?;
         assert!(!membership.has_authority());
-        membership.activate().unwrap();
+        membership.activate()?;
         assert!(membership.has_authority());
 
-        membership.suspend().unwrap();
+        membership.suspend()?;
         assert!(!membership.has_authority());
-        membership.resume().unwrap();
+        membership.resume()?;
         assert!(membership.has_authority());
 
-        membership.revoke().unwrap();
+        membership.revoke()?;
         assert_eq!(membership.state, MembershipState::Revoked);
         assert!(!membership.has_authority());
+        Ok(())
     }
 
     #[test]
-    fn revoked_membership_cannot_be_reactivated() {
-        let mut membership = active_membership("m1", "o1", "u1");
-        membership.revoke().unwrap();
+    fn revoked_membership_cannot_be_reactivated() -> Result<(), TenancyError> {
+        let mut membership = active_membership("m1", "o1", "u1")?;
+        membership.revoke()?;
         assert_eq!(membership.resume(), Err(TenancyError::TerminalState));
         assert_eq!(membership.activate(), Err(TenancyError::TerminalState));
         assert_eq!(membership.suspend(), Err(TenancyError::TerminalState));
         assert_eq!(membership.revoke(), Err(TenancyError::TerminalState));
+        Ok(())
     }
 
     #[test]
-    fn expired_membership_is_terminal() {
+    fn expired_membership_is_terminal() -> Result<(), TenancyError> {
         let mut membership = Membership::invite(
-            MembershipId::new("m1").unwrap(),
-            org_id("o1"),
-            TenantUserId::new("u1").unwrap(),
+            MembershipId::new("m1")?,
+            org_id("o1")?,
+            TenantUserId::new("u1")?,
         );
-        membership.mark_pending().unwrap();
-        membership.expire().unwrap();
+        membership.mark_pending()?;
+        membership.expire()?;
         assert_eq!(membership.state, MembershipState::Expired);
         assert!(!membership.has_authority());
         assert_eq!(membership.activate(), Err(TenancyError::TerminalState));
+        Ok(())
     }
 
     #[test]
-    fn invitation_cannot_expire_before_pending() {
+    fn invitation_cannot_expire_before_pending() -> Result<(), TenancyError> {
         let mut membership = Membership::invite(
-            MembershipId::new("m1").unwrap(),
-            org_id("o1"),
-            TenantUserId::new("u1").unwrap(),
+            MembershipId::new("m1")?,
+            org_id("o1")?,
+            TenantUserId::new("u1")?,
         );
         assert_eq!(membership.expire(), Err(TenancyError::InvalidTransition));
+        Ok(())
     }
 
     #[test]
-    fn state_versions_increase_monotonically() {
-        let mut org = Organization::provision(org_id("o1"), "Merchant").unwrap();
+    fn state_versions_increase_monotonically() -> Result<(), TenancyError> {
+        let mut org = Organization::provision(org_id("o1")?, "Merchant")?;
         let v0 = org.state_version;
-        org.activate().unwrap();
-        org.suspend().unwrap();
-        org.resume().unwrap();
+        org.activate()?;
+        org.suspend()?;
+        org.resume()?;
         assert!(org.state_version > v0);
 
-        let mut membership = active_membership("m1", "o1", "u1");
+        let mut membership = active_membership("m1", "o1", "u1")?;
         let mv0 = membership.state_version;
-        membership.suspend().unwrap();
-        membership.resume().unwrap();
-        membership.revoke().unwrap();
+        membership.suspend()?;
+        membership.resume()?;
+        membership.revoke()?;
         assert!(membership.state_version > mv0);
+        Ok(())
     }
 }

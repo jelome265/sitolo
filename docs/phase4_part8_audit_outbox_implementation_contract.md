@@ -477,6 +477,12 @@ iam.membership.invitation_accepted
 iam.membership.activated
 iam.membership.suspended
 iam.membership.revoked
+iam.membership.pending_acceptance
+iam.membership.expired
+
+iam.invitation.issued
+iam.invitation.withdrawn
+iam.invitation.expired
 
 iam.role.assigned
 iam.role.changed
@@ -496,6 +502,23 @@ iam.device.revoked
 ~~~
 
 This is a Phase 4 security/IAM catalogue, not the complete future Sitolo domain-event catalogue.
+
+The invitation and pending/expired membership names are distinct state
+transitions approved in the PR-009 owner decision record
+`workspaces/sitolo-engineering/runs/pr009-part8/follow-up/decisions/iam-lifecycle-event-mapping-proposal.md`.
+They use schema version 1. Their payloads are bounded and contain only the
+minimal state identifiers and transition metadata: membership lifecycle
+events carry `membership_id`, `from_state`, `to_state`, and `state_version`;
+invitation issuance carries `invitation_id`, `membership_id`, `expires_at`,
+and `state_version`; withdrawal adds the bounded transition reason when
+supplied; expiry carries the invitation/membership identifiers, transition
+states, expiry timestamp, and state version. No invitation token, token hash,
+contact address, or credential may be included. Invitation expiry is emitted
+once per committed invitation transition, with a separate membership-expiry
+event only when the linked membership actually transitions.
+The owner-approved v1 `iam.membership.expired` schema accepts
+`PENDING_ACCEPTANCE → EXPIRED` and `INVITED → EXPIRED`; all other source
+states remain invalid.
 
 ## 6.3 Version
 

@@ -133,10 +133,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_reference_constructs() {
-        let r = SecretRef::new(SecretClass::Database, "prod/sitolo/db").unwrap();
+    fn valid_reference_constructs() -> Result<(), Box<dyn std::error::Error>> {
+        let r = SecretRef::new(SecretClass::Database, "prod/sitolo/db")?;
         assert_eq!(r.class(), SecretClass::Database);
         assert!(r.reference_fingerprint().starts_with("ref_"));
+        Ok(())
     }
 
     #[test]

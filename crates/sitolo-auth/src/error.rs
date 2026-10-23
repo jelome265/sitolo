@@ -63,6 +63,8 @@ pub enum AuthError {
     SecurityVersionMismatch,
     #[error("authorization denied")]
     AuthorizationDenied,
+    #[error("identity authority unavailable")]
+    IdentityAuthorityUnavailable,
 }
 
 impl AuthError {
@@ -99,6 +101,7 @@ impl AuthError {
             AuthError::InvalidTransition => "AUTHENTICATION_FAILED",
             AuthError::SecurityVersionMismatch => "SESSION_REVOKED",
             AuthError::AuthorizationDenied => "AUTHORIZATION_DENIED",
+            AuthError::IdentityAuthorityUnavailable => "IDENTITY_AUTHORITY_UNAVAILABLE",
         }
     }
 }
@@ -149,11 +152,13 @@ mod tests {
             AuthError::MfaFailed,
             AuthError::DeviceRevoked,
             AuthError::IdentityProviderUnavailable,
+            AuthError::IdentityAuthorityUnavailable,
             AuthError::RecoveryArtifactUsed,
         ];
         assert_eq!(all[0].code(), "AUTHENTICATION_FAILED");
         assert_eq!(all[4].code(), "REFRESH_TOKEN_REUSED");
-        assert_eq!(all[9].code(), "RECOVERY_ARTIFACT_USED");
+        assert_eq!(all[9].code(), "IDENTITY_AUTHORITY_UNAVAILABLE");
+        assert_eq!(all[10].code(), "RECOVERY_ARTIFACT_USED");
     }
 
     #[test]

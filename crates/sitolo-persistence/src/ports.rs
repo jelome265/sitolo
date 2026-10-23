@@ -21,6 +21,19 @@ use crate::memory::{
 /// Bundled identity persistence port (§51).
 #[async_trait]
 pub trait IdentityStores: Send + Sync + AuditRecorder {
+    /// Resolves an exact, pre-linked external identity. This operation must
+    /// never create or link a user based on token claims such as email.
+    async fn resolve_external_identity(&self, issuer: &str, subject: &str) -> Option<UserId>;
+
+    /// Explicit administrative/onboarding binding. Implementations must
+    /// reject missing users and any attempt to reassign an existing pair.
+    async fn bind_external_identity(
+        &self,
+        issuer: String,
+        subject: String,
+        user_id: &UserId,
+    ) -> Result<(), sitolo_auth::AuthError>;
+
     // --- users ---
     async fn create_user(
         &self,
@@ -44,7 +57,10 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
     // --- sessions ---
     // Explicit session-establishment port; bundling would obscure the §52
     // transaction boundary implementors must enforce.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The explicit session-establishment fields expose the §52 transaction contract at call sites."
+    )]
     async fn establish_session(
         &self,
         user_id: UserId,
@@ -59,6 +75,15 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
     async fn accept_session(
         &self,
         id: &SessionId,
+        now: std::time::SystemTime,
+    ) -> Result<SessionSnapshot, sitolo_auth::AuthError>;
+    /// Accepts a session only when it belongs to the already-resolved user.
+    /// The ownership check and session-state update are one repository
+    /// operation; the caller must not trust a session ID as identity proof.
+    async fn accept_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
         now: std::time::SystemTime,
     ) -> Result<SessionSnapshot, sitolo_auth::AuthError>;
     async fn revoke_session(

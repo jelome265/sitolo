@@ -1,0 +1,24 @@
+version = 1
+
+# These are hard compile-time/runtime layer boundaries, not advisory targets.
+
+[[rules]]
+crate = "sitolo-domain"
+forbidden_dependencies = ["axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper", "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs"]
+
+[[rules]]
+crate = "sitolo-authz"
+forbidden_dependencies = ["axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper", "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs"]
+
+[[rules]]
+crate = "sitolo-tenancy"
+forbidden_dependencies = ["axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper", "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs"]
+
+[[rules]]
+crate = "sitolo-application"
+forbidden_dependencies = ["axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper", "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs", "sitolo-persistence"]
+forbidden_source_tokens = ["sqlx_core::", "sqlx_postgres::", "sqlx::", "sitolo_persistence::", "PgPool", "Transaction<'_, Postgres>"]
+
+[[rules]]
+crate = "sitolo-api"
+forbidden_dependencies = ["sitolo-persistence"]

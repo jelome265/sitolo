@@ -72,11 +72,11 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn grant() -> OfflineGrant {
+    fn grant() -> Result<OfflineGrant, AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        OfflineGrant {
-            session_id: SessionId::new("sess-1").unwrap(),
-            device_id: DeviceId::new("dev-1").unwrap(),
+        Ok(OfflineGrant {
+            session_id: SessionId::new("sess-1")?,
+            device_id: DeviceId::new("dev-1")?,
             granted_at: now,
             expires_at: now + Duration::from_secs(3_600),
             allowed_operations: [
@@ -86,12 +86,12 @@ mod tests {
             .into_iter()
             .collect(),
             security_version: SecurityVersion(1),
-        }
+        })
     }
 
     #[test]
-    fn valid_offline_operation_accepted() {
-        let g = grant();
+    fn valid_offline_operation_accepted() -> Result<(), AuthError> {
+        let g = grant()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
         assert!(
             g.validate(
@@ -102,11 +102,12 @@ mod tests {
             )
             .is_ok()
         );
+        Ok(())
     }
 
     #[test]
-    fn expired_grant_rejected() {
-        let g = grant();
+    fn expired_grant_rejected() -> Result<(), AuthError> {
+        let g = grant()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000);
         assert!(
             g.validate(
@@ -117,11 +118,12 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]
-    fn revoked_device_rejected() {
-        let g = grant();
+    fn revoked_device_rejected() -> Result<(), AuthError> {
+        let g = grant()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
         assert!(
             g.validate(
@@ -132,11 +134,12 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]
-    fn disallowed_operation_rejected() {
-        let g = grant();
+    fn disallowed_operation_rejected() -> Result<(), AuthError> {
+        let g = grant()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
         assert!(
             g.validate(
@@ -147,11 +150,12 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]
-    fn security_version_mismatch_rejected() {
-        let g = grant();
+    fn security_version_mismatch_rejected() -> Result<(), AuthError> {
+        let g = grant()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
         assert!(
             g.validate(
@@ -162,5 +166,6 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 }

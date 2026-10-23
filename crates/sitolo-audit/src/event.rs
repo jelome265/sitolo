@@ -191,13 +191,13 @@ mod tests {
     }
 
     #[test]
-    fn record_shape_has_no_secret_fields() {
+    fn record_shape_has_no_secret_fields() -> Result<(), sitolo_auth::AuthError> {
         // The record shape is secret-free by construction. This test
         // documents the invariant: no field in AuthenticationEvent can hold
         // a password, otp, mfa secret, refresh token, access token,
         // authorization code, client secret, private key, or recovery code.
         let event = AuthenticationEvent {
-            event_id: AuditEventId::new("evt-1").unwrap(),
+            event_id: AuditEventId::new("evt-1")?,
             event_name: AuthEventName::LoginSuccess,
             occurred_at: SystemTime::UNIX_EPOCH,
             request_id: Some("req-1".into()),
@@ -216,5 +216,6 @@ mod tests {
         assert!(!debug.contains("hunter2"));
         assert!(!debug.contains("secret"));
         assert!(!debug.contains("Bearer"));
+        Ok(())
     }
 }

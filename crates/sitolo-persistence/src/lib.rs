@@ -7,13 +7,14 @@
 
 mod memory;
 mod ports;
-#[cfg(any(test, feature = "test-support"))]
 pub mod postgres;
-#[cfg(not(any(test, feature = "test-support")))]
-pub(crate) mod postgres;
+mod postgres_time;
 mod runtime;
+pub mod runtime_pool;
 mod tenancy;
+pub mod tenancy_postgres;
 
+pub use identity_authority_postgres::PgRequestIdentityAuthority;
 pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
@@ -23,7 +24,14 @@ pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,
 };
+pub use runtime_pool::{PgRuntimePool, PgWorkerPool, RuntimePoolError};
+pub use sitolo_auth::RequestIdentityAuthority;
+pub use sitolo_domain::tenancy::ProvisionedOrganization;
 pub use tenancy::{
-    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ProvisionedOrganization,
-    TenancyDatabase, TenancyStores,
+    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, TenancyDatabase, TenancyStores,
 };
+
+pub mod audit_repository;
+pub mod consumer_inbox;
+pub mod identity_authority_postgres;
+pub mod outbox_repository;

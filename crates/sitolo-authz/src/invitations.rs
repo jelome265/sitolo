@@ -119,6 +119,17 @@ pub enum InvitationError {
     AlreadyAccepted,
     #[error("invitation rate limited")]
     RateLimited,
+    /// Mandatory Phase 4 Part 8 audit/outbox evidence could not be durably
+    /// recorded after the invitation was validly redeemed. Distinct from
+    /// the token-validity codes above by design: this is an internal
+    /// persistence failure on an otherwise-successful redemption, not a
+    /// statement about the token, so it must not be folded into `Invalid`
+    /// (that would misreport a real evidence outage as a bad token) nor
+    /// exposed to the caller under a token-validity code (a future HTTP
+    /// mapping should treat this as a 5xx, not one of the 4xx invitation
+    /// codes in `code()`).
+    #[error("mandatory audit/outbox evidence persistence failed")]
+    EvidencePersistenceFailed,
 }
 
 impl InvitationError {
@@ -130,6 +141,7 @@ impl InvitationError {
             InvitationError::Expired => "INVITATION_EXPIRED",
             InvitationError::AlreadyAccepted => "INVITATION_ALREADY_ACCEPTED",
             InvitationError::RateLimited => "INVITATION_RATE_LIMITED",
+            InvitationError::EvidencePersistenceFailed => "INVITATION_EVIDENCE_PERSISTENCE_FAILED",
         }
     }
 }
@@ -162,8 +174,10 @@ pub struct Invitation {
     /// `None` means organization-wide; `Some` narrows to the named scope and
     /// is materialized as a scope grant on acceptance.
     pub proposed_scope: Option<Scope>,
-    pub contact: InvitationContact,
-    pub token_hash: [u8; 32],
+    /// Removed when the invitation reaches any terminal state.
+    pub contact: Option<InvitationContact>,
+    /// Removed when the invitation reaches any terminal state.
+    pub token_hash: Option<[u8; 32]>,
     pub issued_at: SystemTime,
     pub expires_at: SystemTime,
     pub state: InvitationState,
@@ -192,7 +206,10 @@ impl Invitation {
 
     /// Issues an invitation. A zero TTL would mint a stillborn record, so
     /// expiry-bounded issuance requires a positive TTL (section 9.1).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Invitation issuance keeps tenant, actor, scope, expiry, and token inputs explicit for security review."
+    )]
     pub fn issue(
         id: InvitationId,
         organization_id: OrganizationId,
@@ -214,8 +231,8 @@ impl Invitation {
             membership_id,
             proposed_role,
             proposed_scope,
-            contact,
-            token_hash: Self::hash_token(raw_token),
+            contact: Some(contact),
+            token_hash: Some(Self::hash_token(raw_token)),
             issued_at: now,
             expires_at: now + ttl,
             state: InvitationState::Issued,
@@ -237,10 +254,12 @@ impl Invitation {
         if now >= self.expires_at {
             self.state = InvitationState::Expired;
             self.state_version = self.state_version.saturating_add(1);
+            self.erase_terminal_data();
             return Err(InvitationError::Expired);
         }
         self.state = InvitationState::Accepted;
         self.state_version = self.state_version.saturating_add(1);
+        self.erase_terminal_data();
         Ok(())
     }
 
@@ -251,12 +270,18 @@ impl Invitation {
             InvitationState::Issued => {
                 self.state = InvitationState::Revoked;
                 self.state_version = self.state_version.saturating_add(1);
+                self.erase_terminal_data();
                 Ok(())
             }
             InvitationState::Accepted => Err(InvitationError::AlreadyAccepted),
             InvitationState::Revoked => Err(InvitationError::Invalid),
             InvitationState::Expired => Err(InvitationError::Expired),
         }
+    }
+
+    fn erase_terminal_data(&mut self) {
+        self.contact = None;
+        self.token_hash = None;
     }
 }
 
@@ -266,34 +291,34 @@ mod tests {
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
-    fn contact() -> InvitationContact {
-        InvitationContact::new(ContactKind::Email, "cashier@example.com").unwrap()
+    fn contact() -> Result<InvitationContact, TenancyError> {
+        InvitationContact::new(ContactKind::Email, "cashier@example.com")
     }
 
-    fn invitation() -> Invitation {
+    fn invitation() -> Result<Invitation, TenancyError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         Invitation::issue(
-            InvitationId::new("inv-1").unwrap(),
-            OrganizationId::new("o1").unwrap(),
-            MembershipId::new("m1").unwrap(),
+            InvitationId::new("inv-1")?,
+            OrganizationId::new("o1")?,
+            MembershipId::new("m1")?,
             Role::Cashier,
             None,
-            contact(),
+            contact()?,
             TOKEN,
             now,
             Duration::from_secs(3_600),
         )
-        .unwrap()
     }
 
     #[test]
-    fn issue_stores_hash_never_raw() {
-        let invitation = invitation();
-        assert_eq!(invitation.token_hash, Invitation::hash_token(TOKEN));
+    fn issue_stores_hash_never_raw() -> Result<(), TenancyError> {
+        let invitation = invitation()?;
+        assert_eq!(invitation.token_hash, Some(Invitation::hash_token(TOKEN)));
         assert_eq!(invitation.state, InvitationState::Issued);
         // The record carries no raw-token field: debug output cannot leak it.
         let rendered = format!("{invitation:?}");
         assert!(!rendered.contains(TOKEN));
+        Ok(())
     }
 
     #[test]
@@ -305,22 +330,23 @@ mod tests {
     }
 
     #[test]
-    fn zero_ttl_cannot_issue() {
+    fn zero_ttl_cannot_issue() -> Result<(), TenancyError> {
         let now = SystemTime::UNIX_EPOCH;
         assert_eq!(
             Invitation::issue(
-                InvitationId::new("inv-1").unwrap(),
-                OrganizationId::new("o1").unwrap(),
-                MembershipId::new("m1").unwrap(),
+                InvitationId::new("inv-1")?,
+                OrganizationId::new("o1")?,
+                MembershipId::new("m1")?,
                 Role::Cashier,
                 None,
-                contact(),
+                contact()?,
                 TOKEN,
                 now,
                 Duration::ZERO,
             ),
             Err(TenancyError::InvalidInvitation)
         );
+        Ok(())
     }
 
     #[test]
@@ -336,33 +362,56 @@ mod tests {
     }
 
     #[test]
-    fn accept_consumes_exactly_once() {
-        let mut invitation = invitation();
+    fn accept_consumes_exactly_once() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
-        invitation.accept(now).unwrap();
+        invitation
+            .accept(now)
+            .map_err(|_| TenancyError::InvalidInvitation)?;
         assert_eq!(invitation.state, InvitationState::Accepted);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
         assert_eq!(
             invitation.accept(now),
             Err(InvitationError::AlreadyAccepted)
         );
+        Ok(())
     }
 
     #[test]
-    fn lapsed_invitation_expires_on_observation() {
-        let mut invitation = invitation();
+    fn lapsed_invitation_expires_on_observation() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let late = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000);
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
         assert_eq!(invitation.state, InvitationState::Expired);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
         assert_eq!(invitation.accept(late), Err(InvitationError::Expired));
+        Ok(())
     }
 
     #[test]
-    fn revoked_tokens_are_generically_invalid() {
-        let mut invitation = invitation();
+    fn withdrawal_erases_contact_and_token_hash() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
+        invitation
+            .revoke()
+            .map_err(|_| TenancyError::InvalidInvitation)?;
+        assert_eq!(invitation.state, InvitationState::Revoked);
+        assert!(invitation.contact.is_none());
+        assert!(invitation.token_hash.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn revoked_tokens_are_generically_invalid() -> Result<(), TenancyError> {
+        let mut invitation = invitation()?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
-        invitation.revoke().unwrap();
+        invitation
+            .revoke()
+            .map_err(|_| TenancyError::InvalidInvitation)?;
         assert_eq!(invitation.accept(now), Err(InvitationError::Invalid));
         assert_eq!(invitation.revoke(), Err(InvitationError::Invalid));
+        Ok(())
     }
 
     #[test]

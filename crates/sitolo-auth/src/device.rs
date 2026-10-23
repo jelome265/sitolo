@@ -182,67 +182,71 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn device() -> Device {
+    fn device() -> Result<Device, AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
-        Device::begin_registration(
-            DeviceId::new("dev-01").unwrap(),
-            UserId::new("user-01").unwrap(),
+        Ok(Device::begin_registration(
+            DeviceId::new("dev-01")?,
+            UserId::new("user-01")?,
             ClientPlatform::Android,
             SecurityVersion(1),
             now,
-        )
+        ))
     }
 
     #[test]
-    fn lifecycle_follows_appendix_a2() {
+    fn lifecycle_follows_appendix_a2() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
-        let mut d = device();
+        let mut d = device()?;
         assert_eq!(d.state, DeviceState::RegistrationStarted);
-        d.require_verification().unwrap();
-        d.complete_verification().unwrap();
-        d.activate().unwrap();
-        d.suspend().unwrap();
-        d.reinstate().unwrap();
-        let bumped = d.revoke(now + Duration::from_secs(10)).unwrap();
+        d.require_verification()?;
+        d.complete_verification()?;
+        d.activate()?;
+        d.suspend()?;
+        d.reinstate()?;
+        let bumped = d.revoke(now + Duration::from_secs(10))?;
         assert_eq!(bumped, SecurityVersion(2));
         assert_eq!(d.state, DeviceState::Revoked);
         assert!(d.revoked_at.is_some());
+        Ok(())
     }
 
     #[test]
-    fn revoked_device_never_becomes_active() {
+    fn revoked_device_never_becomes_active() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
-        let mut d = device();
-        d.require_verification().unwrap();
-        d.complete_verification().unwrap();
-        d.activate().unwrap();
-        d.revoke(now).unwrap();
+        let mut d = device()?;
+        d.require_verification()?;
+        d.complete_verification()?;
+        d.activate()?;
+        d.revoke(now)?;
         assert!(d.activate().is_err());
         assert!(d.reinstate().is_err());
         assert!(matches!(d.revoke(now), Err(AuthError::InvalidTransition)));
+        Ok(())
     }
 
     #[test]
-    fn registration_cannot_skip_verification() {
-        let mut d = device();
+    fn registration_cannot_skip_verification() -> Result<(), AuthError> {
+        let mut d = device()?;
         assert!(matches!(d.activate(), Err(AuthError::InvalidTransition)));
         assert!(matches!(
             d.complete_verification(),
             Err(AuthError::InvalidTransition)
         ));
+        Ok(())
     }
 
     #[test]
-    fn replacement_retires_old_without_reviving() {
+    fn replacement_retires_old_without_reviving() -> Result<(), AuthError> {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
-        let mut old = device();
-        old.require_verification().unwrap();
-        old.complete_verification().unwrap();
-        old.activate().unwrap();
-        old.retire_for_replacement(now).unwrap();
+        let mut old = device()?;
+        old.require_verification()?;
+        old.complete_verification()?;
+        old.activate()?;
+        old.retire_for_replacement(now)?;
         assert_eq!(old.state, DeviceState::Retired);
-        let mut fresh = device();
+        let mut fresh = device()?;
         fresh.replacement_of = Some(old.id.clone());
         assert_eq!(fresh.state, DeviceState::RegistrationStarted);
+        Ok(())
     }
 }

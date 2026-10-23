@@ -67,7 +67,7 @@ pub struct IdentityService {
     db: Arc<IdentityDatabase>,
     hasher: Arc<dyn PasswordHasher>,
     // Wired for future OIDC provider use; not yet consulted by reference use cases.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "The optional provider injection is reserved for the planned OIDC reference flow; request authentication uses the authority port today.")]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
     policy: IdentityPolicy,
@@ -81,20 +81,20 @@ impl IdentityService {
         provider: Option<Arc<dyn IdentityProviderPort>>,
         policy: IdentityPolicy,
         random: Arc<dyn RandomSource>,
-    ) -> Self {
-        policy.validate().expect("valid identity policy");
+    ) -> Result<Self, sitolo_auth::AuthError> {
+        policy.validate()?;
         let mut limiter = RateLimiter::new();
         for (class, rule) in &policy.abuse_rules {
             let _ = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
         }
-        IdentityService {
+        Ok(IdentityService {
             db,
             hasher,
             provider,
             limiter: Mutex::new(limiter),
             policy,
             random,
-        }
+        })
     }
 
     fn check_rate(&self, class: AbuseClass, key: &str) -> RateLimitDecision {
@@ -122,7 +122,10 @@ impl IdentityService {
 
     // Explicit audit-event fields keep each call site reviewable; bundling
     // into a params struct would hide which auth context is populated.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Audit event fields stay explicit so authentication context cannot be silently omitted from the audit record."
+    )]
     async fn emit_audit(
         &self,
         name: AuthEventName,
@@ -137,8 +140,16 @@ impl IdentityService {
         version: Option<SecurityVersion>,
         now: SystemTime,
     ) {
+        // The constructor receives only this fixed prefix and 16 lowercase
+        // hexadecimal characters from `random_hex(8)`.
+        #[expect(
+            clippy::expect_used,
+            reason = "the generated audit identifier is restricted to its validated ASCII grammar and length"
+        )]
+        let event_id = AuditEventId::new(format!("evt-{}", self.random_hex(8)))
+            .expect("generated audit event id is valid");
         let event = AuthenticationEvent {
-            event_id: AuditEventId::new(format!("evt-{}", self.random_hex(8))).expect("event id"),
+            event_id,
             event_name: name,
             occurred_at: now,
             request_id: None,
@@ -960,7 +971,7 @@ mod tests {
     use sitolo_persistence::IdentityDatabase;
     use sitolo_security::DeterministicRandom;
 
-    fn test_service() -> IdentityService {
+    fn test_service() -> Result<IdentityService, sitolo_auth::AuthError> {
         let policy = SessionPolicySet {
             merchant: sitolo_auth::SessionLifetime {
                 idle: Duration::from_secs(30),
@@ -1003,7 +1014,8 @@ mod tests {
     }
 
     #[test]
-    fn service_constructs() {
-        let _ = test_service();
+    fn service_constructs() -> Result<(), sitolo_auth::AuthError> {
+        let _service = test_service()?;
+        Ok(())
     }
 }

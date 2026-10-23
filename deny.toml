@@ -7,11 +7,12 @@ allow = [
     "Apache-2.0",
     "MIT",
     "BSD-3-Clause",
+    # Permissive ISC license required by `untrusted` in the AWS-LC/rustls tree.
     "ISC",
-    "MPL-2.0",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
+    # SQLx 0.9 uses Mozilla webpki roots with rustls aws-lc-rs.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 

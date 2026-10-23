@@ -19,6 +19,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Dependency, license, and source policy
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        env:
+          # The action's pinned container has Rust 1.85 installed. The repo's
+          # newer rust-toolchain.toml override is not installed in that image;
+          # cargo-deny itself does not build project code.
+          RUSTUP_TOOLCHAIN: 1.85.0
 
   advisories:
     runs-on: ubuntu-latest

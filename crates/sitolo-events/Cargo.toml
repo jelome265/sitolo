@@ -6,3 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+sitolo-domain = { path = "../sitolo-domain" }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

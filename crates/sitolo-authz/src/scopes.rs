@@ -187,39 +187,42 @@ pub fn authorize_scope(grants: &[ScopeGrant], requested: &Scope) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
-    fn org(value: &str) -> OrganizationId {
-        OrganizationId::new(value).unwrap()
+    type AuthzTestError = Box<dyn Error>;
+
+    fn org(value: &str) -> Result<OrganizationId, AuthzTestError> {
+        Ok(OrganizationId::new(value)?)
     }
 
-    fn branch(value: &str) -> BranchId {
-        BranchId::new(value).unwrap()
+    fn branch(value: &str) -> Result<BranchId, AuthzTestError> {
+        Ok(BranchId::new(value)?)
     }
 
-    fn grant(scope: Scope) -> ScopeGrant {
-        ScopeGrant::grant(
-            ScopeGrantId::new("g1").unwrap(),
-            org("o1"),
-            MembershipId::new("m1").unwrap(),
+    fn grant(scope: Scope) -> Result<ScopeGrant, AuthzTestError> {
+        Ok(ScopeGrant::grant(
+            ScopeGrantId::new("g1")?,
+            org("o1")?,
+            MembershipId::new("m1")?,
             scope,
-        )
+        ))
     }
 
     #[test]
-    fn covers_follows_section_11_inheritance() {
+    fn covers_follows_section_11_inheritance() -> Result<(), AuthzTestError> {
         let org_a = Scope::Organization {
-            organization_id: org("o-a"),
+            organization_id: org("o-a")?,
         };
         let branch_a1 = Scope::Branch {
-            organization_id: org("o-a"),
-            branch_id: branch("b1"),
+            organization_id: org("o-a")?,
+            branch_id: branch("b1")?,
         };
         let branch_a2 = Scope::Branch {
-            organization_id: org("o-a"),
-            branch_id: branch("b2"),
+            organization_id: org("o-a")?,
+            branch_id: branch("b2")?,
         };
         let org_b = Scope::Organization {
-            organization_id: org("o-b"),
+            organization_id: org("o-b")?,
         };
         // Broad implies narrower descendants in the same organization.
         assert!(org_a.covers(&org_a));
@@ -231,31 +234,33 @@ mod tests {
         assert!(!branch_a1.covers(&org_a));
         assert!(!org_a.covers(&org_b));
         assert!(!branch_a1.covers(&org_b));
+        Ok(())
     }
 
     #[test]
-    fn no_grants_means_organization_wide_authority() {
+    fn no_grants_means_organization_wide_authority() -> Result<(), AuthzTestError> {
         let requested = Scope::Branch {
-            organization_id: org("o1"),
-            branch_id: branch("b1"),
+            organization_id: org("o1")?,
+            branch_id: branch("b1")?,
         };
         assert!(authorize_scope(&[], &requested));
+        Ok(())
     }
 
     #[test]
-    fn grants_narrow_to_allow_list() {
+    fn grants_narrow_to_allow_list() -> Result<(), AuthzTestError> {
         let branch_a1 = Scope::Branch {
-            organization_id: org("o1"),
-            branch_id: branch("b1"),
+            organization_id: org("o1")?,
+            branch_id: branch("b1")?,
         };
         let branch_a2 = Scope::Branch {
-            organization_id: org("o1"),
-            branch_id: branch("b2"),
+            organization_id: org("o1")?,
+            branch_id: branch("b2")?,
         };
         let org_scope = Scope::Organization {
-            organization_id: org("o1"),
+            organization_id: org("o1")?,
         };
-        let grants = vec![grant(branch_a1.clone())];
+        let grants = vec![grant(branch_a1.clone())?];
         assert!(authorize_scope(&grants, &branch_a1));
         // Sibling branch denied.
         assert!(!authorize_scope(&grants, &branch_a2));
@@ -263,23 +268,25 @@ mod tests {
         assert!(!authorize_scope(&grants, &org_scope));
 
         // Revoking the only grant restores organization-wide authority.
-        let mut revoked = grant(branch_a1.clone());
-        revoked.revoke().unwrap();
+        let mut revoked = grant(branch_a1.clone())?;
+        revoked.revoke()?;
         assert!(authorize_scope(&[revoked], &branch_a2));
 
         // An organization grant covers everything inside the organization.
-        let org_grants = vec![grant(org_scope.clone())];
+        let org_grants = vec![grant(org_scope.clone())?];
         assert!(authorize_scope(&org_grants, &branch_a2));
         assert!(authorize_scope(&org_grants, &org_scope));
+        Ok(())
     }
 
     #[test]
-    fn revocation_is_terminal() {
+    fn revocation_is_terminal() -> Result<(), AuthzTestError> {
         let mut grant_record = grant(Scope::Organization {
-            organization_id: org("o1"),
-        });
-        grant_record.revoke().unwrap();
+            organization_id: org("o1")?,
+        })?;
+        grant_record.revoke()?;
         assert_eq!(grant_record.revoke(), Err(GrantError::TerminalState));
+        Ok(())
     }
 
     #[test]

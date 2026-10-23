@@ -1,1 +1,11 @@
-msrv = "1.98.1"
+# Framework APIs that are unsafe by design or violate the repository runtime policy.
+# This file is consumed by Clippy at the workspace root and enforced in CI.
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "Do not block an async executor thread; use the async timer in async code." },
+  { path = "std::process::exit", reason = "Return an exit status from the binary entry point so destructors and telemetry can run." },
+  { path = "rustls::ClientConfig::dangerous", reason = "TLS certificate verification must not be disabled or replaced by application code." },
+  { path = "rustls::client::danger::DangerousClientConfig::set_certificate_verifier", reason = "TLS certificate verification must remain on the approved validation path." },
+]
+disallowed-types = [
+  { path = "reqwest::blocking::Client", reason = "Blocking HTTP is forbidden inside async services." },
+]

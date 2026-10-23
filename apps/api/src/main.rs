@@ -9,18 +9,12 @@
 use std::sync::Arc;
 
 use sitolo_api_bin::bootstrap::{StartupContext, StartupError};
-use sitolo_api_bin::serve::serve;
+use sitolo_api_bin::serve::{ServeError, serve};
 use tokio::sync::oneshot;
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
-    match run().await {
-        Ok(()) => {}
-        Err(error) => {
-            eprintln!("sitolo-api: startup failed: {error}");
-            std::process::exit(1);
-        }
-    }
+async fn main() -> Result<(), StartupError> {
+    run().await
 }
 
 async fn run() -> Result<(), StartupError> {
@@ -30,26 +24,43 @@ async fn run() -> Result<(), StartupError> {
         .await
         .map_err(|_| StartupError::ConfigRejected { problems: 0 })?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let serve = tokio::spawn(serve(listener, Arc::clone(context.state()), shutdown_rx));
-    wait_for_shutdown_signal().await;
+    let serve_task = tokio::spawn(serve(listener, Arc::clone(context.state()), shutdown_rx));
+    wait_for_shutdown_signal().await?;
     let _ = shutdown_tx.send(());
-    let _ = serve.await;
-    Ok(())
+    match serve_task.await {
+        Ok(Ok(_shutdown_order)) => Ok(()),
+        Ok(Err(error)) => Err(StartupError::ServeFailed {
+            class: serve_error_class(&error),
+        }),
+        Err(_) => Err(StartupError::ServeFailed { class: "task-join" }),
+    }
 }
 
-async fn wait_for_shutdown_signal() {
+fn serve_error_class(error: &ServeError) -> &'static str {
+    match error {
+        ServeError::InvalidRouteInventory => "route-inventory",
+        ServeError::Listener(_) => "listener",
+        ServeError::DrainDeadlineExceeded => "drain-deadline",
+    }
+}
+
+async fn wait_for_shutdown_signal() -> Result<(), StartupError> {
     #[cfg(unix)]
     {
         let mut terminate =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("SIGTERM handler");
+                .map_err(|_| StartupError::SignalHandlerUnavailable)?;
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
-            _ = terminate.recv() => {},
+            result = tokio::signal::ctrl_c() => {
+                result.map_err(|_| StartupError::SignalHandlerUnavailable)
+            },
+            _ = terminate.recv() => Ok(()),
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|_| StartupError::SignalHandlerUnavailable)
     }
 }

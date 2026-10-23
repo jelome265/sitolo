@@ -111,22 +111,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seal_open_destroy_roundtrip() {
+    fn seal_open_destroy_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let store = InMemoryProtectedStore::default();
-        let reference = store.seal(b"totp-seed-material").unwrap();
-        assert_eq!(store.open(&reference).unwrap(), b"totp-seed-material");
+        let reference = store.seal(b"totp-seed-material")?;
+        assert_eq!(store.open(&reference)?, b"totp-seed-material");
         store.destroy(&reference);
         assert!(matches!(
             store.open(&reference),
             Err(SecretAtRestError::NotFound)
         ));
+        Ok(())
     }
 
     #[test]
-    fn reference_display_never_carries_material() {
+    fn reference_display_never_carries_material() -> Result<(), Box<dyn std::error::Error>> {
         let store = InMemoryProtectedStore::default();
-        let reference = store.seal(b"super-secret-seed").unwrap();
+        let reference = store.seal(b"super-secret-seed")?;
         let text = reference.to_string();
         assert!(!text.contains("super-secret-seed"));
+        Ok(())
     }
 }

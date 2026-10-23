@@ -35,14 +35,11 @@ pub trait RandomSource: Send + Sync {
 
 /// A deterministic SHA-256 counter-chain generator.
 ///
-/// Test and fixture use only. Like [`crate::EnvSecretProvider`], it can be
-/// constructed in a production posture but every read is refused, so a
-/// misconfigured wiring fails at first use rather than minting predictable
-/// credentials (§43 fail-closed rule).
+/// Test and fixture use only. The production-guarded [`Self::new`] constructor
+/// refuses a production posture before a value can be created.
 pub struct DeterministicRandom {
     seed: [u8; 32],
     counter: Mutex<u64>,
-    production: bool,
 }
 
 impl DeterministicRandom {
@@ -51,7 +48,6 @@ impl DeterministicRandom {
         DeterministicRandom {
             seed,
             counter: Mutex::new(0),
-            production: false,
         }
     }
 
@@ -79,10 +75,6 @@ impl DeterministicRandom {
 
 impl RandomSource for DeterministicRandom {
     fn fill(&self, dest: &mut [u8]) {
-        if self.production {
-            // Fail closed: predictable output must never reach a caller.
-            panic!("deterministic randomness is forbidden in production");
-        }
         let mut offset = 0usize;
         while offset < dest.len() {
             let block = self.stream_next();

@@ -83,6 +83,14 @@ if wf_search '(secret_password|secret_token|access_key|private_key|CREDENTIALS)'
   echo "POLICY NOTICE: review secret references in workflow files before merge."
 fi
 
+# The release job tests the exact source SHA. Jobs do not inherit service
+# containers or step environments, so validate that build_release_artifact
+# provisions its own PostgreSQL and all three scoped DSNs.
+if ! ./scripts/ci/check-release-workflow; then
+  echo "POLICY VIOLATION: artifact release workflow validation failed."
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "Workflow policy check FAILED"
   exit 1

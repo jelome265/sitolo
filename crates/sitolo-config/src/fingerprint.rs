@@ -48,11 +48,40 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
     line(&mut output, "db_host", &config.db_host);
     line(&mut output, "db_port", &config.db_port.to_string());
     line(&mut output, "db_name", &config.db_name);
+    line(&mut output, "db_schema", &config.db_schema);
     line(&mut output, "db_user", &config.db_user);
+    line(
+        &mut output,
+        "oidc_issuer",
+        config.oidc_issuer.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_client_id",
+        config.oidc_client_id.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_token_endpoint",
+        config.oidc_token_endpoint.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "oidc_redirect_uri",
+        config.oidc_redirect_uri.as_deref().unwrap_or("<none>"),
+    );
     line(
         &mut output,
         "db_password_ref",
         &config.db_password_ref.to_string(),
+    );
+    line(
+        &mut output,
+        "worker_db_password_ref",
+        &config
+            .worker_db_password_ref
+            .as_ref()
+            .map_or("<none>".to_string(), ToString::to_string),
     );
     line(&mut output, "db_pool_min", &config.db_pool_min.to_string());
     line(&mut output, "db_pool_max", &config.db_pool_max.to_string());
@@ -87,6 +116,36 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
         "allow_local_secret_provider",
         &config.allow_local_secret_provider.to_string(),
     );
+    line(
+        &mut output,
+        "relay_aws_region",
+        config.relay_aws_region.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "relay_sns_topic_arn",
+        config.relay_sns_topic_arn.as_deref().unwrap_or("<none>"),
+    );
+    line(
+        &mut output,
+        "relay_batch_size",
+        &config.relay_batch_size.to_string(),
+    );
+    line(
+        &mut output,
+        "relay_max_attempts",
+        &config.relay_max_attempts.to_string(),
+    );
+    line(
+        &mut output,
+        "relay_backoff_max_ms",
+        &config.relay_backoff_max_ms.to_string(),
+    );
+    line(
+        &mut output,
+        "secrets_aws_region",
+        config.secrets_aws_region.as_deref().unwrap_or("<none>"),
+    );
     output
 }
 
@@ -119,14 +178,15 @@ pub fn config_fingerprint(config: &AppConfig) -> String {
 mod tests {
     use super::*;
     use crate::{LogLevel, SecretClass, SecretRef, defaults, validate};
+    use std::error::Error;
 
-    fn base() -> crate::AppConfig {
-        validate(defaults::Builder::development()).unwrap()
+    fn base() -> Result<crate::AppConfig, Box<dyn Error>> {
+        Ok(validate(defaults::Builder::development())?)
     }
 
     #[test]
-    fn digest_is_lowercase_sha256() {
-        let fingerprint = config_fingerprint(&base());
+    fn digest_is_lowercase_sha256() -> Result<(), Box<dyn Error>> {
+        let fingerprint = config_fingerprint(&base()?);
         assert!(fingerprint.starts_with("sha256:"));
         let digest = &fingerprint[7..];
         assert_eq!(digest.len(), 64);
@@ -135,6 +195,7 @@ mod tests {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         );
+        Ok(())
     }
 
     #[test]
@@ -146,8 +207,8 @@ mod tests {
     }
 
     #[test]
-    fn every_effective_non_secret_field_changes_fingerprint() {
-        let original = base();
+    fn every_effective_non_secret_field_changes_fingerprint() -> Result<(), Box<dyn Error>> {
+        let original = base()?;
         let baseline = config_fingerprint(&original);
         macro_rules! changed {
             ($field:ident, $value:expr) => {{
@@ -159,14 +220,16 @@ mod tests {
         changed!(environment, crate::Environment::Staging);
         changed!(service_name, "other".into());
         changed!(service_version, "1.0.0".into());
-        changed!(bind_address, "127.0.0.1:8081".parse().unwrap());
+        changed!(bind_address, "127.0.0.1:8081".parse()?);
         changed!(max_request_body_bytes, 3_000_000);
         changed!(request_header_timeout_ms, 6_000);
         changed!(keepalive_timeout_ms, 31_000);
         changed!(db_host, "db.example".into());
         changed!(db_port, 5433);
         changed!(db_name, "other".into());
+        changed!(db_schema, "tenant_data".into());
         changed!(db_user, "other_user".into());
+        changed!(oidc_client_id, Some("other-client".into()));
         changed!(db_pool_min, 6);
         changed!(db_pool_max, 21);
         changed!(db_acquire_timeout_ms, 3_000);
@@ -176,16 +239,27 @@ mod tests {
         changed!(trace_sample_ratio, 0.2);
         changed!(log_level, LogLevel::Warn);
         changed!(allow_local_secret_provider, false);
-        changed!(config_schema_version, 3);
+        changed!(config_schema_version, 2);
+        changed!(relay_aws_region, Some("af-south-1".into()));
+        changed!(
+            relay_sns_topic_arn,
+            Some("arn:aws:sns:af-south-1:123456789012:events.fifo".into())
+        );
+        changed!(relay_batch_size, 11);
+        changed!(relay_max_attempts, 9);
+        changed!(relay_backoff_max_ms, 3_000_000);
+        changed!(secrets_aws_region, Some("af-south-1".into()));
+        Ok(())
     }
 
     #[test]
-    fn reference_changes_but_secret_value_does_not_enter_canonical_input() {
-        let mut config = base();
+    fn reference_changes_but_secret_value_does_not_enter_canonical_input()
+    -> Result<(), Box<dyn Error>> {
+        let mut config = base()?;
         let initial = config_fingerprint(&config);
-        config.db_password_ref =
-            SecretRef::new(SecretClass::Database, "development/rotated/db").unwrap();
+        config.db_password_ref = SecretRef::new(SecretClass::Database, "development/rotated/db")?;
         assert_ne!(initial, config_fingerprint(&config));
         assert!(!canonical_non_secret_config(&config).contains("TEST_ONLY_DATABASE_SECRET"));
+        Ok(())
     }
 }

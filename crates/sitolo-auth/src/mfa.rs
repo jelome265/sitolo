@@ -229,7 +229,10 @@ impl MfaState {
     ) -> Result<(), AuthError> {
         let existing = self.by_user.get(&user_id).cloned().unwrap_or_default();
         for auth_id in existing {
-            let auth = self.authenticators.get(&auth_id).expect("existing");
+            let auth = self
+                .authenticators
+                .get(&auth_id)
+                .ok_or(AuthError::IdentityAuthorityUnavailable)?;
             if auth.state == MfaAuthenticatorState::Active {
                 return Err(AuthError::MfaEnrollmentConflict);
             }
@@ -394,7 +397,10 @@ impl MfaState {
             .unwrap_or_default();
         let hash = RecoveryCodeRecord::hash_code(raw);
         for id in ids {
-            let record = self.recovery_codes.get_mut(&id).expect("existing");
+            let record = self
+                .recovery_codes
+                .get_mut(&id)
+                .ok_or(AuthError::IdentityAuthorityUnavailable)?;
             if hash == record.code_hash {
                 if record.consumed_at.is_some() {
                     return Err(AuthError::RecoveryArtifactUsed);
@@ -442,80 +448,89 @@ impl MfaState {
 mod tests {
     use super::*;
 
-    fn setup() -> (MfaState, SystemTime, MfaAuthenticatorId, UserId) {
+    fn setup() -> Result<(MfaState, SystemTime, MfaAuthenticatorId, UserId), AuthError> {
         let mut state = MfaState::new();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let user = UserId::new("user-1").unwrap();
-        let id = MfaAuthenticatorId::new("mfa-1").unwrap();
-        state
-            .begin_enrollment(
-                id.clone(),
-                user.clone(),
-                MfaKind::Totp,
-                None,
-                now,
-                SecurityVersion(1),
-            )
-            .unwrap();
-        (state, now, id, user)
+        let user = UserId::new("user-1")?;
+        let id = MfaAuthenticatorId::new("mfa-1")?;
+        state.begin_enrollment(
+            id.clone(),
+            user.clone(),
+            MfaKind::Totp,
+            None,
+            now,
+            SecurityVersion(1),
+        )?;
+        Ok((state, now, id, user))
     }
 
     #[test]
-    fn enrollment_lifecycle() {
-        let (mut state, now, id, _) = setup();
+    fn enrollment_lifecycle() -> Result<(), AuthError> {
+        let (mut state, now, id, _) = setup()?;
         assert_eq!(
-            state.authenticator(&id).unwrap().state,
+            state
+                .authenticator(&id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             MfaAuthenticatorState::EnrollmentStarted
         );
-        state.require_verification(&id).unwrap();
+        state.require_verification(&id)?;
         assert_eq!(
-            state.authenticator(&id).unwrap().state,
+            state
+                .authenticator(&id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             MfaAuthenticatorState::VerificationRequired
         );
-        state.complete_enrollment(&id, now).unwrap();
+        state.complete_enrollment(&id, now)?;
         assert_eq!(
-            state.authenticator(&id).unwrap().state,
+            state
+                .authenticator(&id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             MfaAuthenticatorState::Active
         );
+        Ok(())
     }
 
     #[test]
-    fn duplicate_enrollment_is_rejected() {
-        let (mut state, now, _, user) = setup();
-        let id2 = MfaAuthenticatorId::new("mfa-2").unwrap();
-        state
-            .begin_enrollment(
+    fn duplicate_enrollment_is_rejected() -> Result<(), AuthError> {
+        let (mut state, now, _, user) = setup()?;
+        let id2 = MfaAuthenticatorId::new("mfa-2")?;
+        assert!(matches!(
+            state.begin_enrollment(
                 id2.clone(),
                 user.clone(),
                 MfaKind::Totp,
                 None,
                 now,
                 SecurityVersion(1),
-            )
-            .unwrap_err();
+            ),
+            Err(AuthError::MfaEnrollmentConflict)
+        ));
+        Ok(())
     }
 
     #[test]
-    fn totp_replay_guard() {
-        let (mut state, _, id, _) = setup();
-        state.require_verification(&id).unwrap();
-        state
-            .complete_enrollment(&id, SystemTime::UNIX_EPOCH + Duration::from_secs(1_000))
-            .unwrap();
-        state.record_totp_success(&id, 100).unwrap();
+    fn totp_replay_guard() -> Result<(), AuthError> {
+        let (mut state, _, id, _) = setup()?;
+        state.require_verification(&id)?;
+        state.complete_enrollment(&id, SystemTime::UNIX_EPOCH + Duration::from_secs(1_000))?;
+        state.record_totp_success(&id, 100)?;
         assert!(matches!(
             state.record_totp_success(&id, 100),
             Err(AuthError::MfaFailed)
         ));
         assert!(state.record_totp_success(&id, 101).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn recovery_code_single_use() {
+    fn recovery_code_single_use() -> Result<(), AuthError> {
         let mut state = MfaState::new();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let user = UserId::new("user-1").unwrap();
-        let id = RecoveryCodeId::new("rec-1").unwrap();
+        let user = UserId::new("user-1")?;
+        let id = RecoveryCodeId::new("rec-1")?;
         let record = RecoveryCodeRecord {
             id: id.clone(),
             user_id: user.clone(),
@@ -525,20 +540,19 @@ mod tests {
         };
         state.add_recovery_code(record);
         assert!(state.consume_recovery_code(&user, "ABCD-1234", now).is_ok());
-        assert_eq!(
-            state
-                .consume_recovery_code(&user, "ABCD-1234", now)
-                .unwrap_err(),
-            AuthError::RecoveryArtifactUsed
-        );
+        assert!(matches!(
+            state.consume_recovery_code(&user, "ABCD-1234", now),
+            Err(AuthError::RecoveryArtifactUsed)
+        ));
+        Ok(())
     }
 
     #[test]
-    fn reset_all_revokes_authenticators_and_codes() {
-        let (mut state, now, id, user) = setup();
-        state.require_verification(&id).unwrap();
-        state.complete_enrollment(&id, now).unwrap();
-        let rec_id = RecoveryCodeId::new("rec-1").unwrap();
+    fn reset_all_revokes_authenticators_and_codes() -> Result<(), AuthError> {
+        let (mut state, now, id, user) = setup()?;
+        state.require_verification(&id)?;
+        state.complete_enrollment(&id, now)?;
+        let rec_id = RecoveryCodeId::new("rec-1")?;
         state.add_recovery_code(RecoveryCodeRecord {
             id: rec_id.clone(),
             user_id: user.clone(),
@@ -549,8 +563,12 @@ mod tests {
         let revoked = state.reset_all(&user, now);
         assert_eq!(revoked, vec![id.clone()]);
         assert_eq!(
-            state.authenticator(&id).unwrap().state,
+            state
+                .authenticator(&id)
+                .ok_or(AuthError::InvalidIdentifier)?
+                .state,
             MfaAuthenticatorState::Revoked
         );
+        Ok(())
     }
 }
