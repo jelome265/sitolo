@@ -174,7 +174,12 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot() 
         tenancy
             .member_permissions(&organization_id, &MembershipId::new(membership_id).unwrap(),)
             .await,
-        [sitolo_authz::Permission::SaleCreate].into_iter().collect()
+        [
+            sitolo_authz::Permission::SaleCreate,
+            sitolo_authz::Permission::SaleView,
+        ]
+        .into_iter()
+        .collect()
     );
     let authorized = tenancy
         .authorize_user_operation(
