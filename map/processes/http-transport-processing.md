@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@0cdd771f5121234a512bf5b46fc9d94184ac281a
+source_revision: feat/phase4-pr009-audit-outbox@9aeed46280a1ce3921cd3284281e3c92276686aa
 source: apps/api/src/serve.rs; apps/api/src/state.rs; apps/api/src/bootstrap.rs
 source_citation: apps/api/src/serve.rs:68-200,279-427; apps/api/src/state.rs:53-133; apps/api/src/bootstrap.rs:128-275
 ---
