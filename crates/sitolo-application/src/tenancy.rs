@@ -3407,24 +3407,18 @@ impl TenancyService {
         branch_id: Option<&BranchId>,
         permission: Permission,
     ) -> Result<EffectiveScope, ScopeError> {
-        if let Some(sink) = self.evidence.as_ref() {
-            return authorize_postgres_operation(
-                &sink.pool,
-                organization_id,
-                MembershipSelector::User(user_id),
-                branch_id,
-                permission,
-            )
-            .await;
-        }
-
-        let membership = self
-            .db
-            .membership_for_user(organization_id, user_id)
-            .await
-            .ok_or(ScopeError::MembershipNotActive)?;
-        self.authorize_operation(organization_id, &membership.id, branch_id, permission)
-            .await
+        let sink = self
+            .evidence
+            .as_ref()
+            .ok_or(ScopeError::AuthorityUnavailable)?;
+        authorize_postgres_operation(
+            &sink.pool,
+            organization_id,
+            MembershipSelector::User(user_id),
+            branch_id,
+            permission,
+        )
+        .await
     }
 }
 
@@ -3748,6 +3742,23 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(db.organization_snapshot(&organization_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn authenticated_user_authorization_never_falls_back_to_reference_store() {
+        let service = service();
+        let bundle = provisioned(&service).await;
+
+        let result = service
+            .authorize_user_operation(
+                &bundle.owner_membership.user_id,
+                &bundle.organization.id,
+                Some(&bundle.default_branch.id),
+                Permission::SaleCreate,
+            )
+            .await;
+
+        assert_eq!(result, Err(ScopeError::AuthorityUnavailable));
     }
 
     async fn provisioned(service: &TenancyService) -> ProvisionedOrganization {
