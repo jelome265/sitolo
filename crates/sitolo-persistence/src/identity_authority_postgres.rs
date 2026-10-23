@@ -10,15 +10,14 @@ use std::time::SystemTime;
 use chrono::{DateTime, Utc};
 use sitolo_auth::{
     Assurance, AuthenticationMethod, ClientPlatform, Device, DeviceId, DeviceState, InstallationId,
-    SecurityVersion, Session, SessionClass, SessionId, SessionState, UserId,
+    RequestIdentityAuthority, SecurityVersion, Session, SessionClass, SessionId, SessionSnapshot,
+    SessionState, UserId,
 };
 use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::row::Row;
 use sqlx_postgres::PgPool;
 
-use crate::memory::SessionSnapshot;
-use crate::ports::RequestIdentityAuthority;
 use crate::postgres_time::from_utc;
 
 /// Least-privilege request identity repository.

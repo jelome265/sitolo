@@ -19,7 +19,8 @@ pub use memory::{
     DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityDatabase,
     MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
 };
-pub use ports::{IdentityStores, RequestIdentityAuthority};
+pub use ports::IdentityStores;
+pub use sitolo_auth::RequestIdentityAuthority;
 pub use runtime::{
     DatabaseCapability, DatabaseConnector, DatabaseLifecycle, DatabasePoolMetrics, DatabaseRuntime,
     PersistenceFailureKind, PersistenceInitError,

@@ -11,6 +11,7 @@
 //! and permission checks belong to later phases (§1.2, §69).
 #![forbid(unsafe_code)]
 
+pub mod authority;
 pub mod device;
 pub mod error;
 pub mod id;
@@ -27,6 +28,7 @@ pub mod reset;
 pub mod session;
 pub mod token;
 
+pub use authority::{RequestIdentityAuthority, SessionSnapshot};
 pub use device::{Device, DeviceRevocationEffect, DeviceState};
 pub use error::{AuthError, CredentialMaterial};
 pub use id::{

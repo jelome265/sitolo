@@ -33,12 +33,8 @@ use sitolo_security::SealedRef;
 
 use crate::ports::IdentityStores;
 
-/// Session snapshot returned to the application layer.
-#[derive(Debug, Clone)]
-pub struct SessionSnapshot {
-    pub session: Session,
-    pub user_security_version: SecurityVersion,
-}
+/// Session snapshot returned by the auth-layer authority port.
+pub use sitolo_auth::SessionSnapshot;
 
 /// User snapshot returned to the application layer.
 #[derive(Debug, Clone)]

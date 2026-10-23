@@ -22,11 +22,10 @@
 use std::time::SystemTime;
 
 use sitolo_auth::{
-    AuthError, CredentialMaterial, Device, IdentityProviderPort, SecurityContext, Session,
-    SessionId,
+    AuthError, CredentialMaterial, Device, IdentityProviderPort, RequestIdentityAuthority,
+    SecurityContext, Session, SessionId,
 };
 use sitolo_observability::{RequestId, TraceParent};
-use sitolo_persistence::RequestIdentityAuthority;
 
 use crate::error::AppError;
 
