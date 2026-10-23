@@ -2,7 +2,8 @@
 
 **PR:** #49
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Candidate at last review:** `43d6e04161964fc771481a325c20b7d8192f9231`
+**Implementation source:** `43d6e04161964fc771481a325c20b7d8192f9231`
+**Exact-source validation head:** `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`
 **Status:** NOT READY; do not merge
 
 The previous 2026-09-24 execution contract is preserved at `docs/phase4_part8_pr009_remediation_execution_contract_2026-09-24_historical.md`. Its head-specific findings and CI statements are historical. This file is the current continuation guide.
@@ -24,4 +25,4 @@ The existing bounded outbox relay engine and SNS FIFO publisher are present, but
 
 ## Current candidate local evidence
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --lib --all-features --locked`, `cargo test -p sitolo-integrations --lib --all-features --locked`, and `cargo deny check` passed. Database-backed tests were not run locally. At guide creation time, exact-source GitHub Actions were still in progress; see `docs/phase4_part8_pr009_remediation_report.md` for run IDs and the precise evidence boundary.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --lib --all-features --locked`, `cargo test -p sitolo-integrations --lib --all-features --locked`, and `cargo deny check` passed. Database-backed tests were not run locally. Exact-source GitHub Actions, including PostgreSQL integration, passed on `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`; see `docs/phase4_part8_pr009_remediation_report.md` for run IDs and the precise evidence boundary.

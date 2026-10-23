@@ -24,7 +24,15 @@
 - `cargo test -p sitolo-integrations --lib --all-features --locked`: passed after selecting the explicit rustls provider.
 - `cargo deny check`: passed after explicitly allowing SQLx 0.9's `CDLA-Permissive-2.0` webpki root bundle license.
 - No local PostgreSQL instance was installed, started, or used. These results do not include database-backed integration tests.
-- GitHub Actions for code candidate `43d6e04161964fc771481a325c20b7d8192f9231`: integration (`39912162255`) and security (`39912162254`) were still running at report refresh. Rust (`39912162263`) and policy (`39912162258`) failed because the verified system-map card still pinned the previous `postgres.rs` source revision. The card has now been updated to this candidate and the local process verifier passes. Fresh workflow results are required on the documentation/evidence commit before recording branch-head CI as green.
+- GitHub Actions passed on exact validation head `5c7e49ae2f8fe7b550fc3bb9ce863771f29a7e26`, which includes implementation source commit `43d6e04161964fc771481a325c20b7d8192f9231` and documentation/system-map updates:
+
+- PostgreSQL application and contract integration: run `39912486011`, passed.
+- Canonical Rust verification: run `39912486048`, passed.
+- Security (CodeQL, secrets, offensive regression, dependency policy, advisories): run `39912485948`, all passed.
+- ICM policy: run `39912485968`, passed.
+- Toolchain: job `120278419429`, passed.
+
+An earlier run on implementation commit `43d6e04` failed Rust/policy only because the system-map card still pinned the prior `postgres.rs` revision; the card was updated, its local verifier passed, and the fresh runs above are green. The exact-source PostgreSQL CI passed; no local PostgreSQL was used.
 
 ## Open exit criteria
 
