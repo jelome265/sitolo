@@ -327,10 +327,12 @@ The API DTO, domain object, and database row MUST remain separate conceptual bou
 The intended dependency direction is:
 
 ```text
-API -> Application -> Domain
-Jobs -> Application -> Domain
-Persistence -> Domain ports/types
-Integrations -> Domain ports/types
+apps/api (composition root)    -> sitolo-api + sitolo-application + adapters
+apps/worker (composition root) -> application-owned worker ports + adapters
+sitolo-api                     -> sitolo-application + protocol/domain contracts
+sitolo-application             -> domain + auth/authz/tenancy + application contracts
+sitolo-persistence             -> domain + application-owned ports; implements ports
+sitolo-integrations            -> domain/application-owned ports; implements adapters
 ```
 
 The agent MUST reject or refactor dependencies shaped like:
@@ -347,6 +349,26 @@ Domain -> Tauri UI
 A dependency graph that violates the direction is an architecture defect even if the code compiles.
 
 The agent MUST use dependency inversion where infrastructure is required by domain/application workflows.
+
+## Executable boundary contract
+
+The machine-readable crate ownership contract is `architecture/crate-boundaries.toml`.
+Its enforcement implementation is `scripts/ci/check-crate-boundaries.py`, invoked by
+`scripts/ci/check-architecture` and `scripts/ci/check-architecture.ps1`. These gates inspect
+production Cargo dependencies and application-layer source references; compilation success
+or a document saying a crate is planned does not prove the boundary is respected.
+
+A new crate or dependency MUST update the intended architecture only after its owner and
+responsibility are established. An exception requires an explicit architecture decision with
+a named owner, rationale, bounded scope, expiration/removal condition, tests, and an update
+to the machine-readable contract. Do not add broad lint allows, skip a check, or weaken the
+contract merely to turn CI green. Existing violations are not grandfathered: they block
+acceptance until they are removed or formally reviewed under the exception process.
+
+At minimum, the Application layer MUST NOT import SQLx/PostgreSQL pool/transaction APIs or
+concrete Persistence adapters. Keep business decisions and use cases in Application; keep
+SQL, row locks, database sessions/RLS setup, schema-specific mapping, and adapter code in
+Persistence. Composition roots in `apps/` wire the implementations to their ports.
 
 ---
 
