@@ -26,6 +26,13 @@ macro_rules! tenant_id {
         pub struct $name(String);
 
         impl $name {
+            /// Validates `value` and wraps it as an opaque tenant identifier.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`TenancyError::InvalidIdentifier`] when `value` is
+            /// empty, longer than 128 bytes, or contains a byte outside ASCII
+            /// alphanumerics and the separators `-`, `_`, `.`, and `:`.
             pub fn new(value: impl Into<String>) -> Result<Self, TenancyError> {
                 let value = value.into();
                 if value.is_empty()
@@ -39,6 +46,7 @@ macro_rules! tenant_id {
                 Ok(Self(value))
             }
 
+            /// Borrows the identifier as its validated string form.
             #[must_use]
             pub fn as_str(&self) -> &str {
                 &self.0
@@ -82,20 +90,29 @@ tenant_id!(
 /// Domain failures for tenant topology transitions.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TenancyError {
+    /// A tenant identifier failed shape validation.
     #[error("invalid tenant identifier")]
     InvalidIdentifier,
+    /// An organization or branch name was empty after trimming or exceeded
+    /// 256 bytes.
     #[error("invalid organization or branch name")]
     InvalidName,
+    /// The requested transition is not legal from the record's current state.
     #[error("invalid state transition")]
     InvalidTransition,
+    /// The record is terminal and accepts no further transitions.
     #[error("tenant record is in a terminal state")]
     TerminalState,
+    /// The referenced tenant record does not exist.
     #[error("tenant record not found")]
     NotFound,
+    /// A tenant record already exists with different semantics.
     #[error("tenant record already exists with different semantics")]
     Conflict,
+    /// Invitation parameters failed validation.
     #[error("invalid invitation parameters")]
     InvalidInvitation,
+    /// Invitation issuance was rate limited.
     #[error("invitation rate limited")]
     RateLimited,
     /// Mandatory Phase 4 Part 8 audit/outbox evidence could not be durably
@@ -108,7 +125,11 @@ pub enum TenancyError {
     /// generic so callers do not receive persistence internals.
     #[error("mandatory audit/outbox evidence persistence failed")]
     EvidencePersistenceFailedAt {
+        /// Safe, non-sensitive diagnostic stage label for infrastructure logs
+        /// and integration-test failures.
         stage: &'static str,
+        /// Optional `SQLSTATE` code reported by the persistence adapter, when
+        /// the driver supplied one.
         sqlstate: Option<String>,
     },
 }
@@ -131,14 +152,22 @@ fn validate_name(name: &str) -> Result<String, TenancyError> {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OrganizationState {
+    /// Created but not yet operationally live.
     Provisioning,
+    /// Operationally live; ordinary business authority exists.
     Active,
+    /// Temporarily restricted; ordinary business authority is denied.
     Suspended,
+    /// Controlled closure in progress; no new long-lived authority may be
+    /// created (section 6.4).
     Closing,
+    /// Terminal; history is preserved and no transition is accepted.
     Closed,
 }
 
 impl OrganizationState {
+    /// Returns `true` when the state is [`OrganizationState::Closed`], which
+    /// accepts no further transitions.
     #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(self, OrganizationState::Closed)
@@ -156,8 +185,12 @@ impl OrganizationState {
 /// An organization: the top-level tenant boundary (Phase 4 section 3.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Organization {
+    /// Immutable tenant identifier.
     pub id: OrganizationId,
+    /// Presentation name, trimmed and bounded at creation. Never a security
+    /// identifier: duplicates are permitted.
     pub name: String,
+    /// Current lifecycle state.
     pub state: OrganizationState,
     /// Monotonic transition counter. Bumped on every legal transition so
     /// revocation/suspension can invalidate stale authorization caches
@@ -169,6 +202,11 @@ impl Organization {
     /// Provisions a new organization. Creation must be paired with an owner
     /// membership in one atomic transaction (section 7.1); this constructor
     /// only builds the organization half of that pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidName`] when `name` is empty after
+    /// trimming or longer than 256 bytes.
     pub fn provision(id: OrganizationId, name: &str) -> Result<Self, TenancyError> {
         Ok(Organization {
             id,
@@ -195,28 +233,58 @@ impl Organization {
     }
 
     /// `PROVISIONING -> ACTIVE`: the organization becomes operationally live.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the organization is not
+    /// in [`OrganizationState::Provisioning`], and
+    /// [`TenancyError::TerminalState`] when it is already closed.
     pub fn activate(&mut self) -> Result<(), TenancyError> {
         self.transition(OrganizationState::Provisioning, OrganizationState::Active)
     }
 
     /// `ACTIVE -> SUSPENDED`: business operations are restricted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the organization is not
+    /// in [`OrganizationState::Active`], and [`TenancyError::TerminalState`]
+    /// when it is already closed.
     pub fn suspend(&mut self) -> Result<(), TenancyError> {
         self.transition(OrganizationState::Active, OrganizationState::Suspended)
     }
 
     /// `SUSPENDED -> ACTIVE`: restores ordinary operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the organization is not
+    /// in [`OrganizationState::Suspended`], and [`TenancyError::TerminalState`]
+    /// when it is already closed.
     pub fn resume(&mut self) -> Result<(), TenancyError> {
         self.transition(OrganizationState::Suspended, OrganizationState::Active)
     }
 
     /// `ACTIVE -> CLOSING`: controlled transition toward closure. No new
     /// long-lived authority may be created while closing (section 6.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the organization is not
+    /// in [`OrganizationState::Active`], and [`TenancyError::TerminalState`]
+    /// when it is already closed.
     pub fn begin_close(&mut self) -> Result<(), TenancyError> {
         self.transition(OrganizationState::Active, OrganizationState::Closing)
     }
 
     /// `CLOSING -> CLOSED`: terminal. History is preserved, never deleted
     /// (section 6.5).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the organization is not
+    /// in [`OrganizationState::Closing`], and [`TenancyError::TerminalState`]
+    /// when it is already closed.
     pub fn close(&mut self) -> Result<(), TenancyError> {
         self.transition(OrganizationState::Closing, OrganizationState::Closed)
     }
@@ -238,19 +306,28 @@ impl Organization {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BranchState {
+    /// Created but not yet operationally live.
     Provisioning,
+    /// Operationally live; the branch accepts ordinary business operations.
     Active,
+    /// Temporarily restricted; ordinary operations are denied.
     Suspended,
+    /// Controlled closure in progress; no new long-lived authority may be
+    /// created.
     Closing,
+    /// Terminal; no further transition is accepted.
     Closed,
 }
 
 impl BranchState {
+    /// Returns `true` when the state is [`BranchState::Closed`], which accepts
+    /// no further transitions.
     #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(self, BranchState::Closed)
     }
 
+    /// Returns `true` only while the branch is [`BranchState::Active`].
     #[must_use]
     pub fn can_operate(self) -> bool {
         matches!(self, BranchState::Active)
@@ -263,14 +340,27 @@ impl BranchState {
 /// foreign-key edit (section 14.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
+    /// Opaque branch identifier.
     pub id: BranchId,
+    /// Owning organization, fixed at creation and never reassigned
+    /// (section 14.3).
     pub organization_id: OrganizationId,
+    /// Presentation name, trimmed and bounded at creation.
     pub name: String,
+    /// Current lifecycle state.
     pub state: BranchState,
+    /// Monotonic transition counter, bumped on every legal transition so stale
+    /// authorization caches invalidate.
     pub state_version: u64,
 }
 
 impl Branch {
+    /// Provisions a branch inside `organization_id` in state `Provisioning`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidName`] when `name` is empty after
+    /// trimming or longer than 256 bytes.
     pub fn provision(
         id: BranchId,
         organization_id: OrganizationId,
@@ -297,26 +387,62 @@ impl Branch {
         Ok(())
     }
 
+    /// `PROVISIONING -> ACTIVE`: the branch becomes operationally live.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the branch is not in
+    /// [`BranchState::Provisioning`], and [`TenancyError::TerminalState`] when
+    /// it is already closed.
     pub fn activate(&mut self) -> Result<(), TenancyError> {
         self.transition(BranchState::Provisioning, BranchState::Active)
     }
 
+    /// `ACTIVE -> SUSPENDED`: business operations are restricted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the branch is not in
+    /// [`BranchState::Active`], and [`TenancyError::TerminalState`] when it is
+    /// already closed.
     pub fn suspend(&mut self) -> Result<(), TenancyError> {
         self.transition(BranchState::Active, BranchState::Suspended)
     }
 
+    /// `SUSPENDED -> ACTIVE`: restores ordinary operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the branch is not in
+    /// [`BranchState::Suspended`], and [`TenancyError::TerminalState`] when it
+    /// is already closed.
     pub fn resume(&mut self) -> Result<(), TenancyError> {
         self.transition(BranchState::Suspended, BranchState::Active)
     }
 
+    /// `ACTIVE -> CLOSING`: controlled transition toward closure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the branch is not in
+    /// [`BranchState::Active`], and [`TenancyError::TerminalState`] when it is
+    /// already closed.
     pub fn begin_close(&mut self) -> Result<(), TenancyError> {
         self.transition(BranchState::Active, BranchState::Closing)
     }
 
+    /// `CLOSING -> CLOSED`: terminal. History is preserved, never deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the branch is not in
+    /// [`BranchState::Closing`], and [`TenancyError::TerminalState`] when it is
+    /// already closed.
     pub fn close(&mut self) -> Result<(), TenancyError> {
         self.transition(BranchState::Closing, BranchState::Closed)
     }
 
+    /// Ordinary business authority predicate (Phase 4 section 14).
     #[must_use]
     pub fn can_operate(&self) -> bool {
         self.state.can_operate()
@@ -337,15 +463,26 @@ impl Branch {
 /// client mutation (section 8.1.5); re-enrollment is a new membership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MembershipState {
+    /// Invitation issued; enrollment has not started.
     Invited,
+    /// Enrollment challenge issued and awaiting acceptance.
     PendingAcceptance,
+    /// Terminal; the enrollment window lapsed before acceptance.
     Expired,
+    /// Operationally live; the only state carrying ordinary business
+    /// authority.
     Active,
+    /// Temporarily stripped of authority pending review.
     Suspended,
+    /// Terminal; permanent removal of ordinary authority. Re-enrollment
+    /// requires a new membership.
     Revoked,
 }
 
 impl MembershipState {
+    /// Returns `true` when the state is [`MembershipState::Expired`] or
+    /// [`MembershipState::Revoked`], both of which accept no further
+    /// transitions.
     #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(self, MembershipState::Expired | MembershipState::Revoked)
@@ -363,10 +500,16 @@ impl MembershipState {
 /// 3.9, 8.1). Organization and user bindings are immutable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Membership {
+    /// Opaque membership identifier.
     pub id: MembershipId,
+    /// Owning organization, fixed at creation and never reassigned.
     pub organization_id: OrganizationId,
+    /// Identity-subsystem user this membership belongs to, fixed at creation.
     pub user_id: TenantUserId,
+    /// Current lifecycle state.
     pub state: MembershipState,
+    /// Monotonic transition counter, bumped on every legal transition so stale
+    /// sessions and authorization caches invalidate (sections 20.3, 23).
     pub state_version: u64,
 }
 
@@ -374,6 +517,7 @@ impl Membership {
     /// Issues an invitation-bound membership in state `Invited`. Acceptance,
     /// expiry and revocation are separate explicit transitions (sections
     /// 8, 9).
+    #[must_use = "the returned membership is the only handle to the invitation"]
     pub fn invite(
         id: MembershipId,
         organization_id: OrganizationId,
@@ -405,26 +549,56 @@ impl Membership {
     }
 
     /// `INVITED -> PENDING_ACCEPTANCE`: enrollment challenge issued.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::Invited`], and [`TenancyError::TerminalState`]
+    /// when it is expired or revoked.
     pub fn mark_pending(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::Invited, MembershipState::PendingAcceptance)
     }
 
     /// `PENDING_ACCEPTANCE -> EXPIRED`: the enrollment window lapsed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::PendingAcceptance`], and
+    /// [`TenancyError::TerminalState`] when it is expired or revoked.
     pub fn expire(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::PendingAcceptance, MembershipState::Expired)
     }
 
     /// `PENDING_ACCEPTANCE -> ACTIVE`: enrollment accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::PendingAcceptance`], and
+    /// [`TenancyError::TerminalState`] when it is expired or revoked.
     pub fn activate(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::PendingAcceptance, MembershipState::Active)
     }
 
     /// `ACTIVE -> SUSPENDED`: temporary removal of authority (section 20.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::Active`], and [`TenancyError::TerminalState`] when
+    /// it is expired or revoked.
     pub fn suspend(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::Active, MembershipState::Suspended)
     }
 
     /// `SUSPENDED -> ACTIVE`: reactivation after review.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::Suspended`], and [`TenancyError::TerminalState`]
+    /// when it is expired or revoked.
     pub fn resume(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::Suspended, MembershipState::Active)
     }
@@ -432,6 +606,12 @@ impl Membership {
     /// `ACTIVE -> REVOKED`: permanent termination for ordinary purposes
     /// (section 20.2). Bumps the version so caches and sessions invalidate
     /// (section 20.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::InvalidTransition`] when the membership is not
+    /// in [`MembershipState::Active`], and [`TenancyError::TerminalState`] when
+    /// it is expired or revoked.
     pub fn revoke(&mut self) -> Result<(), TenancyError> {
         self.transition(MembershipState::Active, MembershipState::Revoked)
     }
@@ -448,8 +628,11 @@ impl Membership {
 /// value only after the atomic provisioning transaction succeeds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisionedOrganization {
+    /// The organization, committed in `Provisioning`.
     pub organization: Organization,
+    /// The owner membership created alongside the organization (section 7.1).
     pub owner_membership: Membership,
+    /// The default branch created alongside the organization.
     pub default_branch: Branch,
 }
 
