@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Tenancy domain entities, lifecycle state machines, and invariants for Sitolo."
+repository = "https://github.com/jelome265/sitolo"
+readme = "../../README.md"
+keywords = ["domain", "tenancy", "ddd", "state-machine"]
+categories = ["development-tools"]
 
 [dependencies]
 thiserror.workspace = true
