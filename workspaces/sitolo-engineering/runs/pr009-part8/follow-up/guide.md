@@ -6,7 +6,7 @@
 
 ### Current verification snapshot — 2026-10-23
 
-The current PR head is `619168b3f9d8ef077deeb0bbbc1b8301a9841a8f`. PostgreSQL integration, canonical verification, policy, toolchain, advisories, dependency policy, secrets, and offensive regression have passed on this exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39894711683), [canonical verification and toolchain](https://github.com/jelome265/sitolo/actions/runs/39894711685), [policy](https://github.com/jelome265/sitolo/actions/runs/39894711777), [security, dependencies, advisories, secrets and offensive regression](https://github.com/jelome265/sitolo/actions/runs/39894711698). CodeQL is still pending. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
+The latest verified implementation source SHA is `a8903d3d2aa799b50b1eeba66fc4036deed10339`. All current checks passed for that exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39899998500), [toolchain and verification](https://github.com/jelome265/sitolo/actions/runs/39899998491), [policy](https://github.com/jelome265/sitolo/actions/runs/39899998502), [security, dependency policy, advisories, secrets, offensive regression and CodeQL](https://github.com/jelome265/sitolo/actions/runs/39899998503), and [standalone CodeQL](https://github.com/jelome265/sitolo/runs/120240166804). This continuation-guide/remediation-report refresh changes no implementation source. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
@@ -16,7 +16,7 @@ The repository owner approved the three choices on 2026-10-22. The [decision ind
 
 The `e49de425b74c0095fee0737612ae40dbc50c770a` audit and `d863bd2be3eec72fedb9f48709caf1a07a11f2f6` delivery tip below are historical snapshots, not current source evidence. Older passing checks and release dispatches do not transfer to the current head.
 
-Treat those as scoped test evidence. The live API authenticates linked identities and owned sessions, but does not yet authorize tenant permissions or invoke protected commands. The mutation transaction matrix identifies tested PostgreSQL paths and production composition gaps. No real event delivery to a consumer is proven. The worker executable refuses to start without an approved relay adapter. Production API bootstrap fails closed because no managed production secret provider is implemented.
+Treat those as scoped test evidence. The latest implementation source is `a8903d3d2aa799b50b1eeba66fc4036deed10339`; all checks, including PostgreSQL integration, passed for that exact SHA (see the top of `remediation-report.md`). The live API authenticates linked identities and owned sessions, but does not yet authorize tenant permissions or invoke protected commands. The mutation transaction matrix identifies tested PostgreSQL paths and production composition gaps. The SNS FIFO publisher and strict typed relay settings exist, but no worker production wiring or consumer inbox/effects have been composed, so no real event delivery is proven. The worker executable remains fail-closed. Production API bootstrap fails closed because no managed production secret provider or PostgreSQL pool composition is implemented.
 
 ### Implemented and evidenced (scoped)
 
@@ -29,6 +29,7 @@ Treat those as scoped test evidence. The live API authenticates linked identitie
 - PostgreSQL authorization reads for internal user ID, organization/membership/branch state, effective roles, permissions and grants within one repeatable-read tenant-scoped transaction. The authenticated-user entry point now refuses the in-memory reference store when no durable pool exists.
 - PostgreSQL-backed `member_roles`, `member_grants` and `member_permissions` reads, plus an explicit `TenancyService::new_postgres` constructor. The API runtime still does not compose this constructor with authenticated tenant authorization and protected commands; reference constructors remain for tests/reference use.
 - Bounded transport-neutral worker orchestration for claims, stale-lease recovery, event/version guards, retry, and quarantine.
+- Concrete SNS FIFO publisher using ECS task-role credentials and strict, typed region/topic/batch/retry settings. It is not wired into the production worker executable; no SNS/SQS delivery or consumer effect is proven.
 - Strict split between typed `SITOLO__` configuration and development secret values under `SITOLO_SECRET__`; example files are documentation for process-environment injection, not a dotenv loader.
 - Release workflow PostgreSQL services/DSNs and its documented successful branch-dispatch test.
 
@@ -37,7 +38,7 @@ Treat those as scoped test evidence. The live API authenticates linked identitie
 - End-to-end live HTTP tenant authorization and protected command invocation, including cross-tenant/suspended membership denial and spoofed actor/owner regression with no mutation.
 - Production API PostgreSQL composition and a managed production secret provider.
 - Production API composition of `TenancyService::new_postgres`, verified actor provenance for mutations, and an independently reviewed transition matrix. The explicit durable constructor exists, but the live runtime does not use it yet.
-- Concrete SNS FIFO publisher, per-consumer durable inbox/effect transaction, production worker composition, and actual delivery/acknowledgement/retry/quarantine evidence.
+- Per-consumer durable SQS inbox/effect transaction, production worker composition of the SNS publisher and database claim path, and actual delivery/acknowledgement/retry/quarantine evidence. The publisher and typed configuration exist, but are not wired to the worker executable.
 - Real readiness probes for managed secret, database identities/schema, identity provider, tenancy authority and relay dependencies.
 - Independent Stage 06 audit of the final source head and required human PR review.
 
@@ -46,7 +47,7 @@ Treat those as scoped test evidence. The live API authenticates linked identitie
 1. **Complete the live authority path.** Compose production OIDC/session and PostgreSQL tenancy authority. Derive owner and actor from the verified principal; request tenant IDs remain selectors. Keep writes disabled until permission and resource scope are resolved before the command.
 2. **Require one production repository path.** Separate reference/test construction from production construction. Complete the transition and actor-provenance matrix, and ensure each required mutation uses one PostgreSQL transaction for state, audit and outbox with rollback/race/idempotency evidence.
 3. **Finish AUD-04 with independent audit.** Trace all five owner-approved payloads from state transition through construction, persistence and relay acceptance. Do not self-certify Stage 06.
-4. **Build delivery against the approved contract.** Implement the SNS FIFO adapter with explicit region/topic configuration and ECS task credentials, then the consumer inbox/effect transaction and SQS delete-after-commit behavior. Prove service behavior in a contract-faithful environment; do not invent resource identifiers.
+4. **Finish delivery against the approved contract.** Wire the existing SNS FIFO adapter and strict region/topic settings into the worker after its restricted PostgreSQL runtime is available; then implement the consumer inbox/effect transaction and SQS delete-after-commit behavior. Prove service behavior in a contract-faithful environment; do not invent resource identifiers.
 5. **Compose production runtime and readiness.** Add managed secrets and restricted API/worker database pools, include required schemas in controlled migrations, and fail readiness on missing identity, DB, tenancy or relay dependencies.
 6. **Run exact-source verification, re-audit and human review.** Keep PR #49 open and unmerged until all required checks and reviews are complete.
 
