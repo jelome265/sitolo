@@ -75,7 +75,7 @@ This section records the currently uncommitted continuation from repository `HEA
 | `cargo test --workspace --locked` | STARTED, then interrupted after prolonged silence; no passing result is claimed. PostgreSQL service is not available locally. |
 | `cargo deny check` | PASS — advisories, bans, licenses, and sources. |
 | `cargo audit --locked` | NOT RUN — `cargo-audit` is not installed on this host; the prior exact-head audit evidence remains only for `862775c`, not this working tree. |
-| `python scripts/ci/check-doc-references` | FAIL — four ambiguous `AGENTS.md`/`CLAUDE.md` references occur only in the user-supplied untracked `.agents/` skill files; the source tree and remediation report were not the reported locations. |
+| `python scripts/ci/check-doc-references` | FAIL — four ambiguous [root Codex entry point](../../../../AGENTS.md)/[root ICM router](../../../../CLAUDE.md) references occur only in the user-supplied untracked `.agents/` skill files; the source tree and remediation report were not the reported locations. |
 | GitHub Actions at the working-tree candidate | NOT RUN; no candidate commit was pushed and no workflow result is available. |
 
 ### Remaining gaps and external dependencies
