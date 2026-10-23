@@ -2,26 +2,27 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@9451b4ef127299e52fc16addf8cda857e1105946
-source: crates/sitolo-persistence/src/postgres.rs
-source_citation: crates/sitolo-persistence/src/postgres.rs:45-76
+source_revision: feat/phase4-pr009-audit-outbox@43d6e04161964fc771481a325c20b7d8192f9231
+source: crates/sitolo-persistence/src/runtime_pool.rs
+source_citation: crates/sitolo-persistence/src/runtime_pool.rs:43-154
 ---
 
-# PostgreSQL Authority Initialization
+# PostgreSQL Runtime Authority Initialization
 
 ## Input
 
-Administrative and runtime PostgreSQL connection options; the runtime options must authenticate as the least-privileged `app_runtime` login.
+Validated database runtime configuration, a database credential resolved through the configured secret provider, and an explicit TLS requirement.
 
 ## Movement
 
-1. Build the administrative pool with bounded connection capacity. (crates/sitolo-persistence/src/postgres.rs:62-65)
-2. Build the bounded runtime pool from options that authenticate as the restricted `app_runtime` login; the pool does not issue `SET ROLE`. (crates/sitolo-persistence/src/postgres.rs:67-70)
-3. Return both pools as a single authority pair for downstream persistence operations. (crates/sitolo-persistence/src/postgres.rs:72-76)
+1. Reject any role other than `app_runtime` and any schema outside the validated lowercase PostgreSQL identifier form. (crates/sitolo-persistence/src/runtime_pool.rs:51-53, 157-165)
+2. Construct PostgreSQL options from configured host, port, username, password, database, TLS mode, application name, and schema search path. (crates/sitolo-persistence/src/runtime_pool.rs:61-77)
+3. Open a bounded pool with configured minimum/maximum connections and acquire timeout, plus explicit connection lifetime and idle timeout. (crates/sitolo-persistence/src/runtime_pool.rs:79-88)
+4. Verify the connected login/current role, restricted privilege flags, absence of memberships, schema presence, and required identity, tenancy, audit, and outbox objects; close and fail closed on mismatch. (crates/sitolo-persistence/src/runtime_pool.rs:90-153)
 
 ## Output
 
-Initialized PostgreSQL authority pools with administrative setup authority and a runtime session authenticated as the least-privileged `app_runtime` role.
+A PostgreSQL pool authenticated directly as restricted `app_runtime`, pinned to the configured schema, and returned only after the required schema and role checks pass.
 
 ## Consumes
 
@@ -35,16 +36,16 @@ Initialized PostgreSQL authority pools with administrative setup authority and a
 
 ### Hits
 
-Database connection behavior, privilege separation, pool sizing and startup failure handling.
+Runtime database identity, schema selection, TLS verification, pool behavior, and API readiness.
 
 ### Does not hit
 
-Business transaction semantics inside later repository/application operations.
+Administrative database provisioning, migrations, worker database identity, or business transaction semantics.
 
 ## Verification
 
-Verified against the PostgreSQL authority and tenancy implementation at the pinned source revision. The runtime pool authenticates as `app_runtime` directly; `verify_runtime_role` asserts `current_user` and `session_user`, and the RLS integration suite proves that `RESET ROLE` does not change the identity and `SET ROLE postgres` is denied. The Part 8 metadata verifier checks forced tenant RLS, invitation token-resolution policy, and narrow runtime update grants. Role/scope mutations and invitation acceptance couple PostgreSQL state with audit/outbox evidence in a transaction, with rollback, idempotency, and invitation-race integration cases. Other required IAM transitions and live HTTP authority remain under implementation; this process does not claim the complete mutation flow is production-wired.
+Source-verified against candidate `43d6e04161964fc771481a325c20b7d8192f9231`. API startup composes this pool only after resolving the secret, probing the configured Cognito issuer, and validating production/staging configuration. Local workspace compilation and unit checks passed; database-backed startup and role verification require exact-source PostgreSQL-enabled GitHub Actions and are not claimed here.
 
 ## See
 
-crates/sitolo-persistence/src/postgres.rs
+crates/sitolo-persistence/src/runtime_pool.rs

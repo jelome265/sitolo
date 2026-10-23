@@ -1,114 +1,18 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** Current review snapshot  
-**PR:** #49 — Phase 4 Part 8 audit and outbox implementation  
-**Reviewed head:** `49c939983281d36b8a503b374287a809ed8b7415`  
-**Base:** `main` at `e8f46c0d61f9b50efe98fb8ea6a281d6a4d3f2dc`  
-**Review date:** 2026-09-25  
-**Binding contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md`  
+**Status:** NOT READY — partial remediation candidate pushed
+**PR:** #49 — Phase 4 Part 8 audit and outbox implementation
+**Current candidate head:** `43d6e04161964fc771481a325c20b7d8192f9231`
+**Base:** `89fa0566ca26dbf4ea557a86e91f4d410572bdfd`
+**Date:** 2026-10-23
+**Binding contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md`
+**Current continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`
+**Detailed evidence and residual gaps:** `docs/phase4_part8_pr009_remediation_report.md`
 
----
+The candidate wires Cognito OIDC authentication, persistent identity/session authority, durable branch authorization, managed API secrets, and a restricted API PostgreSQL runtime pool. It also updates the SQLx baseline to 0.9 and aligns rustls provider selection. Local formatting, Clippy, workspace library tests, integration-adapter unit tests, and `cargo deny check` passed.
 
-## 1. Current state
+The candidate does not complete the PR exit criteria. Only branch creation is open as an authorized protected mutation route; other protected routes remain closed. The worker executable still refuses startup, the SQS FIFO consumer and durable inbox/business-effect transaction are absent, the independent production migration/release path is absent, and the complete R3 transition matrix and Stage 06 audit are pending. Required human review is pending.
 
-PR #49 is still open. Its current head contains real PostgreSQL audit/outbox persistence code and PostgreSQL integration-test infrastructure.
+GitHub Actions for `43d6e04161964fc771481a325c20b7d8192f9231` were in progress when this status was written. No database-backed integration result is claimed. No local PostgreSQL instance was used. Do not merge PR #49.
 
-However, the repository still does not have a production-complete Part 8 execution path.
-
-The current worker binary remains explicitly a Phase 1 scaffold:
-
-```text
-apps/worker/src/main.rs
-fn main() {}
-```
-
-The current PR also does not establish the complete authoritative application command path:
-
-```text
-authorized business command
-    ↓
-business mutation
-    +
-audit insert
-    +
-outbox insert
-    ↓
-same PostgreSQL transaction
-    ↓
-commit
-    ↓
-worker relay
-    ↓
-external side effect
-    ↓
-durable result
-```
-
-The existence of repositories and tests is not itself proof that this end-to-end invariant is wired.
-
----
-
-## 2. Confirmed improvements in the current PR
-
-The current head contains:
-
-- IAM audit event types;
-- PostgreSQL audit persistence;
-- transactional outbox persistence boundaries;
-- PostgreSQL outbox state-transition functions;
-- row-lock/claim infrastructure;
-- retry/quarantine concepts;
-- PostgreSQL integration-test scaffolding;
-- worker-role fixtures;
-- expanded tenant/RLS test coverage.
-
-The root workspace now also contains the dependency required by the PR's persistence crate on the PR branch.
-
----
-
-## 3. Remaining high-impact proof gaps
-
-The detailed execution contract records the full remediation list. The current review should keep these classes visible:
-
-1. real business mutation + audit + outbox atomicity;
-2. complete worker relay runtime;
-3. safe SECURITY DEFINER ownership/search_path/EXECUTE grants;
-4. stale-worker claim protection;
-5. concurrency-safe aggregate ordering;
-6. bounded worker parameters and retry policy;
-7. explicit worker database identity;
-8. transaction-correct tenant context tests;
-9. isolated PostgreSQL test functions;
-10. genuine duplicate-delivery/idempotent-consumer testing;
-11. event registry/schema/version enforcement;
-12. bounded audit metadata;
-13. end-to-end worker/audit observability.
-
-These are implementation/proof gaps, not documentation existence problems.
-
----
-
-## 4. Interpretation rule
-
-The older file `phase4_part8_pr009_remediation_implementation_instructions.md` is superseded and retained as historical review evidence.
-
-The older `phase4_part8_pr009_remediation_implementation_instructions.md` is retained only as historical review evidence. Any PR-head-specific fact in a historical review must be rechecked against the current PR.
-
-This document is the current PR-status pointer.
-
----
-
-## 5. Closure
-
-Part 8 is complete only when:
-
-- the binding contract is implemented;
-- a real business mutation is transactionally coupled to audit and outbox;
-- worker relay exists;
-- security-definer privilege boundaries are proven;
-- lease ownership is race-safe;
-- event ordering is concurrency-safe;
-- duplicate delivery reaches an idempotent consumer;
-- required telemetry exists;
-- PostgreSQL integration/security tests pass;
-- canonical CI passes on the exact implementation head.
+Older audit/status notes are historical records. Use the current remediation report and continuation guide above for the candidate state.
