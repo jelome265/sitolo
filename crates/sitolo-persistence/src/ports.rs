@@ -57,7 +57,10 @@ pub trait IdentityStores: Send + Sync + AuditRecorder {
     // --- sessions ---
     // Explicit session-establishment port; bundling would obscure the §52
     // transaction boundary implementors must enforce.
-    #[expect(clippy::too_many_arguments, reason = "The explicit session-establishment fields expose the §52 transaction contract at call sites.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The explicit session-establishment fields expose the §52 transaction contract at call sites."
+    )]
     async fn establish_session(
         &self,
         user_id: UserId,

@@ -122,7 +122,10 @@ impl IdentityService {
 
     // Explicit audit-event fields keep each call site reviewable; bundling
     // into a params struct would hide which auth context is populated.
-    #[expect(clippy::too_many_arguments, reason = "Audit event fields stay explicit so authentication context cannot be silently omitted from the audit record.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Audit event fields stay explicit so authentication context cannot be silently omitted from the audit record."
+    )]
     async fn emit_audit(
         &self,
         name: AuthEventName,

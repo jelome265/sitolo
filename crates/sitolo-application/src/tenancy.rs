@@ -1396,7 +1396,10 @@ impl TenancyService {
     /// §14, §19): bounded, versioned, secret-free, independent of Rust
     /// debug formatting. Callers must not pass raw domain-object debug
     /// output as `payload`.
-    #[expect(clippy::too_many_arguments, reason = "Invitation issuance keeps tenant, actor, and token material explicit at the application boundary.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Invitation issuance keeps tenant, actor, and token material explicit at the application boundary."
+    )]
     async fn record_evidence(
         &self,
         event_name: IamEventName,
