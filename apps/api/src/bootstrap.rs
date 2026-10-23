@@ -322,6 +322,8 @@ pub enum StartupError {
     DatabaseRuntimeUnavailable,
     #[error("HTTP server terminated unexpectedly ({class})")]
     ServeFailed { class: &'static str },
+    #[error("operating-system shutdown signal handler could not be installed")]
+    SignalHandlerUnavailable,
 }
 
 fn logging_level(level: LogLevel) -> tracing::level_filters::LevelFilter {
