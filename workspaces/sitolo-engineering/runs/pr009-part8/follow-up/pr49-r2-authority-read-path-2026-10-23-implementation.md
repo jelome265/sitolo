@@ -22,3 +22,7 @@
 ## Remaining requirements
 
 The production API still authenticates but intentionally returns dependency unavailable for protected routes; it does not invoke these reads or any protected command. The in-memory `TenancyService` constructor and optional evidence sink remain, and mandatory mutation coverage/rollback proof is incomplete. No concrete SNS/SQS adapter, durable consumer inbox, managed production secret provider, PostgreSQL runtime pool composition, real readiness path, independent Stage 06 audit, exact-candidate CI, or human review is claimed by this record.
+
+## Exact-head evidence on `35fa9ee`
+
+GitHub Actions ran the PostgreSQL integration against this exact source head and passed. Policy, canonical Rust verification, security/supply-chain checks, offensive regression, and CodeQL also passed. Links and run IDs are recorded in the run's remediation report. This evidence does not change the partial scope above.
