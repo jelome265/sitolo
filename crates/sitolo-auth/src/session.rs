@@ -144,7 +144,7 @@ impl Session {
     /// becomes observable (Appendix A.1).
     // Explicit 9-field domain constructor; bundling into a params struct would
     // obscure the Appendix A.1 creation invariant at call sites.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "The explicit session constructor keeps the Appendix A.1 creation invariant reviewable at call sites.")]
     #[must_use]
     pub fn create(
         id: SessionId,

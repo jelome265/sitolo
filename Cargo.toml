@@ -72,32 +72,97 @@ sitolo-persistence = { path = "crates/sitolo-persistence" }
 sitolo-config = { path = "crates/sitolo-config" }
 
 [workspace.lints.rust]
+# Workspace default is deny so the two serialized Rust 2024 test harnesses can
+# carry explicit, reasoned crate-level #[expect(unsafe_code)] declarations.
+# Production crates may not use unsafe blocks without an approved exception.
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 unused_must_use = "deny"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+let_underscore_drop = "warn"
 non_ascii_idents = "deny"
-
-[profile.dev]
-overflow-checks = true
-
-[profile.release]
-overflow-checks = true
-lto = "thin"
-debug = "line-tables-only"
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
+# Every workspace member opts into this policy through [lints] workspace = true.
+# CI uses -D warnings, so pedantic/cargo warnings cannot silently accumulate.
 all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Framework bans are configured at the workspace root in clippy.toml.
+disallowed_methods = "deny"
+disallowed_types = "deny"
+
+# Panic freedom and error discipline.
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+unreachable = "deny"
 unimplemented = "deny"
 todo = "deny"
-unreachable = "deny"
+unwrap_in_result = "deny"
+exit = "deny"
+map_err_ignore = "deny"
+let_underscore_must_use = "deny"
+let_underscore_future = "deny"
+let_underscore_untyped = "deny"
+
+# Console output and debug artifacts.
 dbg_macro = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
+
+# Indexing, casts, arithmetic, and floating-point comparisons.
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+cast_lossless = "warn"
+arithmetic_side_effects = "deny"
+float_cmp = "deny"
+float_cmp_const = "deny"
+
+# Unsafe, uninitialized memory, and ownership hazards.
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+mem_forget = "deny"
+mem_replace_with_uninit = "deny"
+uninit_vec = "deny"
+
+# Concurrency and asynchronous execution.
 await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
-mem_forget = "deny"
-disallowed_methods = "deny"
-disallowed_types = "deny"
+large_futures = "warn"
+rc_mutex = "deny"
+
+# Types, documentation, and API contracts.
+wildcard_enum_match_arm = "deny"
+must_use_candidate = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "deny"
+
+# Allocation and ownership.
+clone_on_ref_ptr = "deny"
+redundant_clone = "warn"
+needless_collect = "deny"
+needless_pass_by_value = "warn"
+
+# Exception / lint-suppression discipline.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# Reviewed suppressions for noisy naming lints.
+module_name_repetitions = "allow"
+similar_names = "allow"

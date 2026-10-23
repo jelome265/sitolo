@@ -206,7 +206,7 @@ impl Invitation {
 
     /// Issues an invitation. A zero TTL would mint a stillborn record, so
     /// expiry-bounded issuance requires a positive TTL (section 9.1).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "Invitation issuance keeps tenant, actor, scope, expiry, and token inputs explicit for security review.")]
     pub fn issue(
         id: InvitationId,
         organization_id: OrganizationId,

@@ -67,7 +67,7 @@ pub struct IdentityService {
     db: Arc<IdentityDatabase>,
     hasher: Arc<dyn PasswordHasher>,
     // Wired for future OIDC provider use; not yet consulted by reference use cases.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "The optional provider injection is reserved for the planned OIDC reference flow; request authentication uses the authority port today.")]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
     policy: IdentityPolicy,
@@ -122,7 +122,7 @@ impl IdentityService {
 
     // Explicit audit-event fields keep each call site reviewable; bundling
     // into a params struct would hide which auth context is populated.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "Audit event fields stay explicit so authentication context cannot be silently omitted from the audit record.")]
     async fn emit_audit(
         &self,
         name: AuthEventName,
