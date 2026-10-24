@@ -13,22 +13,30 @@ use sitolo_worker_bin::sns::{SnsFifoPublisher, SnsRelayConfig};
 use tokio::sync::watch;
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
-    if run().await.is_err() {
-        eprintln!("sitolo-worker: startup or relay failed; process stopped");
-        std::process::exit(1);
+#[expect(
+    clippy::print_stderr,
+    reason = "the worker has no logging subscriber until configuration validates, and the fixed message deliberately omits the error chain, which can embed credentials"
+)]
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(_failure) => {
+            // The error chain may quote DSNs, secret references, or provider
+            // diagnostics, so only the fixed class is reported.
+            eprintln!("sitolo-worker: startup or relay failed; process stopped");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
-    let raw = EnvLoader::load().map_err(|_| "invalid worker configuration key")?;
+    let raw = EnvLoader::load().map_err(|_unknown| "invalid worker configuration key")?;
     let config = validate(raw)?;
-    let (region, topic_arn) = match (
+    let (Some(region), Some(topic_arn)) = (
         config.relay_aws_region.as_deref(),
         config.relay_sns_topic_arn.as_deref(),
-    ) {
-        (Some(region), Some(topic)) => (region, topic),
-        _ => return Err("SNS FIFO relay destination is not configured".into()),
+    ) else {
+        return Err("SNS FIFO relay destination is not configured".into());
     };
     let database = config
         .worker_database_runtime()

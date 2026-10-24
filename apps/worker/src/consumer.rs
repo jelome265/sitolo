@@ -39,8 +39,20 @@ const EXPECTED_FIELDS: [&str; 10] = [
     "payload",
 ];
 
+/// Collapses any parse, conversion, or schema failure into the single
+/// externally visible [`ConsumerEventError::Invalid`] class.
+///
+/// The source is deliberately dropped: JSON and domain errors can quote the
+/// rejected payload, and the consumer boundary must never propagate or log it.
+fn invalid<T, E>(result: Result<T, E>) -> Result<T, ConsumerEventError> {
+    result.map_err(|source| {
+        drop(source);
+        ConsumerEventError::Invalid
+    })
+}
+
 /// A decoded event that passed all transport-envelope and IAM payload checks.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConsumerEvent {
     event_id: String,
     event_name: String,
@@ -56,11 +68,17 @@ pub struct ConsumerEvent {
 
 impl ConsumerEvent {
     /// Parses and validates the canonical SNS-to-SQS event body.
+    ///
+    /// # Errors
+    /// Returns [`ConsumerEventError::Invalid`] when the body is empty or
+    /// oversized, is not canonical JSON, carries unknown or missing fields,
+    /// names an unregistered event, or fails the registered payload schema.
+    /// The error never quotes the rejected body.
     pub fn parse(body: &str) -> Result<Self, ConsumerEventError> {
         if body.is_empty() || body.len() > MAX_CONSUMER_MESSAGE_BYTES {
             return Err(ConsumerEventError::Invalid);
         }
-        let value: Value = serde_json::from_str(body).map_err(|_| ConsumerEventError::Invalid)?;
+        let value: Value = invalid(serde_json::from_str(body))?;
         let object = value.as_object().ok_or(ConsumerEventError::Invalid)?;
         if object.len() != EXPECTED_FIELDS.len()
             || object
@@ -85,17 +103,19 @@ impl ConsumerEvent {
         if event_version != 1 {
             return Err(ConsumerEventError::Invalid);
         }
-        let occurred_at = DateTime::parse_from_rfc3339(&required_string(object, "occurred_at")?)
-            .map_err(|_| ConsumerEventError::Invalid)?
-            .with_timezone(&Utc)
-            .into();
-        let organization_id = OrganizationId::new(required_string(object, "organization_id")?)
-            .map_err(|_| ConsumerEventError::Invalid)?;
+        let occurred_at = invalid(DateTime::parse_from_rfc3339(&required_string(
+            object,
+            "occurred_at",
+        )?))?
+        .with_timezone(&Utc)
+        .into();
+        let organization_id = invalid(OrganizationId::new(required_string(
+            object,
+            "organization_id",
+        )?))?;
         let branch_id = match object.get("branch_id") {
             Some(Value::Null) => None,
-            Some(Value::String(value)) => {
-                Some(BranchId::new(value.clone()).map_err(|_| ConsumerEventError::Invalid)?)
-            }
+            Some(Value::String(value)) => Some(invalid(BranchId::new(value.clone()))?),
             _ => return Err(ConsumerEventError::Invalid),
         };
         let aggregate_type = required_component(object, "aggregate_type")?;
@@ -103,7 +123,7 @@ impl ConsumerEvent {
         let aggregate_sequence = object
             .get("aggregate_sequence")
             .and_then(Value::as_u64)
-            .filter(|sequence| *sequence > 0 && *sequence <= i64::MAX as u64)
+            .filter(|sequence| *sequence > 0 && i64::try_from(*sequence).is_ok())
             .ok_or(ConsumerEventError::Invalid)?;
         let payload = object
             .get("payload")
@@ -112,10 +132,12 @@ impl ConsumerEvent {
         if !payload.is_object() {
             return Err(ConsumerEventError::Invalid);
         }
-        let payload_json =
-            serde_json::to_string(&payload).map_err(|_| ConsumerEventError::Invalid)?;
-        validate_iam_payload(&event_name, event_version, &payload_json)
-            .map_err(|_| ConsumerEventError::Invalid)?;
+        let payload_json = invalid(serde_json::to_string(&payload))?;
+        invalid(validate_iam_payload(
+            &event_name,
+            event_version,
+            &payload_json,
+        ))?;
 
         Ok(Self {
             event_id,
@@ -131,33 +153,53 @@ impl ConsumerEvent {
         })
     }
 
+    /// Stable event identifier.
+    #[must_use]
     pub fn event_id(&self) -> &str {
         &self.event_id
     }
+    /// Registered IAM event name.
+    #[must_use]
     pub fn event_name(&self) -> &str {
         &self.event_name
     }
+    /// Registered event schema version.
+    #[must_use]
     pub fn event_version(&self) -> u32 {
         self.event_version
     }
+    /// Time the producing transaction recorded the event.
+    #[must_use]
     pub fn occurred_at(&self) -> SystemTime {
         self.occurred_at
     }
+    /// Tenant the event belongs to.
+    #[must_use]
     pub fn organization_id(&self) -> &OrganizationId {
         &self.organization_id
     }
+    /// Branch scope, when the event is branch-specific.
+    #[must_use]
     pub fn branch_id(&self) -> Option<&BranchId> {
         self.branch_id.as_ref()
     }
+    /// Aggregate family that produced the event.
+    #[must_use]
     pub fn aggregate_type(&self) -> &str {
         &self.aggregate_type
     }
+    /// Stable aggregate identifier.
+    #[must_use]
     pub fn aggregate_id(&self) -> &str {
         &self.aggregate_id
     }
+    /// Monotonic per-aggregate sequence number.
+    #[must_use]
     pub fn aggregate_sequence(&self) -> u64 {
         self.aggregate_sequence
     }
+    /// Validated event payload.
+    #[must_use]
     pub fn payload(&self) -> &Value {
         &self.payload
     }
@@ -166,16 +208,19 @@ impl ConsumerEvent {
 /// Event body is malformed, unsupported, or fails its registered schema.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ConsumerEventError {
+    /// The body is malformed, unsupported, or fails its registered schema.
     #[error("consumer event is invalid or unsupported")]
     Invalid,
 }
 
 /// Message and receipt handle delivered by an SQS-compatible transport port.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReceivedMessage {
     /// Stable source transport identifier, used to make quarantine transfer idempotent.
     pub message_id: String,
+    /// Canonical SNS-to-SQS event body, validated before any effect runs.
     pub body: String,
+    /// Opaque source receipt handle used for acknowledgement.
     pub receipt_handle: String,
     /// FIFO group identifier returned as an SQS system attribute.
     pub message_group_id: Option<String>,
@@ -208,6 +253,7 @@ pub trait ConsumerTransport: Send + Sync {
 /// durable effect so it commits atomically with the inbox idempotency marker.
 #[async_trait]
 pub trait ConsumerBusinessEffect: Send + Sync {
+    /// Applies the effect inside `tx`, which also carries the inbox marker.
     async fn apply(
         &self,
         tx: &mut sqlx_core::transaction::Transaction<'_, Postgres>,
@@ -218,21 +264,28 @@ pub trait ConsumerBusinessEffect: Send + Sync {
 /// Business-effect failure classification, without exposing payload or provider details.
 #[derive(Debug, Clone)]
 pub enum ConsumerEffectFailure {
+    /// The effect may succeed on redelivery; leave the message unacknowledged.
     Retryable,
+    /// The effect can never succeed; quarantine with the given error class.
     Permanent(OutboxErrorClass),
 }
 
 /// Consumer processor failure.
 #[derive(Debug, Error)]
 pub enum ConsumerProcessError {
+    /// The event envelope is malformed, unsupported, or fails its schema.
     #[error("consumer event is invalid or unsupported")]
     InvalidEvent(#[from] ConsumerEventError),
+    /// A database operation failed.
     #[error("consumer database operation failed")]
     Database(#[from] DatabaseError),
+    /// The inbox idempotency marker could not be written or read.
     #[error("consumer inbox persistence failed")]
     Inbox(#[from] ConsumerInboxError),
+    /// Acknowledgement or quarantine failed.
     #[error("consumer transport operation failed")]
     Transport(#[from] ConsumerTransportError),
+    /// The business effect failed retryably; the message stays unacknowledged.
     #[error("consumer business effect failed and is retryable")]
     EffectRetryable,
 }
@@ -252,8 +305,25 @@ pub struct ConsumerProcessor {
     invalid_event_class: OutboxErrorClass,
 }
 
+impl std::fmt::Debug for ConsumerProcessor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The pool and adapters are represented by presence flags only: their
+        // internals must never reach a log line or a panic payload.
+        formatter
+            .debug_struct("ConsumerProcessor")
+            .field("consumer_name", &self.consumer_name)
+            .field("invalid_event_class", &self.invalid_event_class)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConsumerProcessor {
     /// Constructs an explicitly configured consumer from its approved adapters.
+    ///
+    /// # Errors
+    /// Returns [`ConsumerEventError::Invalid`] when `consumer_name` is empty,
+    /// longer than 64 bytes, or contains anything outside lowercase ASCII
+    /// alphanumerics, `_`, and `-`.
     pub fn new(
         pool: PgPool,
         consumer_name: String,
@@ -282,28 +352,29 @@ impl ConsumerProcessor {
     /// Processes one received message. It acknowledges only after commit; a
     /// retryable error leaves the source message unacknowledged. Invalid
     /// envelopes are quarantined without being reported as successfully handled.
+    ///
+    /// # Errors
+    /// Returns [`ConsumerProcessError`] when the inbox or business-effect
+    /// transaction fails, or when acknowledgement or quarantine itself fails.
+    /// A retryable effect failure surfaces as
+    /// [`ConsumerProcessError::EffectRetryable`] and leaves the message
+    /// unacknowledged for redelivery.
     pub async fn process(&self, message: &ReceivedMessage) -> Result<(), ConsumerProcessError> {
-        let event = match ConsumerEvent::parse(&message.body) {
-            Ok(event) => event,
-            Err(_) => {
-                self.transport
-                    .quarantine(message, &self.invalid_event_class)
-                    .await?;
-                return Ok(());
-            }
+        let Ok(event) = ConsumerEvent::parse(&message.body) else {
+            self.transport
+                .quarantine(message, &self.invalid_event_class)
+                .await?;
+            return Ok(());
         };
 
         let mut tx = self.pool.begin().await?;
-        let payload =
-            serde_json::to_vec(event.payload()).map_err(|_| ConsumerEventError::Invalid)?;
-        let sequence =
-            i64::try_from(event.aggregate_sequence()).map_err(|_| ConsumerEventError::Invalid)?;
+        let payload = invalid(serde_json::to_vec(event.payload()))?;
+        let sequence = invalid(i64::try_from(event.aggregate_sequence()))?;
         let record = ConsumerInboxRecord {
             consumer_name: &self.consumer_name,
             event_id: event.event_id(),
             event_name: event.event_name(),
-            event_version: i32::try_from(event.event_version())
-                .map_err(|_| ConsumerEventError::Invalid)?,
+            event_version: invalid(i32::try_from(event.event_version()))?,
             organization_id: event.organization_id().as_str(),
             branch_id: event.branch_id().map(BranchId::as_str),
             aggregate_type: event.aggregate_type(),
@@ -335,6 +406,10 @@ impl ConsumerProcessor {
     /// Processes a received batch serially and stops on the first retryable
     /// failure. This preserves the ordering returned for FIFO message groups;
     /// callers must not process overlapping batches concurrently per queue.
+    ///
+    /// # Errors
+    /// Returns the first [`ConsumerProcessError`] from [`Self::process`]; the
+    /// remaining messages stay unacknowledged for redelivery.
     pub async fn process_batch(
         &self,
         messages: &[ReceivedMessage],
@@ -449,8 +524,8 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingTransport {
-        acknowledged: AtomicUsize,
-        quarantined: AtomicUsize,
+        acknowledged: Arc<AtomicUsize>,
+        quarantined: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -545,7 +620,7 @@ mod tests {
                 Value::String("iam.unregistered.event".to_owned()),
             ),
             ("event_version", Value::from(2)),
-            ("organization_id", Value::String("".to_owned())),
+            ("organization_id", Value::String(String::new())),
             ("aggregate_sequence", Value::from(0)),
         ] {
             let mut body = valid_body();
@@ -587,12 +662,15 @@ mod tests {
         let pool =
             PgPoolOptions::new().connect_lazy("postgres://app_worker:unused@127.0.0.1/sitolo")?;
         let transport = Arc::new(RecordingTransport::default());
+        let acknowledged = Arc::clone(&transport.acknowledged);
+        let quarantined = Arc::clone(&transport.quarantined);
+        let transport_port: Arc<dyn ConsumerTransport> = transport;
         let processor = ConsumerProcessor::new(
             pool,
             "iam-projection".to_owned(),
             Arc::new(TestInbox),
             Arc::new(TestEffect),
-            transport.clone(),
+            transport_port,
             OutboxErrorClass::new("invalid_event")?,
         )?;
         processor
@@ -604,8 +682,8 @@ mod tests {
             })
             .await?;
 
-        assert_eq!(transport.quarantined.load(Ordering::SeqCst), 1);
-        assert_eq!(transport.acknowledged.load(Ordering::SeqCst), 0);
+        assert_eq!(quarantined.load(Ordering::SeqCst), 1);
+        assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
         Ok(())
     }
 }

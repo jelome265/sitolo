@@ -69,7 +69,7 @@ pub trait EventPublisher: Send + Sync {
 }
 
 /// Validated controls for one worker process.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RelayPolicy {
     claim: OutboxClaimPolicy,
     poll_interval: Duration,
@@ -79,6 +79,11 @@ pub struct RelayPolicy {
 
 impl RelayPolicy {
     /// Builds a policy with bounded polling and exponential retry limits.
+    ///
+    /// # Errors
+    /// Returns [`WorkerError::InvalidPolicy`] when the poll interval falls
+    /// outside 100ms..=60s, or when the retry window is inverted, shorter than
+    /// 1ms, or longer than the protocol maximum backoff.
     pub fn new(
         claim: OutboxClaimPolicy,
         poll_interval: Duration,
@@ -104,22 +109,31 @@ impl RelayPolicy {
 /// or metrics without exposing event payloads or claim tokens.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BatchReport {
+    /// Stale claims recovered before this pass claimed new work.
     pub recovered: u32,
+    /// Events claimed for this pass.
     pub claimed: usize,
+    /// Events acknowledged by the destination and marked published.
     pub published: usize,
+    /// Events released for retry after a retryable delivery failure.
     pub retried: usize,
+    /// Events moved to quarantine as permanently undeliverable.
     pub quarantined: usize,
 }
 
 /// Relay runtime failure. Persistence and lease errors are never swallowed.
 #[derive(Debug, Error)]
 pub enum WorkerError {
+    /// The configured policy falls outside the protocol's accepted bounds.
     #[error("invalid worker relay policy")]
     InvalidPolicy,
+    /// A claimed event carried a status or lease state the relay cannot use.
     #[error("claimed outbox event has invalid lease state")]
     InvalidClaim,
+    /// The destination rejected the worker's identity or configuration.
     #[error("event destination is unavailable or misconfigured")]
     PublisherUnavailable,
+    /// A persistence operation failed.
     #[error(transparent)]
     Persistence(#[from] OutboxPersistenceError),
 }
@@ -131,7 +145,21 @@ pub struct RelayWorker {
     policy: RelayPolicy,
 }
 
+impl std::fmt::Debug for RelayWorker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Reader and publisher are represented by presence flags only: their
+        // internals must never reach a log line.
+        formatter
+            .debug_struct("RelayWorker")
+            .field("has_reader", &true)
+            .field("has_publisher", &true)
+            .field("policy", &self.policy)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RelayWorker {
+    /// Composes a worker from an approved reader, publisher, and policy.
     #[must_use]
     pub fn new(
         reader: Arc<dyn OutboxReader>,
@@ -146,6 +174,12 @@ impl RelayWorker {
     }
 
     /// Claims and processes one bounded batch.
+    ///
+    /// # Errors
+    /// Returns [`WorkerError::InvalidClaim`] when a claimed event is not in the
+    /// claimed state or lacks its claim token, [`WorkerError::PublisherUnavailable`]
+    /// when the destination rejects the worker's identity or configuration, and
+    /// [`WorkerError::Persistence`] when any outbox transition fails.
     pub async fn process_batch(&self) -> Result<BatchReport, WorkerError> {
         let recovered = self
             .reader
@@ -168,24 +202,18 @@ impl RelayWorker {
                 .ok_or(WorkerError::InvalidClaim)?;
 
             if !is_registered_event(&event) {
-                // This fixed error class is validated by its ASCII grammar.
-                #[expect(
-                    clippy::expect_used,
-                    reason = "the fixed quarantine class is a valid lowercase ASCII identifier"
-                )]
-                let class = OutboxErrorClass::new("unsupported_event_schema")
-                    .expect("fixed error class is valid");
+                let class = unsupported_event_class()?;
                 self.reader
                     .quarantine(&event.event_id, token, &class)
                     .await?;
-                report.quarantined += 1;
+                report.quarantined = report.quarantined.saturating_add(1);
                 continue;
             }
 
             match self.publisher.publish(&event, &event.event_id).await {
                 Ok(()) => {
                     self.reader.mark_published(&event.event_id, token).await?;
-                    report.published += 1;
+                    report.published = report.published.saturating_add(1);
                 }
                 Err(failure) if failure.retry_class == RetryClass::Retryable => {
                     let backoff = retry_backoff_with_random(
@@ -197,7 +225,7 @@ impl RelayWorker {
                     self.reader
                         .release_for_retry(&event.event_id, token, &failure.class, backoff)
                         .await?;
-                    report.retried += 1;
+                    report.retried = report.retried.saturating_add(1);
                     if failure.worker_unavailable {
                         return Err(WorkerError::PublisherUnavailable);
                     }
@@ -206,7 +234,7 @@ impl RelayWorker {
                     self.reader
                         .quarantine(&event.event_id, token, &failure.class)
                         .await?;
-                    report.quarantined += 1;
+                    report.quarantined = report.quarantined.saturating_add(1);
                 }
             }
         }
@@ -224,6 +252,10 @@ impl RelayWorker {
 
     /// Runs bounded claim passes until shutdown is signalled. The first pass
     /// runs immediately; persistence failures terminate the process path.
+    ///
+    /// # Errors
+    /// Returns the first [`WorkerError`] from [`Self::process_batch`]; the
+    /// process path then exits rather than looping on a broken dependency.
     pub async fn run_until_shutdown(
         &self,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
@@ -234,7 +266,7 @@ impl RelayWorker {
             }
             self.process_batch().await?;
             tokio::select! {
-                _ = tokio::time::sleep(self.policy.poll_interval) => {}
+                () = tokio::time::sleep(self.policy.poll_interval) => {}
                 result = shutdown.changed() => {
                     if result.is_err() || *shutdown.borrow() {
                         return Ok(());
@@ -243,6 +275,19 @@ impl RelayWorker {
             }
         }
     }
+}
+
+/// The fixed quarantine class used for events that fail schema validation.
+///
+/// The literal is a known-valid lowercase ASCII identifier. If the constructor
+/// ever rejected it, the relay would misclassify the event, so the failure is
+/// surfaced as a fatal policy error instead of a panic.
+fn unsupported_event_class() -> Result<OutboxErrorClass, WorkerError> {
+    OutboxErrorClass::new("unsupported_event_schema").map_err(|_rejected| {
+        // The literal above is the only input, so rejection is impossible and
+        // the source carries no operator-usable detail.
+        WorkerError::InvalidPolicy
+    })
 }
 
 fn is_registered_event(event: &OutboxEvent) -> bool {
@@ -269,7 +314,8 @@ fn retry_backoff_with_random(
     // PostgreSQL stores timestamps at microsecond precision. A 1ms floor
     // preserves a measurable positive delay while keeping full jitter bounded
     // by the exponential cap.
-    let jittered_millis = ((u128::from(random) * u128::from(cap_millis)) >> 64) + 1;
+    let jittered_millis =
+        (u128::from(random).saturating_mul(u128::from(cap_millis)) >> 64).saturating_add(1);
     Duration::from_millis(u64::try_from(jittered_millis).unwrap_or(cap_millis))
 }
 
@@ -436,8 +482,10 @@ mod tests {
             failure,
             idempotency_keys: Mutex::new(Vec::new()),
         });
+        let reader_port = Arc::clone(&reader);
+        let publisher_port = Arc::clone(&publisher);
         Ok((
-            RelayWorker::new(reader.clone(), publisher.clone(), policy()?),
+            RelayWorker::new(reader_port, publisher_port, policy()?),
             reader,
             publisher,
         ))

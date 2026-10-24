@@ -120,6 +120,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sitolo_audit::IamEventName;
+use sitolo_domain::tenancy::BranchId;
 use sitolo_events::{
     OutboxError, OutboxErrorClass, OutboxEvent, OutboxStatus, RetryClass, validate_iam_payload,
 };
@@ -132,7 +133,7 @@ const MAX_PUBLISH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Validated SNS FIFO destination details. The topic identity is supplied by
 /// deployment configuration; this code does not create or guess AWS resources.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SnsRelayConfig {
     region: String,
     topic_arn: String,
@@ -173,11 +174,13 @@ impl SnsRelayConfig {
     }
 
     /// Returns the explicit AWS region used to sign and route requests.
+    #[must_use]
     pub fn region(&self) -> &str {
         &self.region
     }
 
     /// Returns the explicitly configured FIFO topic ARN.
+    #[must_use]
     pub fn topic_arn(&self) -> &str {
         &self.topic_arn
     }
@@ -186,8 +189,10 @@ impl SnsRelayConfig {
 /// Publisher construction or destination configuration error.
 #[derive(Debug, Error)]
 pub enum SnsPublisherInitError {
+    /// The region, topic ARN, or request timeout failed validation.
     #[error("invalid SNS FIFO publisher configuration")]
     InvalidConfiguration,
+    /// A fixed error classification was rejected by its grammar.
     #[error("invalid bounded relay error classification")]
     InvalidErrorClass(#[source] OutboxError),
 }
@@ -199,6 +204,19 @@ pub struct SnsFifoPublisher {
     failure_classes: SnsFailureClasses,
 }
 
+impl std::fmt::Debug for SnsFifoPublisher {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The AWS client is omitted deliberately: it carries credential and
+        // endpoint state that must never reach a log line.
+        formatter
+            .debug_struct("SnsFifoPublisher")
+            .field("config", &self.config)
+            .field("failure_classes", &self.failure_classes)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
 struct SnsFailureClasses {
     retryable: OutboxErrorClass,
     terminal: OutboxErrorClass,
@@ -254,7 +272,9 @@ impl EventPublisher for SnsFifoPublisher {
         event: &OutboxEvent,
         idempotency_key: &str,
     ) -> Result<(), DeliveryFailure> {
-        let encoded = encode_envelope(event, idempotency_key).map_err(|_| {
+        let encoded = encode_envelope(event, idempotency_key).map_err(|_rejected| {
+            // Encoding failures are permanent for this event; the specific
+            // schema detail is not exposed across the delivery boundary.
             DeliveryFailure::new(self.failure_classes.terminal.clone(), RetryClass::Terminal)
         })?;
         let request = self
@@ -268,15 +288,11 @@ impl EventPublisher for SnsFifoPublisher {
 
         let response = tokio::time::timeout(self.config.request_timeout, request).await;
         match response {
-            Err(_) => Err(DeliveryFailure::new(
-                self.failure_classes.retryable.clone(),
-                RetryClass::Retryable,
-            )),
-            Ok(Err(error)) => Err(self.classify_publish_error(&error)),
             Ok(Ok(output)) if output.message_id().is_some_and(|id| !id.is_empty()) => Ok(()),
-            // Treat a response without an acceptance identifier as ambiguous;
-            // the worker retries with the same FIFO deduplication key.
-            Ok(Ok(_)) => Err(DeliveryFailure::new(
+            Ok(Err(error)) => Err(self.classify_publish_error(&error)),
+            // A timeout or a response without an acceptance identifier is
+            // ambiguous; the worker retries with the same FIFO deduplication key.
+            Err(_) | Ok(Ok(_)) => Err(DeliveryFailure::new(
                 self.failure_classes.retryable.clone(),
                 RetryClass::Retryable,
             )),
@@ -330,11 +346,14 @@ fn encode_envelope(
         return Err(OutboxError::InvalidSchema);
     }
     validate_iam_payload(&event.event_name, event.event_version, &event.payload)?;
-    let payload: serde_json::Value =
-        serde_json::from_str(&event.payload).map_err(|_| OutboxError::InvalidSchema)?;
+    let payload: serde_json::Value = serde_json::from_str(&event.payload).map_err(|_rejected| {
+        // The persisted payload was already validated before claim; any
+        // re-parse failure is a permanent schema mismatch.
+        OutboxError::InvalidSchema
+    })?;
     let occurred_at = chrono::DateTime::<Utc>::from(event.occurred_at)
         .to_rfc3339_opts(SecondsFormat::Nanos, true);
-    let branch_id = event.branch_id.as_ref().map(|branch| branch.as_str());
+    let branch_id = event.branch_id.as_ref().map(BranchId::as_str);
     let body = serde_json::to_string(&json!({
         "event_id": event.event_id,
         "event_name": event.event_name,
@@ -347,7 +366,11 @@ fn encode_envelope(
         "aggregate_sequence": aggregate_sequence,
         "payload": payload,
     }))
-    .map_err(|_| OutboxError::InvalidSchema)?;
+    .map_err(|_rejected| {
+        // Serializing an owned JSON value cannot fail in practice; if it does,
+        // the event is permanently unencodable.
+        OutboxError::InvalidSchema
+    })?;
     if body.len() > MAX_SNS_MESSAGE_BYTES {
         return Err(OutboxError::PayloadTooLarge);
     }

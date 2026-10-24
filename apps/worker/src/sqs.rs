@@ -23,7 +23,7 @@ const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_SQS_BODY_BYTES: usize = 1_048_576;
 
 /// Explicit SQS FIFO endpoints and bounded SDK call timeout.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SqsFifoConsumerConfig {
     region: String,
     queue_url: String,
@@ -33,6 +33,11 @@ pub struct SqsFifoConsumerConfig {
 
 impl SqsFifoConsumerConfig {
     /// Validates AWS region, same-region FIFO queue URLs and timeout.
+    ///
+    /// # Errors
+    /// Returns [`SqsConsumerInitError::InvalidConfiguration`] when the region
+    /// or either queue URL is malformed, the URLs are not distinct, or the
+    /// request timeout is zero or above 60 seconds.
     pub fn new(
         region: impl Into<String>,
         queue_url: impl Into<String>,
@@ -63,6 +68,7 @@ impl SqsFifoConsumerConfig {
 /// SQS client construction error.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SqsConsumerInitError {
+    /// The region, queue URLs, or request timeout failed validation.
     #[error("invalid SQS FIFO consumer configuration")]
     InvalidConfiguration,
 }
@@ -74,8 +80,23 @@ pub struct SqsFifoConsumerTransport {
     config: SqsFifoConsumerConfig,
 }
 
+impl std::fmt::Debug for SqsFifoConsumerTransport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The AWS client is omitted deliberately: it carries credential and
+        // endpoint state that must never reach a log line.
+        formatter
+            .debug_struct("SqsFifoConsumerTransport")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SqsFifoConsumerTransport {
     /// Uses ECS task-role credentials and the configured region only.
+    ///
+    /// # Errors
+    /// Returns [`SqsConsumerInitError::InvalidConfiguration`] when the supplied
+    /// configuration was not produced by [`SqsFifoConsumerConfig::new`].
     pub async fn from_ecs_task_role(
         config: SqsFifoConsumerConfig,
     ) -> Result<Self, SqsConsumerInitError> {
@@ -96,21 +117,26 @@ impl SqsFifoConsumerTransport {
 
     /// Long-polls one bounded FIFO batch. SQS itself serializes delivery within
     /// each message group; this method returns the batch in service order.
+    ///
+    /// # Errors
+    /// Returns [`ConsumerTransportError`] when the SDK call times out or fails,
+    /// or when a returned message lacks a bounded identifier, body, receipt
+    /// handle, or message-group identifier.
     pub async fn receive_batch(&self) -> Result<Vec<ReceivedMessage>, ConsumerTransportError> {
-        let response = tokio::time::timeout(
-            self.config.request_timeout,
-            self.client
-                .receive_message()
-                .queue_url(&self.config.queue_url)
-                .max_number_of_messages(10)
-                .wait_time_seconds(20)
-                .visibility_timeout(60)
-                .message_system_attribute_names(MessageSystemAttributeName::MessageGroupId)
-                .send(),
-        )
-        .await
-        .map_err(|_| ConsumerTransportError)?
-        .map_err(|_| ConsumerTransportError)?;
+        let response = transport_error(
+            tokio::time::timeout(
+                self.config.request_timeout,
+                self.client
+                    .receive_message()
+                    .queue_url(&self.config.queue_url)
+                    .max_number_of_messages(10)
+                    .wait_time_seconds(20)
+                    .visibility_timeout(60)
+                    .message_system_attribute_names(MessageSystemAttributeName::MessageGroupId)
+                    .send(),
+            )
+            .await,
+        )?;
 
         response
             .messages()
@@ -155,17 +181,17 @@ impl ConsumerTransport for SqsFifoConsumerTransport {
         if receipt_handle.is_empty() || receipt_handle.len() > 1024 {
             return Err(ConsumerTransportError);
         }
-        tokio::time::timeout(
-            self.config.request_timeout,
-            self.client
-                .delete_message()
-                .queue_url(&self.config.queue_url)
-                .receipt_handle(receipt_handle)
-                .send(),
-        )
-        .await
-        .map_err(|_| ConsumerTransportError)?
-        .map_err(|_| ConsumerTransportError)?;
+        transport_error(
+            tokio::time::timeout(
+                self.config.request_timeout,
+                self.client
+                    .delete_message()
+                    .queue_url(&self.config.queue_url)
+                    .receipt_handle(receipt_handle)
+                    .send(),
+            )
+            .await,
+        )?;
         Ok(())
     }
 
@@ -193,29 +219,44 @@ impl ConsumerTransport for SqsFifoConsumerTransport {
             .data_type("String")
             .string_value(error_class.as_str())
             .build()
-            .map_err(|_| ConsumerTransportError)?;
+            .map_err(|_rejected| {
+                // The fixed attribute is structurally valid; rejection means the
+                // transport cannot construct the quarantine envelope.
+                ConsumerTransportError
+            })?;
 
         // Transfer first; only delete the source after SQS confirms the DLQ
         // accepted the message. A lost response replays the same dedup ID.
-        let transferred = tokio::time::timeout(
-            self.config.request_timeout,
-            self.client
-                .send_message()
-                .queue_url(&self.config.quarantine_queue_url)
-                .message_body(&message.body)
-                .message_group_id(group_id)
-                .message_deduplication_id(deduplication_id)
-                .message_attributes("sitolo_error_class", attributes)
-                .send(),
-        )
-        .await
-        .map_err(|_| ConsumerTransportError)?
-        .map_err(|_| ConsumerTransportError)?;
+        let transferred = transport_error(
+            tokio::time::timeout(
+                self.config.request_timeout,
+                self.client
+                    .send_message()
+                    .queue_url(&self.config.quarantine_queue_url)
+                    .message_body(&message.body)
+                    .message_group_id(group_id)
+                    .message_deduplication_id(deduplication_id)
+                    .message_attributes("sitolo_error_class", attributes)
+                    .send(),
+            )
+            .await,
+        )?;
         if transferred.message_id().is_none_or(str::is_empty) {
             return Err(ConsumerTransportError);
         }
         self.acknowledge(&message.receipt_handle).await
     }
+}
+
+/// Collapses a bounded timeout-or-SDK transport result into the fixed
+/// externally visible [`ConsumerTransportError`] class.
+///
+/// SDK and timeout errors can quote queue URLs, receipt handles, and credential
+/// diagnostics; none of that may cross the transport boundary.
+fn transport_error<T, E, F>(result: Result<Result<T, E>, F>) -> Result<T, ConsumerTransportError> {
+    result
+        .map_err(|_timeout| ConsumerTransportError)
+        .and_then(|response| response.map_err(|_sdk| ConsumerTransportError))
 }
 
 fn valid_region(value: &str) -> bool {
