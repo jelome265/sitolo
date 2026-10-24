@@ -60,11 +60,17 @@ pub mod bounds {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateOrganizationRequest {
+    /// Caller-supplied organization identifier (§56 idempotency key part).
     pub organization_id: String,
+    /// Display name of the organization.
     pub organization_name: String,
+    /// Identifier of the owner membership created with the organization.
     pub owner_membership_id: String,
+    /// Subject the owner membership is bound to; server-derived in production.
     pub owner_user_id: String,
+    /// Identifier of the default branch created with the organization.
     pub default_branch_id: String,
+    /// Display name of the default branch.
     pub default_branch_name: String,
 }
 
@@ -72,16 +78,22 @@ pub struct CreateOrganizationRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateBranchRequest {
+    /// Caller-supplied branch identifier (§56 idempotency key part).
     pub branch_id: String,
+    /// Display name of the branch.
     pub name: String,
 }
 
 /// Response DTO representing an organization entity (read projection, §2.1).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OrganizationResponse {
+    /// Organization identifier.
     pub id: String,
+    /// Display name.
     pub name: String,
+    /// Lifecycle state name.
     pub state: String,
+    /// Optimistic-concurrency version of the state.
     pub state_version: u64,
 }
 
@@ -106,10 +118,15 @@ impl From<&Organization> for OrganizationResponse {
 /// Response DTO representing a branch entity (read projection).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BranchResponse {
+    /// Branch identifier.
     pub id: String,
+    /// Identifier of the organization that owns the branch.
     pub organization_id: String,
+    /// Display name.
     pub name: String,
+    /// Lifecycle state name.
     pub state: String,
+    /// Optimistic-concurrency version of the state.
     pub state_version: u64,
 }
 
@@ -135,8 +152,11 @@ impl From<&Branch> for BranchResponse {
 /// Response DTO representing a newly provisioned organization bundle (§7.1).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ProvisionedOrganizationResponse {
+    /// The provisioned organization.
     pub organization: OrganizationResponse,
+    /// Identifier of the owner membership created in the same transaction.
     pub owner_membership_id: String,
+    /// The default branch created in the same transaction.
     pub default_branch: BranchResponse,
 }
 
@@ -151,6 +171,10 @@ impl From<&ProvisionedOrganization> for ProvisionedOrganizationResponse {
 }
 
 /// Rejects oversized bodies before deserialization (§10.2).
+///
+/// # Errors
+/// Returns [`AppError::Validation`] when the body exceeds
+/// [`bounds::MAX_TENANCY_BODY_BYTES`].
 pub fn ensure_body_bounded(body: &str) -> Result<(), AppError> {
     if body.len() > bounds::MAX_TENANCY_BODY_BYTES {
         return Err(AppError::Validation);
@@ -159,6 +183,11 @@ pub fn ensure_body_bounded(body: &str) -> Result<(), AppError> {
 }
 
 /// Validates identifier strings at the transport layer (early, cheap, §39).
+///
+/// # Errors
+/// Returns [`AppError::Validation`] when the identifier is empty, longer than
+/// [`bounds::MAX_IDENTIFIER_LEN`], or contains a character outside the allowed
+/// identifier alphabet.
 pub fn validate_identifier(id: &str) -> Result<(), AppError> {
     if id.is_empty()
         || id.len() > bounds::MAX_IDENTIFIER_LEN
@@ -173,6 +202,10 @@ pub fn validate_identifier(id: &str) -> Result<(), AppError> {
 
 /// Validates display names at the transport layer (§39, domain enforces
 /// 1..=256 trimmed).
+///
+/// # Errors
+/// Returns [`AppError::Validation`] when the trimmed name is empty or longer
+/// than [`bounds::MAX_NAME_LEN`].
 pub fn validate_name(name: &str) -> Result<(), AppError> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.len() > bounds::MAX_NAME_LEN {
@@ -182,6 +215,10 @@ pub fn validate_name(name: &str) -> Result<(), AppError> {
 }
 
 /// Validates `CreateOrganizationRequest` before domain execution (§39).
+///
+/// # Errors
+/// Returns [`AppError::Validation`] when any identifier or display name in the
+/// request fails transport validation.
 pub fn validate_create_organization_input(req: &CreateOrganizationRequest) -> Result<(), AppError> {
     validate_identifier(&req.organization_id)?;
     validate_name(&req.organization_name)?;
@@ -193,6 +230,10 @@ pub fn validate_create_organization_input(req: &CreateOrganizationRequest) -> Re
 }
 
 /// Validates `CreateBranchRequest` together with its path organization id.
+///
+/// # Errors
+/// Returns [`AppError::Validation`] when the organization id, branch id, or
+/// branch name fails transport validation.
 pub fn validate_create_branch_input(
     organization_id: &str,
     req: &CreateBranchRequest,
@@ -499,7 +540,7 @@ mod tests {
 
         let service = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new());
         let bad = CreateBranchRequest {
-            branch_id: "".into(),
+            branch_id: String::new(),
             name: "Branch".into(),
         };
         assert_eq!(
@@ -575,7 +616,7 @@ mod tests {
 
         let service = TenancyService::new_reference(Arc::new(TenancyDatabase::new()), Vec::new());
         let bad = CreateOrganizationRequest {
-            organization_id: "".into(),
+            organization_id: String::new(),
             organization_name: "M".into(),
             owner_membership_id: "m1".into(),
             owner_user_id: "u1".into(),

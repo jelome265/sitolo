@@ -1,10 +1,13 @@
 //! Least-privilege PostgreSQL pool construction for an API runtime.
 
+use std::fmt;
+use std::time::Duration;
+
 use sitolo_config::DatabaseRuntimeConfig;
 use sitolo_security::SecretValue;
 use sqlx_core::query::query;
 use sqlx_core::row::Row;
-use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
+use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
 use thiserror::Error;
 
 /// Startup failures for the API runtime pool. Database errors and connection
@@ -30,23 +33,43 @@ pub struct PgRuntimePool {
     schema: String,
 }
 
+impl fmt::Debug for PgRuntimePool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PgRuntimePool")
+            .field("schema", &self.schema)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A pool authenticated directly as the restricted outbox worker identity.
 #[derive(Clone)]
 pub struct PgWorkerPool {
     pool: PgPool,
 }
 
+impl fmt::Debug for PgWorkerPool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PgWorkerPool")
+            .finish_non_exhaustive()
+    }
+}
+
 impl PgWorkerPool {
     /// Connects as `app_worker` and verifies the narrow outbox schema contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns a generic fail-closed error when the TLS provider cannot be
+    /// installed, the configured role is not the restricted worker identity,
+    /// or the connection, role, or schema verification fails.
     pub async fn connect(
         config: &DatabaseRuntimeConfig,
         password: SecretValue,
         require_tls: bool,
     ) -> Result<Self, RuntimePoolError> {
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        }
-        if rustls::crypto::CryptoProvider::get_default().is_none()
+        if !install_crypto_provider()
             || config.username != "app_worker"
             || !valid_schema_name(&config.schema)
         {
@@ -60,22 +83,18 @@ impl PgWorkerPool {
             .password(&password)
             .database(&config.database)
             .application_name("sitolo-worker")
-            .ssl_mode(if require_tls {
-                PgSslMode::VerifyFull
-            } else {
-                PgSslMode::Prefer
-            })
+            .ssl_mode(tls_mode(require_tls))
             .options([("search_path", config.schema.as_str())]);
         drop(password);
         let pool = PgPoolOptions::new()
             .min_connections(config.pool_min)
             .max_connections(config.pool_max)
             .acquire_timeout(config.acquire_timeout)
-            .max_lifetime(Some(std::time::Duration::from_secs(1_800)))
-            .idle_timeout(Some(std::time::Duration::from_secs(600)))
+            .max_lifetime(Some(Duration::from_mins(30)))
+            .idle_timeout(Some(Duration::from_mins(10)))
             .connect_with(options)
             .await
-            .map_err(|_| RuntimePoolError::Unavailable)?;
+            .map_err(|_error| RuntimePoolError::Unavailable)?;
         let identity = query(
             "SELECT current_user::text AS current_user, session_user::text AS session_user, \
              EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND NOT rolsuper \
@@ -96,36 +115,11 @@ impl PgWorkerPool {
                AND has_function_privilege(current_user, to_regprocedure(format('%I.%s', $1, 'outbox_quarantine(text,text,text)')), 'EXECUTE') \
                AND has_function_privilege(current_user, to_regprocedure(format('%I.%s', $1, 'outbox_recover_stale_claims(interval)')), 'EXECUTE') \
                AS required_schema_present"
-        ).bind(config.schema.as_str()).fetch_one(&pool).await.map_err(|_| RuntimePoolError::Unavailable)?;
-        let current_user: String = identity
-            .try_get("current_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let session_user: String = identity
-            .try_get("session_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let restricted: bool = identity
-            .try_get("role_restricted")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let no_memberships: bool = identity
-            .try_get("has_no_role_memberships")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let schema_exists: bool = identity
-            .try_get("schema_exists")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let required: bool = identity
-            .try_get("required_schema_present")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        if current_user != "app_worker"
-            || session_user != "app_worker"
-            || !restricted
-            || !no_memberships
-        {
+        ).bind(config.schema.as_str()).fetch_one(&pool).await.map_err(|_error| RuntimePoolError::Unavailable)?;
+        let identity = IdentityRow::read(&identity)?;
+        if let Err(error) = identity.verify("app_worker") {
             pool.close().await;
-            return Err(RuntimePoolError::UnauthorizedRole);
-        }
-        if !schema_exists || !required {
-            pool.close().await;
-            return Err(RuntimePoolError::SchemaUnavailable);
+            return Err(error);
         }
         Ok(Self { pool })
     }
@@ -151,17 +145,15 @@ impl PgRuntimePool {
     /// selected schema.
     ///
     /// # Errors
-    /// Returns a generic fail-closed error if connection, role, or schema
-    /// verification fails. Driver details are not included in the error.
+    /// Returns a generic fail-closed error if the TLS provider cannot be
+    /// installed or if connection, role, or schema verification fails. Driver
+    /// details are not included in the error.
     pub async fn connect(
         config: &DatabaseRuntimeConfig,
         password: SecretValue,
         require_tls: bool,
     ) -> Result<Self, RuntimePoolError> {
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        }
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
+        if !install_crypto_provider() {
             return Err(RuntimePoolError::Unavailable);
         }
         if config.username != "app_runtime" || !valid_schema_name(&config.schema) {
@@ -180,11 +172,7 @@ impl PgRuntimePool {
             .password(&password)
             .database(&config.database)
             .application_name("sitolo-api")
-            .ssl_mode(if require_tls {
-                PgSslMode::VerifyFull
-            } else {
-                PgSslMode::Prefer
-            })
+            .ssl_mode(tls_mode(require_tls))
             .options([("search_path", config.schema.as_str())]);
         drop(password);
 
@@ -192,11 +180,11 @@ impl PgRuntimePool {
             .min_connections(config.pool_min)
             .max_connections(config.pool_max)
             .acquire_timeout(config.acquire_timeout)
-            .max_lifetime(Some(std::time::Duration::from_secs(1_800)))
-            .idle_timeout(Some(std::time::Duration::from_secs(600)))
+            .max_lifetime(Some(Duration::from_mins(30)))
+            .idle_timeout(Some(Duration::from_mins(10)))
             .connect_with(options)
             .await
-            .map_err(|_| RuntimePoolError::Unavailable)?;
+            .map_err(|_error| RuntimePoolError::Unavailable)?;
 
         let identity = query(
             "SELECT current_user::text AS current_user, session_user::text AS session_user, \
@@ -230,37 +218,12 @@ impl PgRuntimePool {
         .bind(config.schema.as_str())
         .fetch_one(&pool)
         .await
-        .map_err(|_| RuntimePoolError::Unavailable)?;
-        let current_user: String = identity
-            .try_get("current_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let session_user: String = identity
-            .try_get("session_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let role_restricted: bool = identity
-            .try_get("role_restricted")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let no_memberships: bool = identity
-            .try_get("has_no_role_memberships")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let schema_exists: bool = identity
-            .try_get("schema_exists")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let required_schema_present: bool = identity
-            .try_get("required_schema_present")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
+        .map_err(|_error| RuntimePoolError::Unavailable)?;
+        let identity = IdentityRow::read(&identity)?;
 
-        if current_user != "app_runtime"
-            || session_user != "app_runtime"
-            || !role_restricted
-            || !no_memberships
-        {
+        if let Err(error) = identity.verify("app_runtime") {
             pool.close().await;
-            return Err(RuntimePoolError::UnauthorizedRole);
-        }
-        if !schema_exists || !required_schema_present {
-            pool.close().await;
-            return Err(RuntimePoolError::SchemaUnavailable);
+            return Err(error);
         }
 
         Ok(Self {
@@ -271,9 +234,14 @@ impl PgRuntimePool {
 
     /// Verifies the live API connection identity and required Phase 4 schema.
     /// The probe is read-only and bounded so readiness cannot wait indefinitely.
+    ///
+    /// # Errors
+    ///
+    /// Returns a generic fail-closed error when the bounded probe times out,
+    /// the connection fails, or the role or schema verification fails.
     pub async fn probe(&self) -> Result<(), RuntimePoolError> {
         let row = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
+            Duration::from_secs(1),
             query(
                 "SELECT current_user::text AS current_user, session_user::text AS session_user, \
                  EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND NOT rolsuper \
@@ -307,37 +275,9 @@ impl PgRuntimePool {
             .fetch_one(&self.pool),
         )
         .await
-        .map_err(|_| RuntimePoolError::Unavailable)?
-        .map_err(|_| RuntimePoolError::Unavailable)?;
-        let current_user: String = row
-            .try_get("current_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let session_user: String = row
-            .try_get("session_user")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let role_restricted: bool = row
-            .try_get("role_restricted")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let no_role_memberships: bool = row
-            .try_get("has_no_role_memberships")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        if current_user != "app_runtime"
-            || session_user != "app_runtime"
-            || !role_restricted
-            || !no_role_memberships
-        {
-            return Err(RuntimePoolError::UnauthorizedRole);
-        }
-        let schema_exists: bool = row
-            .try_get("schema_exists")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        let required_schema: bool = row
-            .try_get("required_schema_present")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
-        if !schema_exists || !required_schema {
-            return Err(RuntimePoolError::SchemaUnavailable);
-        }
-        Ok(())
+        .map_err(|_error| RuntimePoolError::Unavailable)?
+        .map_err(|_error| RuntimePoolError::Unavailable)?;
+        IdentityRow::read(&row)?.verify("app_runtime")
     }
 
     /// Returns a clone of the pool for adapters that share the runtime identity.
@@ -350,6 +290,85 @@ impl PgRuntimePool {
     pub async fn close(&self) {
         self.pool.close().await;
     }
+}
+
+/// Installs the process-wide rustls provider once, reporting whether one is
+/// available. A concurrent install by another thread is treated as success.
+fn install_crypto_provider() -> bool {
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        return true;
+    }
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_ok()
+}
+
+fn tls_mode(require_tls: bool) -> PgSslMode {
+    if require_tls {
+        PgSslMode::VerifyFull
+    } else {
+        PgSslMode::Prefer
+    }
+}
+
+/// Identity and schema facts read from the live connection.
+struct IdentityRow {
+    current_user: String,
+    session_user: String,
+    role: RoleFacts,
+    schema: SchemaFacts,
+}
+
+/// Privilege facts reported for the connected role.
+struct RoleFacts {
+    restricted: bool,
+    has_no_role_memberships: bool,
+}
+
+/// Presence facts reported for the expected application schema.
+struct SchemaFacts {
+    exists: bool,
+    required_present: bool,
+}
+
+impl IdentityRow {
+    fn read(row: &PgRow) -> Result<Self, RuntimePoolError> {
+        Ok(Self {
+            current_user: read_column(row, "current_user")?,
+            session_user: read_column(row, "session_user")?,
+            role: RoleFacts {
+                restricted: read_column(row, "role_restricted")?,
+                has_no_role_memberships: read_column(row, "has_no_role_memberships")?,
+            },
+            schema: SchemaFacts {
+                exists: read_column(row, "schema_exists")?,
+                required_present: read_column(row, "required_schema_present")?,
+            },
+        })
+    }
+
+    fn verify(&self, expected_role: &str) -> Result<(), RuntimePoolError> {
+        if self.current_user != expected_role
+            || self.session_user != expected_role
+            || !self.role.restricted
+            || !self.role.has_no_role_memberships
+        {
+            return Err(RuntimePoolError::UnauthorizedRole);
+        }
+        if !self.schema.exists || !self.schema.required_present {
+            return Err(RuntimePoolError::SchemaUnavailable);
+        }
+        Ok(())
+    }
+}
+
+fn read_column<T>(row: &PgRow, column: &str) -> Result<T, RuntimePoolError>
+where
+    T: for<'r> sqlx_core::decode::Decode<'r, sqlx_postgres::Postgres>
+        + sqlx_core::types::Type<sqlx_postgres::Postgres>,
+{
+    row.try_get(column)
+        .map_err(|_error| RuntimePoolError::Unavailable)
 }
 
 fn valid_schema_name(value: &str) -> bool {
@@ -372,7 +391,7 @@ mod tests {
     async fn readiness_probe_fails_closed_for_a_closed_pool() -> Result<(), RuntimePoolError> {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://app_runtime:unused@127.0.0.1/sitolo")
-            .map_err(|_| RuntimePoolError::Unavailable)?;
+            .map_err(|_error| RuntimePoolError::Unavailable)?;
         pool.close().await;
         let runtime = PgRuntimePool {
             pool,

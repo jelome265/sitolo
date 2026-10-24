@@ -55,9 +55,12 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
+use sitolo_application::{
+    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, TenancyStores,
+};
 use sitolo_authz::{
     Invitation, InvitationContact, InvitationError, InvitationState, Role, RoleAssignment,
     RoleAssignmentState, Scope, ScopeGrant,
@@ -67,258 +70,6 @@ use sitolo_domain::tenancy::{
     OrganizationId, ProvisionedOrganization, RoleAssignmentId, ScopeGrantId, TenancyError,
     TenantUserId,
 };
-
-/// The atomic result of accepting an invitation: the claimed invitation,
-/// the activated membership, the effective role grant, and the scope grant
-/// when the invitation proposed a narrowed scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AcceptedInvitation {
-    pub invitation: Invitation,
-    pub membership: Membership,
-    pub assignment: RoleAssignment,
-    pub scope_grant: Option<ScopeGrant>,
-}
-
-/// The atomic result of creating an invitation: the `Invited` membership
-/// plus the `Issued` invitation. The raw token is held by the caller only.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CreatedInvitation {
-    pub membership: Membership,
-    pub invitation: Invitation,
-}
-
-/// Creation parameters for [`TenancyStores::create_invitation`]. Grouped so
-/// the port keeps an explicit, reviewable parameter list instead of eleven
-/// positional arguments.
-#[derive(Debug, Clone)]
-pub struct CreateInvitationInput {
-    pub organization_id: OrganizationId,
-    pub invitation_id: InvitationId,
-    pub membership_id: MembershipId,
-    pub user_id: TenantUserId,
-    pub proposed_role: Role,
-    pub proposed_scope: Option<Scope>,
-    pub contact: InvitationContact,
-    pub raw_token: String,
-    pub ttl: Duration,
-    pub now: SystemTime,
-}
-
-/// Tenant topology persistence port.
-///
-/// Every branch/membership operation carries the owning organization id and
-/// enforces the binding server-side, mirroring the tenant-predicate queries
-/// (`WHERE organization_id = $1 AND id = $2`) production repositories must
-/// issue even where RLS exists (Phase 4 section 27.1). A binding mismatch
-/// behaves as absence: [`TenancyError::NotFound`].
-///
-/// Preferred repository signature per §27 uses an `AuthorizedScope` (derived
-/// from `TrustedOrganizationId` / `EffectiveScope`) rather than a raw id.
-/// This trait keeps the raw `OrganizationId` form for the in-memory reference
-/// so tests can prove the predicate directly; production PG repositories
-/// should accept `&AuthorizedScope` and translate it to the bound predicate
-/// plus `SET LOCAL app.organization_id` for RLS (§26). See
-/// `sitolo_tenancy::AuthorizedScope`.
-#[async_trait]
-pub trait TenancyStores: Send + Sync {
-    // --- organizations ---
-    async fn create_organization(
-        &self,
-        id: OrganizationId,
-        name: &str,
-    ) -> Result<Organization, TenancyError>;
-    async fn organization_snapshot(&self, id: &OrganizationId) -> Option<Organization>;
-    async fn activate_organization(
-        &self,
-        id: &OrganizationId,
-    ) -> Result<Organization, TenancyError>;
-    async fn suspend_organization(&self, id: &OrganizationId)
-    -> Result<Organization, TenancyError>;
-    async fn resume_organization(&self, id: &OrganizationId) -> Result<Organization, TenancyError>;
-    async fn begin_close_organization(
-        &self,
-        id: &OrganizationId,
-    ) -> Result<Organization, TenancyError>;
-    async fn close_organization(&self, id: &OrganizationId) -> Result<Organization, TenancyError>;
-
-    // --- branches (scope-carrying) ---
-    async fn create_branch(
-        &self,
-        id: BranchId,
-        organization_id: OrganizationId,
-        name: &str,
-    ) -> Result<Branch, TenancyError>;
-    async fn branch_snapshot(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Option<Branch>;
-    async fn activate_branch(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Result<Branch, TenancyError>;
-    async fn suspend_branch(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Result<Branch, TenancyError>;
-    async fn resume_branch(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Result<Branch, TenancyError>;
-    async fn begin_close_branch(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Result<Branch, TenancyError>;
-    async fn close_branch(
-        &self,
-        organization_id: &OrganizationId,
-        id: &BranchId,
-    ) -> Result<Branch, TenancyError>;
-
-    // --- memberships (scope-carrying) ---
-    async fn invite_membership(
-        &self,
-        id: MembershipId,
-        organization_id: OrganizationId,
-        user_id: TenantUserId,
-    ) -> Result<Membership, TenancyError>;
-    async fn membership_snapshot(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Option<Membership>;
-    async fn membership_for_user(
-        &self,
-        organization_id: &OrganizationId,
-        user_id: &TenantUserId,
-    ) -> Option<Membership>;
-    async fn advance_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-    async fn expire_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-    async fn activate_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-    async fn suspend_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-    async fn resume_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-    async fn revoke_membership(
-        &self,
-        organization_id: &OrganizationId,
-        id: &MembershipId,
-    ) -> Result<Membership, TenancyError>;
-
-    // --- atomic provisioning bundle (section 7.1) ---
-    //
-    // All identifiers are caller-minted: the repository never invents ids,
-    // so retries with the same ids are unambiguous. A bundle whose
-    // organization id already exists conflicts rather than forking a second
-    // owner (command idempotency keys arrive with the API layer).
-    async fn provision_organization(
-        &self,
-        organization_id: OrganizationId,
-        organization_name: &str,
-        owner_membership_id: MembershipId,
-        owner_user_id: TenantUserId,
-        branch_id: BranchId,
-        branch_name: &str,
-    ) -> Result<ProvisionedOrganization, TenancyError>;
-
-    // --- role assignments (organization-wide grants; PR-004 narrows scope) ---
-    //
-    // Grants are organization-wide until scope grants arrive: assignment
-    // records carry the owning organization and membership bindings, and
-    // every method enforces them. Authority flows only from `Effective`
-    // assignments held by `Active` memberships; resolution lives in the
-    // authorization crate and the application service.
-    async fn assign_role(
-        &self,
-        organization_id: OrganizationId,
-        membership_id: MembershipId,
-        assignment_id: RoleAssignmentId,
-        role: Role,
-    ) -> Result<RoleAssignment, TenancyError>;
-    async fn revoke_role(
-        &self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        role: Role,
-    ) -> Result<RoleAssignment, TenancyError>;
-    async fn role_assignments_for(
-        &self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Vec<RoleAssignment>;
-
-    // --- scope grants (narrowing; PR-004) ---
-    //
-    // Grants narrow organization-wide role authority to explicit scopes.
-    // Structural rules enforced here: the grant scope must sit inside the
-    // granting organization (section 25.2), and branch scopes must name an
-    // existing branch of that organization. Issuer authority (the widening
-    // rule, section 11.2) is enforced by Phase 6 once actor scope exists.
-    async fn grant_scope(
-        &self,
-        organization_id: OrganizationId,
-        membership_id: MembershipId,
-        grant_id: ScopeGrantId,
-        scope: Scope,
-    ) -> Result<ScopeGrant, TenancyError>;
-    async fn revoke_scope_grant(
-        &self,
-        organization_id: &OrganizationId,
-        grant_id: &ScopeGrantId,
-    ) -> Result<ScopeGrant, TenancyError>;
-    async fn scope_grants_for(
-        &self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Vec<ScopeGrant>;
-
-    // --- invitations (section 9) ---
-    //
-    // Token-bound enrollment: creation mints the `Invited` membership and the
-    // `Issued` invitation atomically; acceptance claims the token and drives
-    // membership activation plus the proposed role/scope grants atomically.
-    // The raw token is a caller-minted high-entropy value that is hashed on
-    // entry and never persisted (section 9.1).
-    async fn create_invitation(
-        &self,
-        input: CreateInvitationInput,
-    ) -> Result<CreatedInvitation, TenancyError>;
-    async fn accept_invitation(
-        &self,
-        token_hash: [u8; 32],
-        assignment_id: RoleAssignmentId,
-        grant_id: Option<ScopeGrantId>,
-        now: SystemTime,
-    ) -> Result<AcceptedInvitation, InvitationError>;
-    async fn revoke_invitation(
-        &self,
-        organization_id: &OrganizationId,
-        invitation_id: &InvitationId,
-    ) -> Result<Invitation, InvitationError>;
-    async fn expire_invitations(&self, now: SystemTime) -> u64;
-}
 
 struct TenancyState {
     organizations: BTreeMap<OrganizationId, Organization>,
@@ -343,7 +94,17 @@ pub struct TenancyDatabase {
     state: Mutex<TenancyState>,
 }
 
+impl std::fmt::Debug for TenancyDatabase {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TenancyDatabase")
+            .finish_non_exhaustive()
+    }
+}
+
 impl TenancyDatabase {
+    /// Creates an empty tenant topology store.
+    #[must_use]
     pub fn new() -> Self {
         TenancyDatabase {
             state: Mutex::new(TenancyState {
@@ -364,7 +125,7 @@ impl TenancyDatabase {
     fn lock(&self) -> std::sync::MutexGuard<'_, TenancyState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -965,18 +726,12 @@ impl TenancyStores for TenancyDatabase {
         let Some((organization_id, membership_id, proposed_role, proposed_scope)) = gate else {
             // Lapsed while issued: expire the invitation and release the
             // linked membership for re-enrollment.
-            {
-                let invitation = state
-                    .invitations
-                    .get_mut(&invitation_id)
-                    .ok_or(InvitationError::Invalid)?;
-                let _ = invitation.accept(now);
-            }
-            state.by_token_hash.remove(&token_hash);
-            if let Some(invitation) = state.invitations.get(&invitation_id).cloned() {
-                expire_linked_membership(&mut state, &invitation);
-            }
-            return Err(InvitationError::Expired);
+            return Err(expire_lapsed_invitation(
+                &mut state,
+                &invitation_id,
+                &token_hash,
+                now,
+            ));
         };
         // The grant id must accompany a proposed scope exactly: role and
         // scope materialize from the record, never from caller input (T4).
@@ -986,45 +741,19 @@ impl TenancyStores for TenancyDatabase {
         // Pre-validate every mutation before applying any: membership must
         // still be Invited, and neither the role grant nor the scope grant
         // may already exist effectively.
-        {
-            let pending = state
-                .memberships
-                .get(&membership_id)
-                .filter(|membership| {
-                    membership.organization_id == organization_id
-                        && membership.state == MembershipState::Invited
-                })
-                .is_some();
-            if !pending {
-                return Err(InvitationError::Invalid);
-            }
-            if state.assignments.contains_key(&assignment_id) {
-                return Err(InvitationError::Invalid);
-            }
-            let role_taken = state
-                .by_membership
-                .get(&membership_id)
-                .into_iter()
-                .flatten()
-                .filter_map(|id| state.assignments.get(id))
-                .any(|assignment| {
-                    assignment.role == proposed_role
-                        && assignment.state == RoleAssignmentState::Effective
-                });
-            if role_taken {
-                return Err(InvitationError::Invalid);
-            }
-            if let Some(grant_id) = &grant_id
-                && state.grants.contains_key(grant_id)
-            {
-                return Err(InvitationError::Invalid);
-            }
-        }
+        validate_invitation_acceptance(
+            &state,
+            &organization_id,
+            &membership_id,
+            &assignment_id,
+            proposed_role,
+            grant_id.as_ref(),
+        )?;
         // All checks passed: drive membership activation, the role grant,
         // the scope grant, and the invitation claim together.
         let membership =
             activate_invited_membership_locked(&mut state, &organization_id, &membership_id)
-                .map_err(|_| InvitationError::Invalid)?;
+                .map_err(|_error| InvitationError::Invalid)?;
         let assignment = assign_role_locked(
             &mut state,
             organization_id.clone(),
@@ -1032,17 +761,11 @@ impl TenancyStores for TenancyDatabase {
             assignment_id,
             proposed_role,
         )
-        .map_err(|_| InvitationError::Invalid)?;
+        .map_err(|_error| InvitationError::Invalid)?;
         let scope_grant = match (proposed_scope, grant_id) {
             (Some(scope), Some(grant_id)) => Some(
-                grant_scope_locked(
-                    &mut state,
-                    organization_id.clone(),
-                    membership_id.clone(),
-                    grant_id,
-                    scope,
-                )
-                .map_err(|_| InvitationError::Invalid)?,
+                grant_scope_locked(&mut state, organization_id, membership_id, grant_id, scope)
+                    .map_err(|_error| InvitationError::Invalid)?,
             ),
             (None, None) => None,
             _ => return Err(InvitationError::Invalid),
@@ -1118,18 +841,86 @@ impl TenancyStores for TenancyDatabase {
                 .get(&id)
                 .and_then(|invitation| invitation.token_hash);
             if let Some(invitation) = state.invitations.get_mut(&id) {
-                let _ = invitation.accept(now);
+                // The lapsed invitation transitions to `Expired`; that error is
+                // the expected outcome of this observation, not a failure.
+                let transition = invitation.accept(now);
+                debug_assert_eq!(transition, Err(InvitationError::Expired));
             }
             if let Some(token_hash) = token_hash {
                 state.by_token_hash.remove(&token_hash);
             }
             if let Some(invitation) = state.invitations.get(&id).cloned() {
                 expire_linked_membership(&mut state, &invitation);
-                expired += 1;
+                expired = expired.saturating_add(1);
             }
         }
         expired
     }
+}
+
+/// Expires an invitation that lapsed while still `Issued`, releases its linked
+/// membership for re-enrollment, and returns the error the caller surfaces.
+fn expire_lapsed_invitation(
+    state: &mut TenancyState,
+    invitation_id: &InvitationId,
+    token_hash: &[u8; 32],
+    now: SystemTime,
+) -> InvitationError {
+    let Some(invitation) = state.invitations.get_mut(invitation_id) else {
+        return InvitationError::Invalid;
+    };
+    // The lapsed invitation transitions to `Expired`; that error is the
+    // expected outcome of this observation, not a failure.
+    let transition = invitation.accept(now);
+    debug_assert_eq!(transition, Err(InvitationError::Expired));
+    state.by_token_hash.remove(token_hash);
+    if let Some(invitation) = state.invitations.get(invitation_id).cloned() {
+        expire_linked_membership(state, &invitation);
+    }
+    InvitationError::Expired
+}
+
+/// Rejects an acceptance whose linked membership or grants are no longer
+/// eligible, before any mutation is applied.
+fn validate_invitation_acceptance(
+    state: &TenancyState,
+    organization_id: &OrganizationId,
+    membership_id: &MembershipId,
+    assignment_id: &RoleAssignmentId,
+    proposed_role: Role,
+    grant_id: Option<&ScopeGrantId>,
+) -> Result<(), InvitationError> {
+    let pending = state
+        .memberships
+        .get(membership_id)
+        .is_some_and(|membership| {
+            membership.organization_id == *organization_id
+                && membership.state == MembershipState::Invited
+        });
+    if !pending {
+        return Err(InvitationError::Invalid);
+    }
+    if state.assignments.contains_key(assignment_id) {
+        return Err(InvitationError::Invalid);
+    }
+    let role_taken = state
+        .by_membership
+        .get(membership_id)
+        .into_iter()
+        .flatten()
+        .filter_map(|id| state.assignments.get(id))
+        .any(|assignment| {
+            assignment.role == proposed_role && assignment.state == RoleAssignmentState::Effective
+        });
+    if role_taken {
+        return Err(InvitationError::Invalid);
+    }
+    if let Some(grant_id) = grant_id
+        && state.grants.contains_key(grant_id)
+    {
+        return Err(InvitationError::Invalid);
+    }
+    Ok(())
 }
 
 /// Scope-enforcing branch access: the binding mismatch behaves as absence.
@@ -1360,7 +1151,10 @@ fn expire_linked_membership(state: &mut TenancyState, invitation: &Invitation) {
     ) && membership.state == MembershipState::Invited
         && membership.mark_pending().is_ok()
     {
-        let _ = membership.expire();
+        // `mark_pending` succeeded above, so expiry is the only legal
+        // transition and cannot fail.
+        let expired = membership.expire();
+        debug_assert!(expired.is_ok());
     }
 }
 
@@ -1369,6 +1163,7 @@ mod tests {
     use super::*;
     use sitolo_authz::ContactKind;
     use sitolo_domain::tenancy::{BranchState, MembershipState, OrganizationState};
+    use std::time::Duration;
 
     #[expect(
         clippy::unwrap_used,
@@ -1393,7 +1188,7 @@ mod tests {
 
     #[test]
     fn database_constructs_default() {
-        let _ = TenancyDatabase::default();
+        drop(TenancyDatabase::default());
     }
 
     #[tokio::test]
@@ -1567,28 +1362,26 @@ mod tests {
         // Already inside the test runtime: seed directly without nesting.
         active_org(&db, "o1").await?;
         let outcomes: Vec<_> = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..8)
-                .map(|i| {
-                    let db = std::sync::Arc::clone(&db);
-                    scope.spawn(move || {
-                        let runtime = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|_| TenancyError::Conflict)?;
-                        runtime.block_on(db.invite_membership(
-                            MembershipId::new(format!("m-race-{i}"))?,
-                            org_id("o1"),
-                            user("u-race"),
-                        ))
-                    })
+            let handles: [_; 8] = std::array::from_fn(|i| {
+                let db = std::sync::Arc::clone(&db);
+                scope.spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_error| TenancyError::Conflict)?;
+                    runtime.block_on(db.invite_membership(
+                        MembershipId::new(format!("m-race-{i}"))?,
+                        org_id("o1"),
+                        user("u-race"),
+                    ))
                 })
-                .collect();
+            });
             handles
                 .into_iter()
                 .map(|handle| {
                     handle
                         .join()
-                        .map_err(|_| std::io::Error::other("invite thread panicked"))
+                        .map_err(|_error| std::io::Error::other("invite thread panicked"))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })?;
@@ -1805,6 +1598,9 @@ mod tests {
     }
 
     fn invite_input(token: &str) -> Result<CreateInvitationInput, Box<dyn std::error::Error>> {
+        let now = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(1_000))
+            .ok_or("invitation timestamp overflow")?;
         Ok(CreateInvitationInput {
             organization_id: org_id("o1"),
             invitation_id: InvitationId::new("inv-1")?,
@@ -1815,7 +1611,7 @@ mod tests {
             contact: mailto("invitee@example.com")?,
             raw_token: token.to_string(),
             ttl: Duration::from_secs(3_600),
-            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+            now,
         })
     }
 
@@ -2018,26 +1814,24 @@ mod tests {
         let hash = Invitation::hash_token(INVITE_TOKEN);
         let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_001);
         let outcomes: Vec<_> = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..8)
-                .map(|i| {
-                    let db = std::sync::Arc::clone(&db);
-                    scope.spawn(move || {
-                        let runtime = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|_| InvitationError::Invalid)?;
-                        let assignment = RoleAssignmentId::new(format!("ra-race-{i}"))
-                            .map_err(|_| InvitationError::Invalid)?;
-                        runtime.block_on(db.accept_invitation(hash, assignment, None, at))
-                    })
+            let handles: [_; 8] = std::array::from_fn(|i| {
+                let db = std::sync::Arc::clone(&db);
+                scope.spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_error| InvitationError::Invalid)?;
+                    let assignment = RoleAssignmentId::new(format!("ra-race-{i}"))
+                        .map_err(|_error| InvitationError::Invalid)?;
+                    runtime.block_on(db.accept_invitation(hash, assignment, None, at))
                 })
-                .collect();
+            });
             handles
                 .into_iter()
                 .map(|handle| {
                     handle
                         .join()
-                        .map_err(|_| std::io::Error::other("accept thread panicked"))
+                        .map_err(|_error| std::io::Error::other("accept thread panicked"))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })?;
@@ -2050,19 +1844,18 @@ mod tests {
         Ok(())
     }
 
-    /// Repository scope predicate enforcement (§27.1, §26.1, §25.2).
-    ///
-    /// Every scoped read or mutation must behave as `WHERE organization_id = $1
-    /// AND id = $2` — a binding mismatch surfaces as absence (NotFound / empty)
-    /// even where RLS would also apply, so that a privileged role or disabled
-    /// RLS never becomes an authorization bypass. Composite FK consistency
-    /// (§25.2) is proven by the scope-grant branch check: a grant whose scope
-    /// branch belongs to another organization cannot be created.
-    #[tokio::test]
-    async fn repository_scope_predicates_enforce_tenant_isolation()
-    -> Result<(), Box<dyn std::error::Error>> {
+    /// Two active tenants with distinct branches and active members, used by
+    /// the repository scope-predicate tests.
+    struct ScopeFixture {
+        db: TenancyDatabase,
+        branch_a: Branch,
+        branch_b: Branch,
+        member_a: Membership,
+        member_b: Membership,
+    }
+
+    async fn scope_fixture() -> Result<ScopeFixture, Box<dyn std::error::Error>> {
         let db = TenancyDatabase::new();
-        // Two tenants with distinct branches and memberships.
         active_org(&db, "o-a").await?;
         active_org(&db, "o-b").await?;
         let branch_a = db
@@ -2075,6 +1868,32 @@ mod tests {
         db.activate_branch(&org_id("o-b"), &branch_b.id).await?;
         let member_a = active_member(&db, "o-a", "m-a", "u-a").await?;
         let member_b = active_member(&db, "o-b", "m-b", "u-b").await?;
+        Ok(ScopeFixture {
+            db,
+            branch_a,
+            branch_b,
+            member_a,
+            member_b,
+        })
+    }
+
+    /// Repository scope predicate enforcement for branches and memberships
+    /// (§27.1, §26.1).
+    ///
+    /// Every scoped read or mutation must behave as `WHERE organization_id = $1
+    /// AND id = $2` — a binding mismatch surfaces as absence (`NotFound` / empty)
+    /// even where RLS would also apply, so that a privileged role or disabled
+    /// RLS never becomes an authorization bypass.
+    #[tokio::test]
+    async fn repository_scope_predicates_enforce_tenant_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ScopeFixture {
+            db,
+            branch_a,
+            branch_b,
+            member_a,
+            ..
+        } = scope_fixture().await?;
 
         // branch_snapshot: cross-tenant behaves as absence (§27.1).
         assert!(
@@ -2112,6 +1931,21 @@ mod tests {
             db.suspend_membership(&org_id("o-b"), &member_a.id).await,
             Err(TenancyError::NotFound)
         );
+        Ok(())
+    }
+
+    /// Role and scope grants enforce the organization binding on reads and
+    /// writes, and composite FK consistency rejects foreign branches (§25.2).
+    #[tokio::test]
+    async fn role_and_scope_grants_enforce_tenant_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ScopeFixture {
+            db,
+            branch_a,
+            branch_b,
+            member_a,
+            member_b,
+        } = scope_fixture().await?;
 
         // role assignments: cross-tenant reads expose nothing, writes denied as absence.
         let _grant = db
@@ -2159,7 +1993,7 @@ mod tests {
                 org_id("o-a"),
                 member_a.id.clone(),
                 ScopeGrantId::new("g-a")?,
-                scope_a.clone(),
+                scope_a,
             )
             .await?;
         assert!(
@@ -2167,7 +2001,7 @@ mod tests {
                 .await
                 .is_empty()
         );
-        // Attempt to narrow with a branch from another tenant → scope org mismatch → InvalidTransition (§25.2).
+        // Attempt to narrow with a branch from another tenant → scope org mismatch → NotFound (§25.2).
         let foreign_branch_scope = Scope::Branch {
             organization_id: org_id("o-a"),
             branch_id: branch_b.id.clone(),
@@ -2182,9 +2016,18 @@ mod tests {
             .await,
             Err(TenancyError::NotFound)
         );
+        Ok(())
+    }
+
+    /// Invitation revocation respects the organization binding, and branch
+    /// creation records the caller's tenant rather than leaking across it.
+    #[tokio::test]
+    async fn invitation_revocation_and_branch_creation_enforce_tenant_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ScopeFixture { db, .. } = scope_fixture().await?;
 
         // invitations: revocation and lookup respect org binding; foreign org cannot revoke.
-        let inv_input = crate::tenancy::CreateInvitationInput {
+        let inv_input = CreateInvitationInput {
             organization_id: org_id("o-a"),
             invitation_id: InvitationId::new("inv-scope")?,
             membership_id: MembershipId::new("m-inv-scope")?,
@@ -2196,7 +2039,7 @@ mod tests {
             ttl: Duration::from_secs(3_600),
             now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
         };
-        let created = db.create_invitation(inv_input.clone()).await?;
+        let created = db.create_invitation(inv_input).await?;
         // Foreign org cannot revoke even with correct invitation id.
         assert_eq!(
             db.revoke_invitation(&org_id("o-b"), &created.invitation.id)
@@ -2215,7 +2058,6 @@ mod tests {
                 .await
                 .is_none()
         );
-        let _ = inv_input;
         Ok(())
     }
 }

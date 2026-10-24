@@ -1,5 +1,6 @@
 //! Production secret retrieval through AWS Secrets Manager.
 
+use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -29,6 +30,15 @@ pub struct AwsSecretsManagerProvider {
     client: Client,
     allowed_reference: SecretRef,
     request_timeout: Duration,
+}
+
+impl fmt::Debug for AwsSecretsManagerProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AwsSecretsManagerProvider")
+            .field("allowed_reference", &self.allowed_reference)
+            .field("request_timeout", &self.request_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AwsSecretsManagerProvider {
@@ -82,7 +92,7 @@ impl SecretProvider for AwsSecretsManagerProvider {
                 .send(),
         )
         .await
-        .map_err(|_| SecretError::Unavailable {
+        .map_err(|_error| SecretError::Unavailable {
             class: reference.class(),
         })?
         .map_err(|error| map_service_error(reference, &error))?;

@@ -329,6 +329,13 @@ mod contract_tests {
                 "SITOLO__EVENTS__RELAY__BACKOFF_MAX_MS".into(),
                 "3600000".into(),
             ),
+            // Validation requires the worker credential and a complete relay
+            // destination to be configured together; this fixture exercises the
+            // valid combination so the relay typing rules are what is under test.
+            (
+                "SITOLO__WORKER__DATABASE__PASSWORD_REF".into(),
+                "development/sitolo/worker".into(),
+            ),
         ])
         .map_err(|error| io::Error::other(error.0))?;
         let config = validate(builder)?;

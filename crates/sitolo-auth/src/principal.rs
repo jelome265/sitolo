@@ -19,29 +19,43 @@ use crate::session::{Session, SessionLifetime, SessionState};
 /// identity-provider facts (§1.2, §69).
 #[derive(Debug, Clone)]
 pub struct AuthenticatedPrincipal {
+    /// The authenticated user.
     pub subject_id: UserId,
+    /// Session the principal was authenticated on.
     pub session_id: SessionId,
+    /// Device bound to the session, if any.
     pub device_id: Option<DeviceId>,
+    /// When the subject authenticated.
     pub authenticated_at: SystemTime,
+    /// Assurance level established at authentication (§16).
     pub assurance: Assurance,
+    /// User security version observed at authentication (§31).
     pub security_version: SecurityVersion,
 }
 
 /// Session security state (§32.1).
 #[derive(Debug, Clone)]
 pub struct SessionSecurityState {
+    /// Session the state describes.
     pub session_id: SessionId,
+    /// Current lifecycle state of the session.
     pub state: SessionState,
+    /// Assurance level the session currently holds.
     pub assurance: Assurance,
+    /// Session security version (§31).
     pub security_version: SecurityVersion,
+    /// Risk class that selected the session lifetime policy (§11.1).
     pub class: crate::id::SessionClass,
 }
 
 /// Device security state (§32.1).
 #[derive(Debug, Clone)]
 pub struct DeviceSecurityState {
+    /// Device the state describes.
     pub device_id: DeviceId,
+    /// Current lifecycle state of the device.
     pub state: DeviceState,
+    /// Device security version (§31).
     pub security_version: SecurityVersion,
 }
 
@@ -50,11 +64,17 @@ pub struct DeviceSecurityState {
 /// the credential extraction boundary.
 #[derive(Debug, Clone)]
 pub struct SecurityContext {
+    /// The authenticated identity fact.
     pub principal: AuthenticatedPrincipal,
+    /// Session state observed while establishing the context.
     pub session: SessionSecurityState,
+    /// Device state observed while establishing the context, if bound.
     pub device: Option<DeviceSecurityState>,
+    /// Effective assurance of the request.
     pub assurance: Assurance,
+    /// Correlation identifier for this request.
     pub request_id: RequestId,
+    /// Incoming trace context, when present.
     pub trace: Option<TraceParent>,
 }
 
@@ -62,6 +82,17 @@ impl SecurityContext {
     /// Establishes a security context from a session and optional device
     /// (§32). Validates security version, device state, and session
     /// expiration; denies if any check fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::SecurityVersionMismatch`] when the session and the
+    /// user disagree on the security version (the session is also moved to
+    /// `SecurityRevoked`), [`AuthError::DeviceRevoked`],
+    /// [`AuthError::DeviceSuspended`], or
+    /// [`AuthError::DeviceVerificationRequired`] when a bound device is not
+    /// active, [`AuthError::SessionRevoked`] when the session is already
+    /// revoked, and [`AuthError::SessionExpired`] when the absolute or idle
+    /// lifetime has elapsed at `now`.
     pub fn establish(
         session: &mut Session,
         device: Option<&Device>,
@@ -112,9 +143,15 @@ mod tests {
 
     use crate::id::{AuthenticationMethod, SessionClass};
 
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
     #[test]
     fn security_context_construction() -> Result<(), AuthError> {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let mut session = Session::create(
             SessionId::new("sess-1")?,
             UserId::new("user-1")?,
@@ -151,7 +188,7 @@ mod tests {
 
     #[test]
     fn security_version_mismatch_denies() -> Result<(), AuthError> {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let mut session = Session::create(
             SessionId::new("sess-1")?,
             UserId::new("user-1")?,

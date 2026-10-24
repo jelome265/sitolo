@@ -1,9 +1,18 @@
 //! Version-controlled metadata for every accepted canonical configuration key.
 
+/// Lifecycle class of a configuration key.
+///
+/// The class decides how a key participates in reload and secret handling; it
+/// is metadata only and never carries a configuration or secret value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigClass {
+    /// Process-lifetime value that only changes through a redeploy.
     Static,
+    /// Reference to a secret in an external secret authority; never the secret
+    /// value itself.
     SecretReference,
+    /// Bounded operational tuning value that validation keeps below a hard
+    /// ceiling.
     Tunable,
 }
 
@@ -11,15 +20,25 @@ pub enum ConfigClass {
 /// never configuration metadata and are never accepted as ordinary config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigField {
+    /// Canonical key name without the `SITOLO__` prefix.
     pub key: &'static str,
+    /// Lifecycle class that governs reload and secret handling.
     pub class: ConfigClass,
+    /// Layer that may supply the value (environment over compiled default).
     pub source: &'static str,
+    /// Documented behaviour when no layer supplies the key.
     pub default_behavior: &'static str,
+    /// Whether startup fails when the key is absent.
     pub required: bool,
+    /// Whether the value may change without restarting the process.
     pub reloadable: bool,
+    /// Domain that owns the value and its semantics.
     pub owner: &'static str,
+    /// Accepted syntax, including bounds where applicable.
     pub syntax: &'static str,
+    /// Contract when the value is missing or invalid at startup.
     pub startup_failure: &'static str,
+    /// Contract for a value that becomes invalid after startup.
     pub runtime_failure: &'static str,
 }
 
@@ -267,6 +286,12 @@ const CATALOGUE: &[ConfigField] = &[
         "positive milliseconds <= 1 hour"
     ),
 ];
+/// Returns the version-controlled catalogue of every accepted configuration
+/// key.
+///
+/// The catalogue is the schema contract: parser acceptance, validation, and
+/// documentation must all agree with it.
+#[must_use]
 pub fn catalogue() -> &'static [ConfigField] {
     CATALOGUE
 }

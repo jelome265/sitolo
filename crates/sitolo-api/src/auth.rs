@@ -56,6 +56,11 @@ pub mod bounds {
 /// Cheap structural rejection runs first; account-enumeration defenses (§22)
 /// are preserved by mapping all credential failures to the same generic
 /// [`AppError::Authentication`].
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the identifier is empty or over
+/// [`bounds::MAX_IDENTIFIER_LEN`], or when the password exceeds
+/// [`bounds::MAX_PASSWORD_LEN`].
 pub fn validate_login_input(identifier: &str, password_len: usize) -> Result<(), AppError> {
     if identifier.is_empty()
         || identifier.len() > bounds::MAX_IDENTIFIER_LEN
@@ -67,6 +72,10 @@ pub fn validate_login_input(identifier: &str, password_len: usize) -> Result<(),
 }
 
 /// Validates a one-time code shape before verification (§47).
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the code is empty or longer than
+/// [`bounds::MAX_OTP_LEN`].
 pub fn validate_otp_input(code: &str) -> Result<(), AppError> {
     if code.is_empty() || code.len() > bounds::MAX_OTP_LEN {
         return Err(AppError::Authentication);
@@ -80,6 +89,11 @@ pub fn validate_otp_input(code: &str) -> Result<(), AppError> {
 /// verifier; `Debug`/`Display` never render the raw value. Missing,
 /// malformed, or overlong headers map to generic authentication failure —
 /// never to a distinct enumerable signal beyond 401.
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the header is absent, is not a
+/// `Bearer` header, is empty, exceeds [`bounds::MAX_CREDENTIAL_LEN`], or
+/// carries a non-opaque character.
 pub fn extract_bearer(authorization: Option<&str>) -> Result<CredentialMaterial, AppError> {
     let header = authorization.ok_or(AppError::Authentication)?;
     if header.len() > bounds::MAX_CREDENTIAL_LEN + 7 {
@@ -152,6 +166,11 @@ pub fn map_auth_error(err: &AuthError) -> AppError {
 /// - a device identifier alone never authenticates (§50 wrong examples).
 ///
 /// Raw credentials must not reach this function (§32.1, §49).
+///
+/// # Errors
+/// Returns the mapped public error when the session is not valid, when a bound
+/// device record is missing or inactive, or when the device fails the
+/// established session's binding checks.
 pub fn establish_context(
     session: &mut Session,
     device: Option<&Device>,
@@ -181,6 +200,12 @@ pub fn establish_context(
 /// that mapped user. The session selector is an index only; it never selects
 /// the principal. Tenant, role, and permission resolution remain a separate
 /// authorization step and must run before protected commands.
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the session selector or bearer
+/// credential is absent or malformed, or the session cannot be established.
+/// Returns [`AppError::DependencyUnavailable`] when the identity provider or
+/// identity authority is unavailable.
 pub async fn authenticate_request(
     authorization: Option<&str>,
     session_selector: Option<&str>,
@@ -271,8 +296,16 @@ mod tests {
         }
     }
 
+    /// A fixed, non-zero timestamp for deterministic session tests.
+    fn test_now() -> Result<SystemTime, Box<dyn Error>> {
+        match SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(1_000)) {
+            Some(now) => Ok(now),
+            None => Err("fixed test timestamp overflowed".into()),
+        }
+    }
+
     fn session() -> Result<Session, Box<dyn Error>> {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = test_now()?;
         Ok(Session::create(
             SessionId::new("sess-1")?,
             UserId::new("user-1")?,
@@ -450,8 +483,8 @@ mod tests {
 
     #[test]
     fn bound_device_requires_device_record() -> Result<(), Box<dyn Error>> {
-        use sitolo_auth::{ClientPlatform, Device, DeviceId};
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        use sitolo_auth::DeviceId;
+        let now = test_now()?;
         let device_id = DeviceId::new("dev-1")?;
         let mut sess = Session::create(
             SessionId::new("sess-2")?,
@@ -495,13 +528,6 @@ mod tests {
             std::io::Error::other(format!("context establishment failed: {error:?}"))
         })?;
         assert_eq!(ctx.assurance, Assurance::A1);
-        let _ = Device::begin_registration(
-            DeviceId::new("dev-x")?,
-            UserId::new("user-1")?,
-            ClientPlatform::Android,
-            SecurityVersion(1),
-            now,
-        );
         Ok(())
     }
 

@@ -39,7 +39,7 @@ fn test_iam_event_is_secret_free() -> Result<(), Box<dyn Error>> {
         "tenancy_service",
     );
 
-    let debug = format!("{:?}", event);
+    let debug = format!("{event:?}");
     assert!(!debug.contains("password"));
     assert!(!debug.contains("Bearer"));
     assert!(!debug.contains("secret"));

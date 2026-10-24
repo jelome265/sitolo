@@ -14,26 +14,45 @@ use crate::id::{DeviceId, SecurityVersion, SessionId};
 /// Offline operation classification (§30).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OfflineOperation {
+    /// Record a sale while disconnected.
     SaleCreate,
+    /// Read the cached catalogue.
     CatalogueRead,
+    /// Read cached inventory levels.
     InventoryRead,
+    /// Read cached prices.
     PriceRead,
 }
 
 /// Bounded offline capability (§30).
 #[derive(Debug, Clone)]
 pub struct OfflineGrant {
+    /// Session the grant was issued for.
     pub session_id: SessionId,
+    /// Device the grant is bound to.
     pub device_id: DeviceId,
+    /// When the grant was issued.
     pub granted_at: SystemTime,
+    /// Hard expiry of the grant; the capability cannot outlive it.
     pub expires_at: SystemTime,
+    /// The operations this grant permits while offline.
     pub allowed_operations: BTreeSet<OfflineOperation>,
+    /// Security version the grant is bound to (§31).
     pub security_version: SecurityVersion,
 }
 
 impl OfflineGrant {
     /// Validates an offline operation (§30). Expired grants, revoked devices,
     /// and disallowed operations are denied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::SessionExpired`] when `now` is at or past
+    /// `expires_at`, [`AuthError::DeviceRevoked`] when the device is not
+    /// [`DeviceState::Active`], [`AuthError::SecurityVersionMismatch`] when
+    /// the caller's security version differs from the grant's, and
+    /// [`AuthError::AuthorizationDenied`] when the operation is not in
+    /// `allowed_operations`.
     pub fn validate(
         &self,
         operation: OfflineOperation,
@@ -72,13 +91,19 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
     fn grant() -> Result<OfflineGrant, AuthError> {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         Ok(OfflineGrant {
             session_id: SessionId::new("sess-1")?,
             device_id: DeviceId::new("dev-1")?,
             granted_at: now,
-            expires_at: now + Duration::from_secs(3_600),
+            expires_at: at(4_600),
             allowed_operations: [
                 OfflineOperation::SaleCreate,
                 OfflineOperation::CatalogueRead,
@@ -92,7 +117,7 @@ mod tests {
     #[test]
     fn valid_offline_operation_accepted() -> Result<(), AuthError> {
         let g = grant()?;
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
+        let now = at(1_100);
         assert!(
             g.validate(
                 OfflineOperation::SaleCreate,
@@ -108,7 +133,7 @@ mod tests {
     #[test]
     fn expired_grant_rejected() -> Result<(), AuthError> {
         let g = grant()?;
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000);
+        let now = at(5_000);
         assert!(
             g.validate(
                 OfflineOperation::SaleCreate,
@@ -124,7 +149,7 @@ mod tests {
     #[test]
     fn revoked_device_rejected() -> Result<(), AuthError> {
         let g = grant()?;
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
+        let now = at(1_100);
         assert!(
             g.validate(
                 OfflineOperation::SaleCreate,
@@ -140,7 +165,7 @@ mod tests {
     #[test]
     fn disallowed_operation_rejected() -> Result<(), AuthError> {
         let g = grant()?;
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
+        let now = at(1_100);
         assert!(
             g.validate(
                 OfflineOperation::InventoryRead,
@@ -156,7 +181,7 @@ mod tests {
     #[test]
     fn security_version_mismatch_rejected() -> Result<(), AuthError> {
         let g = grant()?;
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_100);
+        let now = at(1_100);
         assert!(
             g.validate(
                 OfflineOperation::SaleCreate,

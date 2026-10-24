@@ -14,14 +14,19 @@ use sitolo_security::SecretValue;
 
 use crate::error::AuthError;
 
+/// Failures raised by the password policy and hashing boundary (§9).
 #[derive(Debug, Error)]
 pub enum PasswordError {
+    /// The candidate is shorter than the policy minimum.
     #[error("password too short")]
     TooShort,
+    /// The candidate is longer than the policy maximum.
     #[error("password too long")]
     TooLong,
+    /// The hashing adapter could not produce a verifier record.
     #[error("password hash failed")]
     HashFailed,
+    /// The stored verifier record is not in the adapter's expected format.
     #[error("password verifier malformed")]
     VerifierMalformed,
 }
@@ -29,15 +34,25 @@ pub enum PasswordError {
 /// Policy version plus bounded length constraints (§9.2, §47).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasswordPolicy {
+    /// Version of the policy that produced a verifier (§9.2).
     pub policy_version: u32,
+    /// Minimum accepted candidate length in bytes.
     pub min_length: usize,
+    /// Maximum accepted candidate length in bytes.
     pub max_length: usize,
+    /// Whether a successful verification may trigger a rehash (§9.3).
     pub rehash_enabled: bool,
 }
 
 impl PasswordPolicy {
     /// Validates a candidate against the bounded policy (§47). The check is
     /// cheap and must run before any expensive hashing work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::AuthenticationFailed`] when the candidate's byte
+    /// length is below `min_length` or above `max_length`. The failure is
+    /// deliberately indistinguishable from a wrong password.
     pub fn validate(&self, candidate: &str) -> Result<(), AuthError> {
         if candidate.len() < self.min_length || candidate.len() > self.max_length {
             return Err(AuthError::AuthenticationFailed);
@@ -48,11 +63,21 @@ impl PasswordPolicy {
 
 /// The opaque verifier record stored alongside a user (§9.1). The hash
 /// string is opaque to the domain; only the hasher adapter knows its format.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PasswordVerifierRecord {
     /// Opaque verifier string. Not `Debug`-printed in its raw form.
     pub verifier: String,
+    /// Policy version that produced `verifier` (§9.2).
     pub policy_version: u32,
+}
+
+impl std::fmt::Debug for PasswordVerifierRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordVerifierRecord")
+            .field("verifier", &"[redacted]")
+            .field("policy_version", &self.policy_version)
+            .finish()
+    }
 }
 
 /// The password hashing boundary (§9.1, §6.1).
@@ -63,13 +88,27 @@ pub struct PasswordVerifierRecord {
 #[async_trait]
 pub trait PasswordHasher: Send + Sync {
     /// Hashes a password into a verifier record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configured key-derivation function cannot run
+    /// or fails; implementations must never fall back to storing the password
+    /// unhashed.
     async fn hash(&self, password: SecretValue) -> Result<PasswordVerifierRecord, AuthError>;
+
     /// Verifies a password against a verifier record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::ConfigurationInvalid`] when the stored verifier is
+    /// not in the adapter's format, and an adapter-defined error when the
+    /// verification operation itself cannot be performed.
     async fn verify(
         &self,
         password: SecretValue,
         record: &PasswordVerifierRecord,
     ) -> Result<bool, AuthError>;
+
     /// The policy version this adapter currently produces.
     fn current_policy_version(&self) -> u32;
 }
@@ -89,11 +128,14 @@ pub fn needs_rehash(record: &PasswordVerifierRecord, policy: &PasswordPolicy) ->
 /// Argon2id and must never be selected in production; it exists so the
 /// lifecycle and rehash policy can be tested without a real KDF dependency.
 /// The verifier format is `testv{version}${hex}`.
+#[derive(Debug)]
 pub struct TestPasswordHasher {
     policy_version: u32,
 }
 
 impl TestPasswordHasher {
+    /// Creates a deterministic test hasher that emits `policy_version`.
+    #[must_use]
     pub fn new(policy_version: u32) -> Self {
         TestPasswordHasher { policy_version }
     }

@@ -1,7 +1,8 @@
 //! Stable, secret-free configuration drift representation.
 
-use crate::AppConfig;
 use sha2::{Digest, Sha256};
+
+use crate::AppConfig;
 
 /// Changes only through an explicit fingerprint compatibility decision.
 pub const FINGERPRINT_FORMAT_VERSION: u8 = 1;
@@ -9,146 +10,173 @@ pub const FINGERPRINT_FORMAT_VERSION: u8 = 1;
 /// Canonical, length-prefixed, non-secret effective configuration.
 ///
 /// Length prefixes make Unicode, delimiters, and newline characters
-/// unambiguous without relying on debug formatting or source ordering.
+/// unambiguous without relying on debug formatting or source ordering. Secret
+/// *values* never enter this representation; secret *references* do, so
+/// rotating a reference is a visible configuration change while rotating the
+/// value behind it is not.
+#[must_use]
 pub fn canonical_non_secret_config(config: &AppConfig) -> String {
     let mut output = String::with_capacity(1024);
+    write_runtime_and_http(&mut output, config);
+    write_database_identity(&mut output, config);
+    write_identity(&mut output, config);
+    write_secrets_and_pool(&mut output, config);
+    write_telemetry(&mut output, config);
+    write_relay(&mut output, config);
+    output
+}
+
+/// Fingerprint format, schema, environment, service identity, and HTTP limits.
+fn write_runtime_and_http(output: &mut String, config: &AppConfig) {
     line(
-        &mut output,
+        output,
         "fingerprint_format",
         &FINGERPRINT_FORMAT_VERSION.to_string(),
     );
     line(
-        &mut output,
+        output,
         "config_schema_version",
         &config.config_schema_version.to_string(),
     );
-    line(&mut output, "environment", config.environment.as_str());
-    line(&mut output, "service_name", &config.service_name);
-    line(&mut output, "service_version", &config.service_version);
+    line(output, "environment", config.environment.as_str());
+    line(output, "service_name", &config.service_name);
+    line(output, "service_version", &config.service_version);
+    line(output, "bind_address", &config.bind_address.to_string());
     line(
-        &mut output,
-        "bind_address",
-        &config.bind_address.to_string(),
-    );
-    line(
-        &mut output,
+        output,
         "max_request_body_bytes",
         &config.max_request_body_bytes.to_string(),
     );
     line(
-        &mut output,
+        output,
         "request_header_timeout_ms",
         &config.request_header_timeout_ms.to_string(),
     );
     line(
-        &mut output,
+        output,
         "keepalive_timeout_ms",
         &config.keepalive_timeout_ms.to_string(),
     );
-    line(&mut output, "db_host", &config.db_host);
-    line(&mut output, "db_port", &config.db_port.to_string());
-    line(&mut output, "db_name", &config.db_name);
-    line(&mut output, "db_schema", &config.db_schema);
-    line(&mut output, "db_user", &config.db_user);
+}
+
+/// Database host, port, catalogue, schema, and role.
+fn write_database_identity(output: &mut String, config: &AppConfig) {
+    line(output, "db_host", &config.db_host);
+    line(output, "db_port", &config.db_port.to_string());
+    line(output, "db_name", &config.db_name);
+    line(output, "db_schema", &config.db_schema);
+    line(output, "db_user", &config.db_user);
+}
+
+/// OIDC identity settings.
+fn write_identity(output: &mut String, config: &AppConfig) {
     line(
-        &mut output,
+        output,
         "oidc_issuer",
         config.oidc_issuer.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "oidc_client_id",
         config.oidc_client_id.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "oidc_token_endpoint",
         config.oidc_token_endpoint.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "oidc_redirect_uri",
         config.oidc_redirect_uri.as_deref().unwrap_or("<none>"),
     );
+}
+
+/// Secret references (never values) and database pool bounds.
+fn write_secrets_and_pool(output: &mut String, config: &AppConfig) {
     line(
-        &mut output,
+        output,
         "db_password_ref",
         &config.db_password_ref.to_string(),
     );
     line(
-        &mut output,
+        output,
         "worker_db_password_ref",
         &config
             .worker_db_password_ref
             .as_ref()
             .map_or("<none>".to_string(), ToString::to_string),
     );
-    line(&mut output, "db_pool_min", &config.db_pool_min.to_string());
-    line(&mut output, "db_pool_max", &config.db_pool_max.to_string());
+    line(output, "db_pool_min", &config.db_pool_min.to_string());
+    line(output, "db_pool_max", &config.db_pool_max.to_string());
     line(
-        &mut output,
+        output,
         "db_acquire_timeout_ms",
         &config.db_acquire_timeout_ms.to_string(),
     );
+}
+
+/// Telemetry endpoint, limits, sampling, and logging posture.
+fn write_telemetry(output: &mut String, config: &AppConfig) {
     line(
-        &mut output,
+        output,
         "otel_endpoint",
         config.otel_endpoint.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "otel_export_timeout_ms",
         &config.otel_export_timeout_ms.to_string(),
     );
+    line(output, "otel_max_queue", &config.otel_max_queue.to_string());
     line(
-        &mut output,
-        "otel_max_queue",
-        &config.otel_max_queue.to_string(),
-    );
-    line(
-        &mut output,
+        output,
         "trace_sample_ratio",
         &config.trace_sample_ratio.to_string(),
     );
-    line(&mut output, "log_level", config.log_level.as_str());
+    line(output, "log_level", config.log_level.as_str());
     line(
-        &mut output,
+        output,
         "allow_local_secret_provider",
         &config.allow_local_secret_provider.to_string(),
     );
+}
+
+/// Event relay destination and the managed-secret provider region.
+fn write_relay(output: &mut String, config: &AppConfig) {
     line(
-        &mut output,
+        output,
         "relay_aws_region",
         config.relay_aws_region.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "relay_sns_topic_arn",
         config.relay_sns_topic_arn.as_deref().unwrap_or("<none>"),
     );
     line(
-        &mut output,
+        output,
         "relay_batch_size",
         &config.relay_batch_size.to_string(),
     );
     line(
-        &mut output,
+        output,
         "relay_max_attempts",
         &config.relay_max_attempts.to_string(),
     );
     line(
-        &mut output,
+        output,
         "relay_backoff_max_ms",
         &config.relay_backoff_max_ms.to_string(),
     );
     line(
-        &mut output,
+        output,
         "secrets_aws_region",
         config.secrets_aws_region.as_deref().unwrap_or("<none>"),
     );
-    output
 }
 
+/// Appends one length-prefixed `key=len:value` line.
 fn line(output: &mut String, key: &str, value: &str) {
     output.push_str(key);
     output.push('=');
@@ -158,17 +186,22 @@ fn line(output: &mut String, key: &str, value: &str) {
     output.push('\n');
 }
 
+/// Lowercase hexadecimal encoding of `bytes`.
 fn lower_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
+    let mut output = String::with_capacity(bytes.len().saturating_mul(2));
     for &byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
+        for nibble in [byte >> 4, byte & 0x0f] {
+            if let Some(&digit) = HEX.get(usize::from(nibble)) {
+                output.push(char::from(digit));
+            }
+        }
     }
     output
 }
 
 /// SHA-256 over [`canonical_non_secret_config`].
+#[must_use]
 pub fn config_fingerprint(config: &AppConfig) -> String {
     let digest = Sha256::digest(canonical_non_secret_config(config).as_bytes());
     format!("sha256:{}", lower_hex(digest.as_ref()))
@@ -180,15 +213,16 @@ mod tests {
     use crate::{LogLevel, SecretClass, SecretRef, defaults, validate};
     use std::error::Error;
 
-    fn base() -> Result<crate::AppConfig, Box<dyn Error>> {
+    fn base() -> Result<AppConfig, Box<dyn Error>> {
         Ok(validate(defaults::Builder::development())?)
     }
 
     #[test]
     fn digest_is_lowercase_sha256() -> Result<(), Box<dyn Error>> {
         let fingerprint = config_fingerprint(&base()?);
-        assert!(fingerprint.starts_with("sha256:"));
-        let digest = &fingerprint[7..];
+        let digest = fingerprint
+            .strip_prefix("sha256:")
+            .ok_or_else(|| std::io::Error::other("fingerprint must use the sha256 prefix"))?;
         assert_eq!(digest.len(), 64);
         assert!(
             digest

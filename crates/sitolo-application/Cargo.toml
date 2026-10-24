@@ -19,16 +19,16 @@ sitolo-authz = { path = "../sitolo-authz" }
 sitolo-domain = { path = "../sitolo-domain" }
 sitolo-events.workspace = true
 sitolo-observability.workspace = true
-sitolo-persistence.workspace = true
 sitolo-security.workspace = true
 sitolo-tenancy = { path = "../sitolo-tenancy" }
-sqlx-core.workspace = true
-sqlx-postgres.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+sitolo-persistence = { path = "../sitolo-persistence" }
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 tokio.workspace = true
 
 [lints]

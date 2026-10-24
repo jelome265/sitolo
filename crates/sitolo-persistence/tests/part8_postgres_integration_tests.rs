@@ -56,9 +56,15 @@ struct FunctionSecurityRow {
     prosecdef: bool,
     proconfig: Option<Vec<String>>,
     acl_is_explicit: bool,
-    worker_can_execute: bool,
-    runtime_can_execute: bool,
-    public_can_execute: bool,
+    execution: FunctionExecution,
+}
+
+/// EXECUTE privileges reported for one function.
+#[derive(Debug)]
+struct FunctionExecution {
+    worker: bool,
+    runtime: bool,
+    public: bool,
 }
 
 impl<'r> FromRow<'r, PgRow> for FunctionSecurityRow {
@@ -69,9 +75,11 @@ impl<'r> FromRow<'r, PgRow> for FunctionSecurityRow {
             prosecdef: row.try_get("prosecdef")?,
             proconfig: row.try_get("proconfig")?,
             acl_is_explicit: row.try_get("acl_is_explicit")?,
-            worker_can_execute: row.try_get("worker_can_execute")?,
-            runtime_can_execute: row.try_get("runtime_can_execute")?,
-            public_can_execute: row.try_get("public_can_execute")?,
+            execution: FunctionExecution {
+                worker: row.try_get("worker_can_execute")?,
+                runtime: row.try_get("runtime_can_execute")?,
+                public: row.try_get("public_can_execute")?,
+            },
         })
     }
 }
@@ -107,7 +115,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     let worker_url = env::var("WORKER_DATABASE_URL")?;
 
     let schema_id = Uuid::new_v4().simple().to_string();
-    let schema_name = format!("test_part8_{}", schema_id);
+    let schema_name = format!("test_part8_{schema_id}");
 
     // The schema must exist before a pool can set it as its search_path.
     let bootstrap = PgPoolOptions::new()
@@ -115,8 +123,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .connect(&admin_url)
         .await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "CREATE SCHEMA IF NOT EXISTS \"{}\"",
-        schema_name
+        "CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""
     )))
     .execute(&bootstrap)
     .await?;
@@ -132,7 +139,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     // Apply the complete Part 8 schema. The fixture creates the roles before
     // the runtime and worker pools authenticate as them.
     let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
-        .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
+        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
         .execute(&admin_pool)
         .await?;
@@ -140,7 +147,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .execute(&admin_pool)
         .await?;
     let identity_sql = include_str!("../schema/phase3_identity_authority.sql")
-        .replace("__SCHEMA__", &format!("\"{}\"", schema_name));
+        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
         .execute(&admin_pool)
         .await?;
@@ -314,7 +321,7 @@ async fn enqueue_pending_event(
         1,
         organization_id.clone(),
         None,
-        r#"{}"#.to_owned(),
+        r"{}".to_owned(),
     )?;
     let writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
     let mut tx = ctx.admin_pool.begin().await?;
@@ -391,7 +398,7 @@ async fn test_enqueue_rejects_mutated_lifecycle_payload_before_database_writes()
 
 /// Tears down test schema.
 async fn teardown_test_context(ctx: &TestContext) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE",
         ctx.schema_name
     )))
@@ -851,7 +858,7 @@ async fn test_concurrent_worker_claim() -> Result<(), Box<dyn std::error::Error>
             1,
             org_id,
             None,
-            r#"{}"#.into(),
+            r"{}".into(),
         )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -874,7 +881,7 @@ async fn test_concurrent_worker_claim() -> Result<(), Box<dyn std::error::Error>
         let claimed2 = result2?;
 
         // Exactly one worker should claim the event
-        let total_claims = claimed1.len() + claimed2.len();
+        let total_claims = claimed1.len().saturating_add(claimed2.len());
         assert_eq!(total_claims, 1, "Exactly one worker must claim the event");
 
         // Verify event is now CLAIMED
@@ -914,7 +921,7 @@ async fn test_lease_recovery() -> Result<(), Box<dyn std::error::Error>> {
             1,
             org_id,
             None,
-            r#"{}"#.into(),
+            r"{}".into(),
         )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -992,7 +999,7 @@ async fn test_worker_cannot_rewrite_immutable_fields() -> Result<(), Box<dyn std
             1,
             org_id.clone(),
             None,
-            r#"{}"#.into(),
+            r"{}".into(),
         )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -1057,7 +1064,7 @@ async fn test_published_event_is_not_reclaimable() -> Result<(), Box<dyn std::er
             1,
             org_id,
             None,
-            r#"{}"#.into(),
+            r"{}".into(),
         )?;
 
         let outbox_writer = PostgresOutboxRepository::new(ctx.admin_pool.clone());
@@ -1139,7 +1146,7 @@ async fn test_concurrent_aggregate_sequence_assignment() -> Result<(), Box<dyn s
                     1,
                     org_id,
                     None,
-                    r#"{}"#.to_owned(),
+                    r"{}".to_owned(),
                 )?;
                 let organization_id = event.organization_id.to_string();
                 let writer = PostgresOutboxRepository::new(pool.clone());
@@ -1207,13 +1214,16 @@ async fn test_same_aggregate_claims_follow_sequence() -> Result<(), Box<dyn std:
             1,
             "only the aggregate head may be claimed"
         );
-        assert_eq!(first_claim[0].event_id, first_id);
+        let first = first_claim
+            .first()
+            .ok_or_else(|| std::io::Error::other("only the aggregate head may be claimed"))?;
+        assert_eq!(first.event_id, first_id);
         assert_eq!(
-            first_claim[0].aggregate_sequence,
+            first.aggregate_sequence,
             Some(1),
             "the first event carries aggregate sequence one"
         );
-        let first_token = first_claim[0]
+        let first_token = first
             .claim_token
             .as_ref()
             .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?
@@ -1226,9 +1236,12 @@ async fn test_same_aggregate_claims_follow_sequence() -> Result<(), Box<dyn std:
             1,
             "the successor becomes claimable after publication"
         );
-        assert_eq!(second_claim[0].event_id, second_id);
+        let second = second_claim.first().ok_or_else(|| {
+            std::io::Error::other("the successor becomes claimable after publication")
+        })?;
+        assert_eq!(second.event_id, second_id);
         assert_eq!(
-            second_claim[0].aggregate_sequence,
+            second.aggregate_sequence,
             Some(2),
             "the successor carries aggregate sequence two"
         );
@@ -1313,7 +1326,7 @@ async fn test_release_for_retry_reschedules_and_fences() -> Result<(), Box<dyn s
             matches!(
                 zero_backoff,
                 Err(OutboxPersistenceError::InvalidRequest(
-                    sitolo_events::OutboxError::InvalidBackoff
+                    OutboxError::InvalidBackoff
                 ))
             ),
             "zero backoff must be rejected before reaching PostgreSQL"
@@ -1459,9 +1472,85 @@ async fn test_attempt_budget_exhaustion_quarantines() -> Result<(), Box<dyn std:
 fn sqlstate(error: &Error) -> Result<String, std::io::Error> {
     error
         .as_database_error()
-        .and_then(|error| error.code())
+        .and_then(sqlx_core::error::DatabaseError::code)
         .map(std::borrow::Cow::into_owned)
         .ok_or_else(|| std::io::Error::other("expected PostgreSQL error with a SQLSTATE"))
+}
+
+/// Asserts every worker-owned SECURITY DEFINER function is hardened: owned by
+/// the dedicated non-login owner, explicit ACL, executable only by
+/// `app_worker`, and pinned to `pg_catalog` plus the test schema.
+fn assert_worker_functions_hardened(
+    rows: &[FunctionSecurityRow],
+    schema_name: &str,
+) -> Result<(), std::io::Error> {
+    assert_eq!(
+        rows.len(),
+        5,
+        "all five worker functions must be catalogued"
+    );
+    for row in rows {
+        assert_eq!(
+            row.owner, "app_outbox_owner",
+            "{} must be owned by the dedicated non-login owner",
+            row.proname
+        );
+        assert!(row.prosecdef, "{} must be SECURITY DEFINER", row.proname);
+        assert!(
+            row.acl_is_explicit,
+            "{} must have an explicit ACL (PUBLIC revoke materialised)",
+            row.proname
+        );
+        assert!(
+            row.execution.worker,
+            "{} must be executable by app_worker",
+            row.proname
+        );
+        assert!(
+            !row.execution.runtime,
+            "{} must not be executable by app_runtime",
+            row.proname
+        );
+        assert!(
+            !row.execution.public,
+            "{} must not be executable by PUBLIC",
+            row.proname
+        );
+
+        let config = row.proconfig.as_ref().ok_or_else(|| {
+            std::io::Error::other(format!("{} must pin search_path", row.proname))
+        })?;
+        assert!(
+            config.iter().any(|entry| {
+                entry.starts_with("search_path=")
+                    && entry.contains("pg_catalog")
+                    && entry.contains(schema_name)
+                    && !entry.contains("public")
+                    && !entry.contains("pg_temp")
+            }),
+            "{} must pin search_path to pg_catalog plus the schema, got {config:?}",
+            row.proname
+        );
+    }
+    Ok(())
+}
+
+/// Asserts every identity function is owned by the identity owner, carries an
+/// explicit ACL, is executable only by `app_runtime`, and pins `pg_catalog`.
+fn assert_identity_functions_hardened(rows: &[FunctionSecurityRow]) {
+    assert_eq!(rows.len(), 3);
+    for row in rows {
+        assert_eq!(row.owner, "app_identity_owner");
+        assert!(row.prosecdef);
+        assert!(row.acl_is_explicit);
+        assert!(!row.execution.worker);
+        assert!(row.execution.runtime);
+        assert!(!row.execution.public);
+        assert_eq!(
+            row.proconfig.as_deref(),
+            Some(&["search_path=pg_catalog".to_owned()][..])
+        );
+    }
 }
 
 /// Test: every SECURITY DEFINER function is owned by the non-login owner,
@@ -1501,54 +1590,7 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
         .fetch_all(&ctx.admin_pool)
         .await?;
 
-        assert_eq!(
-            rows.len(),
-            5,
-            "all five worker functions must be catalogued"
-        );
-        for row in &rows {
-            assert_eq!(
-                row.owner, "app_outbox_owner",
-                "{} must be owned by the dedicated non-login owner",
-                row.proname
-            );
-            assert!(row.prosecdef, "{} must be SECURITY DEFINER", row.proname);
-            assert!(
-                row.acl_is_explicit,
-                "{} must have an explicit ACL (PUBLIC revoke materialised)",
-                row.proname
-            );
-            assert!(
-                row.worker_can_execute,
-                "{} must be executable by app_worker",
-                row.proname
-            );
-            assert!(
-                !row.runtime_can_execute,
-                "{} must not be executable by app_runtime",
-                row.proname
-            );
-            assert!(
-                !row.public_can_execute,
-                "{} must not be executable by PUBLIC",
-                row.proname
-            );
-
-            let config = row.proconfig.as_ref().ok_or_else(|| {
-                std::io::Error::other(format!("{} must pin search_path", row.proname))
-            })?;
-            assert!(
-                config.iter().any(|entry| {
-                    entry.starts_with("search_path=")
-                        && entry.contains("pg_catalog")
-                        && entry.contains(&ctx.schema_name)
-                        && !entry.contains("public")
-                        && !entry.contains("pg_temp")
-                }),
-                "{} must pin search_path to pg_catalog plus the schema, got {config:?}",
-                row.proname
-            );
-        }
+        assert_worker_functions_hardened(&rows, &ctx.schema_name)?;
 
         let identity_rows: Vec<FunctionSecurityRow> = query_as(
             "SELECT
@@ -1575,19 +1617,7 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
         .bind(&ctx.schema_name)
         .fetch_all(&ctx.admin_pool)
         .await?;
-        assert_eq!(identity_rows.len(), 3);
-        for row in &identity_rows {
-            assert_eq!(row.owner, "app_identity_owner");
-            assert!(row.prosecdef);
-            assert!(row.acl_is_explicit);
-            assert!(!row.worker_can_execute);
-            assert!(row.runtime_can_execute);
-            assert!(!row.public_can_execute);
-            assert_eq!(
-                row.proconfig.as_deref(),
-                Some(&["search_path=pg_catalog".to_owned()][..])
-            );
-        }
+        assert_identity_functions_hardened(&identity_rows);
 
         let roles: Vec<(String, bool, bool, bool, bool, bool)> = query_as(
             "SELECT rolname, rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolreplication
@@ -1634,6 +1664,45 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
     teardown_test_context(&ctx).await?;
     result?;
     Ok(())
+}
+
+/// Asserts the Part 8 policy set targets exactly the runtime and outbox-owner
+/// roles, and never the worker role.
+fn assert_part8_policies(policies: &[(String, String, String, String)]) {
+    assert_eq!(policies.len(), 3, "exactly three Part 8 policies expected");
+    assert!(
+        policies.iter().any(|(table, policy, roles, command)| {
+            table == "audit_events"
+                && policy == "audit_events_insert_policy"
+                && roles == "app_runtime"
+                && command == "INSERT"
+        }),
+        "audit insert policy must target app_runtime only: {policies:?}"
+    );
+    assert!(
+        policies.iter().any(|(table, policy, roles, command)| {
+            table == "outbox_events"
+                && policy == "outbox_events_insert_policy"
+                && roles == "app_runtime"
+                && command == "INSERT"
+        }),
+        "outbox insert policy must target app_runtime only: {policies:?}"
+    );
+    assert!(
+        policies.iter().any(|(table, policy, roles, command)| {
+            table == "outbox_events"
+                && policy == "outbox_events_owner_policy"
+                && roles == "app_outbox_owner"
+                && command == "ALL"
+        }),
+        "outbox owner policy must target app_outbox_owner only: {policies:?}"
+    );
+    assert!(
+        !policies
+            .iter()
+            .any(|(_, _, roles, _)| roles.contains("app_worker")),
+        "no table policy may target the worker role: {policies:?}"
+    );
 }
 
 /// Test: Part 8 relations are owned by the dedicated non-login owner, the
@@ -1696,40 +1765,7 @@ async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn 
         .bind(&ctx.schema_name)
         .fetch_all(&ctx.admin_pool)
         .await?;
-        assert_eq!(policies.len(), 3, "exactly three Part 8 policies expected");
-        assert!(
-            policies.iter().any(|(table, policy, roles, command)| {
-                table == "audit_events"
-                    && policy == "audit_events_insert_policy"
-                    && roles == "app_runtime"
-                    && command == "INSERT"
-            }),
-            "audit insert policy must target app_runtime only: {policies:?}"
-        );
-        assert!(
-            policies.iter().any(|(table, policy, roles, command)| {
-                table == "outbox_events"
-                    && policy == "outbox_events_insert_policy"
-                    && roles == "app_runtime"
-                    && command == "INSERT"
-            }),
-            "outbox insert policy must target app_runtime only: {policies:?}"
-        );
-        assert!(
-            policies.iter().any(|(table, policy, roles, command)| {
-                table == "outbox_events"
-                    && policy == "outbox_events_owner_policy"
-                    && roles == "app_outbox_owner"
-                    && command == "ALL"
-            }),
-            "outbox owner policy must target app_outbox_owner only: {policies:?}"
-        );
-        assert!(
-            !policies
-                .iter()
-                .any(|(_, _, roles, _)| roles.contains("app_worker")),
-            "no table policy may target the worker role: {policies:?}"
-        );
+        assert_part8_policies(&policies);
 
         let memberships: Vec<(String, String)> = query_as(
             "SELECT member.rolname, granted.rolname

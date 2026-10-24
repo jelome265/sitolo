@@ -31,68 +31,10 @@ use sitolo_auth::{
 };
 use sitolo_security::SealedRef;
 
-use crate::ports::IdentityStores;
-
-/// Session snapshot returned by the auth-layer authority port.
-pub use sitolo_auth::SessionSnapshot;
-
-/// User snapshot returned to the application layer.
-#[derive(Debug, Clone)]
-pub struct UserSnapshot {
-    pub id: UserId,
-    pub security_version: SecurityVersion,
-    pub suspended: bool,
-    pub has_password: bool,
-    pub mfa_active: bool,
-    pub password_verifier: Option<String>,
-    pub password_policy_version: u32,
-}
-
-/// The outcome of establishing a session (§52.1).
-#[derive(Debug, Clone)]
-pub struct EstablishedSession {
-    pub session: Session,
-    pub refresh_token: String,
-    pub family_id: RefreshFamilyId,
-}
-
-/// The outcome of a successful refresh rotation (§12.1).
-#[derive(Debug, Clone)]
-pub struct RefreshRotation {
-    pub family_id: RefreshFamilyId,
-    pub user_id: UserId,
-    pub session_id: SessionId,
-    pub successor_token: String,
-}
-
-/// The outcome of MFA enrollment completion (§18.1).
-#[derive(Debug, Clone)]
-pub struct MfaEnrollmentResult {
-    pub authenticator_id: MfaAuthenticatorId,
-    pub challenge_id: ChallengeId,
-}
-
-/// The outcome of a password reset request (§21).
-#[derive(Debug, Clone)]
-pub struct PasswordResetResult {
-    pub user_id: Option<UserId>,
-}
-
-/// The outcome of device revocation (§27, §52.3).
-#[derive(Debug, Clone)]
-pub struct DeviceRevocationEffect {
-    pub device: Device,
-    pub revoked_sessions: Vec<SessionId>,
-}
-
-/// Input for device registration (§25).
-#[derive(Debug, Clone)]
-pub struct DeviceRegistrationInput {
-    pub user_id: UserId,
-    pub platform: ClientPlatform,
-    pub security_version: SecurityVersion,
-    pub now: SystemTime,
-}
+use sitolo_application::{
+    DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityStores,
+    MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
+};
 
 /// In-memory identity database.
 pub struct IdentityDatabase {
@@ -100,6 +42,15 @@ pub struct IdentityDatabase {
     session_policy: SessionPolicySet,
     refresh_ttl: Duration,
     audit: InMemoryAuditSink,
+}
+
+impl std::fmt::Debug for IdentityDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityDatabase")
+            .field("session_policy", &self.session_policy)
+            .field("refresh_ttl", &self.refresh_ttl)
+            .finish_non_exhaustive()
+    }
 }
 
 struct IdentityState {
@@ -123,6 +74,8 @@ struct UserRecord {
 }
 
 impl IdentityDatabase {
+    /// Builds an empty in-memory identity store for tests and local composition.
+    #[must_use]
     pub fn new(session_policy: SessionPolicySet, refresh_ttl: Duration) -> Self {
         IdentityDatabase {
             state: Mutex::new(IdentityState {
@@ -152,7 +105,7 @@ impl IdentityDatabase {
         let mut out = vec![0u8; len];
         for (index, byte) in out.iter_mut().enumerate() {
             *byte = sequence
-                .get(index % sequence.len())
+                .get(index.checked_rem(sequence.len()).unwrap_or_default())
                 .copied()
                 .unwrap_or_default();
         }
@@ -166,7 +119,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state
             .external_identities
             .get(&(issuer.to_owned(), subject.to_owned()))
@@ -191,7 +144,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !state.users.contains_key(user_id) {
             return Err(sitolo_auth::AuthError::AuthenticationFailed);
         }
@@ -217,7 +170,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = UserRecord {
             id: id.clone(),
             security_version: SecurityVersion(1),
@@ -241,7 +194,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = state.users.get(id)?;
         let mfa_active = state.mfa.active_authenticator(id).is_some();
         Some(UserSnapshot {
@@ -264,7 +217,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = state
             .users
             .get_mut(id)
@@ -281,7 +234,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = state
             .users
             .get_mut(id)
@@ -294,7 +247,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = state
             .users
             .get_mut(id)
@@ -317,7 +270,7 @@ impl IdentityStores for IdentityDatabase {
             let mut state = self
                 .state
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let user = state
                 .users
                 .get(&user_id)
@@ -356,13 +309,15 @@ impl IdentityStores for IdentityDatabase {
                 session_id: session_id.clone(),
                 token_hash: sitolo_auth::hash_raw(&refresh_token),
                 issued_at: now,
-                expires_at: now + self.refresh_ttl,
+                expires_at: now
+                    .checked_add(self.refresh_ttl)
+                    .ok_or(sitolo_auth::AuthError::ConfigurationInvalid)?,
                 state: RefreshState::Active,
                 replaced_by: None,
                 security_version,
             });
             state.sessions.insert(session_id.clone(), session.clone());
-            state.event_counter += 1;
+            state.event_counter = state.event_counter.saturating_add(1);
             let event = AuthenticationEvent {
                 event_id: AuditEventId::new(format!("evt-{:08}", state.event_counter))?,
                 event_name: AuthEventName::SessionCreated,
@@ -381,7 +336,8 @@ impl IdentityStores for IdentityDatabase {
             };
             (session, refresh_token, family_id, event)
         };
-        let _ = self.audit.record(event, AuditRequirement::Mandatory).await;
+        let _record_result: Result<(), AuditError> =
+            self.audit.record(event, AuditRequirement::Mandatory).await;
         Ok(EstablishedSession {
             session,
             refresh_token,
@@ -393,7 +349,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = state.sessions.get(id)?;
         let user = state.users.get(&session.user_id)?;
         Some(SessionSnapshot {
@@ -410,7 +366,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let user = state
             .users
             .get(
@@ -444,7 +400,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let session_user_id = state
             .sessions
             .get(id)
@@ -488,7 +444,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = state
             .sessions
             .get_mut(id)
@@ -507,7 +463,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut count = 0u32;
         let sessions: Vec<SessionId> = state.sessions.keys().cloned().collect();
         for sid in sessions {
@@ -527,7 +483,7 @@ impl IdentityStores for IdentityDatabase {
             };
             if matches {
                 session.revoke(trigger);
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
         Ok(count)
@@ -541,7 +497,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = state
             .sessions
             .get_mut(id)
@@ -558,7 +514,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = sitolo_auth::hash_raw(raw);
         let existing = state
             .refresh
@@ -568,13 +524,15 @@ impl IdentityStores for IdentityDatabase {
         let successor_token = Self::random_hex(32);
         let successor_id = RefreshCredentialId::new(format!("cred-{}", Self::random_hex(8)))?;
         let successor = RefreshCredential {
-            id: successor_id.clone(),
+            id: successor_id,
             family_id: existing.family_id.clone(),
             user_id: existing.user_id.clone(),
             session_id: existing.session_id.clone(),
             token_hash: sitolo_auth::hash_raw(&successor_token),
             issued_at: now,
-            expires_at: now + self.refresh_ttl,
+            expires_at: now
+                .checked_add(self.refresh_ttl)
+                .ok_or(sitolo_auth::AuthError::ConfigurationInvalid)?,
             state: RefreshState::Active,
             replaced_by: None,
             security_version: existing.security_version,
@@ -595,7 +553,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let device_id = DeviceId::new(format!("dev-{}", Self::random_hex(8)))?;
         let device = Device::begin_registration(
             device_id,
@@ -616,7 +574,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let device = state
             .devices
             .get_mut(device_id)
@@ -631,7 +589,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.devices.get(id).cloned()
     }
 
@@ -643,7 +601,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         {
             let device = state
                 .devices
@@ -680,7 +638,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let old_device = state
             .devices
             .get_mut(old)
@@ -710,7 +668,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let auth_id = MfaAuthenticatorId::new(format!("mfa-{}", Self::random_hex(8)))?;
         let security_version = state
             .users
@@ -752,7 +710,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.mfa.complete_enrollment(authenticator_id, now)?;
         let auth = state
             .mfa
@@ -761,7 +719,7 @@ impl IdentityStores for IdentityDatabase {
         let user_id = auth.user_id.clone();
         let mut codes = Vec::new();
         for i in 0..8 {
-            let code = format!("ABCD-{:04}", i);
+            let code = format!("ABCD-{i:04}");
             let record = RecoveryCodeRecord {
                 id: RecoveryCodeId::new(format!("rec-{}", Self::random_hex(8)))?,
                 user_id: user_id.clone(),
@@ -783,7 +741,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.mfa.record_totp_success(authenticator_id, step)
     }
 
@@ -791,7 +749,7 @@ impl IdentityStores for IdentityDatabase {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.mfa.active_authenticator(user_id).cloned()
     }
 
@@ -804,7 +762,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.mfa.consume_recovery_code(user_id, raw, now)
     }
 
@@ -817,7 +775,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let revoked = state.mfa.reset_all(target, now);
         Ok(revoked)
     }
@@ -832,7 +790,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(user) = state.users.get(user_id) else {
             return Ok(PasswordResetResult { user_id: None });
         };
@@ -860,7 +818,7 @@ impl IdentityStores for IdentityDatabase {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let token_hash = sitolo_auth::PasswordResetArtifact::hash_token(raw_token);
         let user_id = state
             .resets
@@ -934,7 +892,7 @@ impl sitolo_auth::RequestIdentityAuthority for IdentityDatabase {
             let state = self
                 .state
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.sessions.values().any(|session| {
                 session.user_id == *expected_user_id && session.device_id.as_ref() == Some(id)
             })

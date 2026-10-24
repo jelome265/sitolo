@@ -17,10 +17,13 @@ use crate::postgres_time::to_utc;
 /// Audit persistence error.
 #[derive(Debug, Error)]
 pub enum AuditPersistenceError {
+    /// The database rejected or could not complete the audit write.
     #[error("database error: {0}")]
     Database(#[from] Error),
+    /// The audit event could not be serialized.
     #[error("serialization error")]
     Serialization,
+    /// The event timestamp cannot be represented by the persistence layer.
     #[error("timestamp outside the supported range")]
     InvalidTimestamp,
     /// A persisted numeric value exceeds the Rust/PostgreSQL representation.
@@ -56,6 +59,7 @@ pub trait AuditWriter: Send + Sync {
 pub struct PostgresAuditWriter;
 
 impl PostgresAuditWriter {
+    /// Creates a stateless audit writer.
     #[must_use]
     pub const fn new() -> Self {
         Self
@@ -75,7 +79,7 @@ impl AuditWriter for PostgresAuditWriter {
         };
 
         let reason_class = event.reason_class.as_ref().map(|r| r.as_str().to_string());
-        let branch_id = event.branch_id.as_ref().map(|b| b.to_string());
+        let branch_id = event.branch_id.as_ref().map(ToString::to_string);
         let occurred_at =
             to_utc(event.occurred_at).ok_or(AuditPersistenceError::InvalidTimestamp)?;
         let event_version = i32::try_from(event.event_version.0).map_err(|source| {
@@ -96,7 +100,7 @@ impl AuditWriter for PostgresAuditWriter {
         };
 
         query(
-            r#"
+            r"
             INSERT INTO audit_events (
                 event_id, event_name, event_version, occurred_at,
                 organization_id, branch_id,
@@ -106,7 +110,7 @@ impl AuditWriter for PostgresAuditWriter {
                 reason_class, assurance_level, source
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            "#,
+            ",
         )
         .bind(event.event_id.to_string())
         .bind(event.event_name.as_str())
@@ -157,7 +161,7 @@ mod tests {
             "tenancy_service",
         );
 
-        let debug = format!("{:?}", event);
+        let debug = format!("{event:?}");
         assert!(!debug.contains("password"));
         assert!(!debug.contains("Bearer"));
         assert!(!debug.contains("secret"));

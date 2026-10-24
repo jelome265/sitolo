@@ -3,7 +3,7 @@
 //! Non-negotiable contract requirement:
 //! Execute security proofs against a REAL PostgreSQL database instance.
 //! Prove tenant boundary against PostgreSQL RLS, least-privileged runtime role,
-//! transaction-local context derived from AuthorizedScope, and negative tests.
+//! transaction-local context derived from `AuthorizedScope`, and negative tests.
 
 use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenantUserId,
@@ -37,19 +37,28 @@ tokio::task_local! {
 /// Test-harness tenant resource entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantResource {
+    /// Resource identifier.
     pub id: String,
+    /// Owning organization identifier.
     pub organization_id: String,
+    /// Owning branch identifier.
     pub branch_id: String,
+    /// Opaque payload used to prove row-level isolation.
     pub data: String,
 }
 
 /// Test-harness repository helper for Part 7 security proof operations with invocation tracking.
+#[derive(Debug)]
 pub struct PgTestTenantRepository {
+    /// Least-privileged runtime pool used for every statement.
     pub runtime_pool: PgPool,
+    /// Number of transactions opened through this helper.
     pub invocation_count: Arc<AtomicUsize>,
 }
 
 impl PgTestTenantRepository {
+    /// Builds a repository over the supplied runtime pool.
+    #[must_use]
     pub fn new(runtime_pool: PgPool) -> Self {
         Self {
             runtime_pool,
@@ -57,6 +66,11 @@ impl PgTestTenantRepository {
         }
     }
 
+    /// Opens a transaction with the tenant context derived from `scope`.
+    ///
+    /// # Errors
+    /// Returns [`PgAuthorityError::Sqlx`] when the transaction cannot start or
+    /// the tenant context cannot be applied.
     pub async fn begin_tx(
         &self,
         scope: &AuthorizedScope,
@@ -67,6 +81,10 @@ impl PgTestTenantRepository {
         Ok(tx)
     }
 
+    /// Inserts a tenant resource under the tenant context derived from `scope`.
+    ///
+    /// # Errors
+    /// Returns [`PgAuthorityError::Sqlx`] when the insert or commit fails.
     pub async fn create_tenant_resource(
         &self,
         scope: &AuthorizedScope,
@@ -88,6 +106,11 @@ impl PgTestTenantRepository {
         Ok(())
     }
 
+    /// Reads a tenant resource inside the tenant context derived from `scope`.
+    ///
+    /// # Errors
+    /// Returns [`PgAuthorityError::NotFoundOrDenied`] when no visible row
+    /// matches, and [`PgAuthorityError::Sqlx`] when the query fails.
     pub async fn get_tenant_resource(
         &self,
         scope: &AuthorizedScope,
@@ -117,6 +140,11 @@ impl PgTestTenantRepository {
         }
     }
 
+    /// Updates a tenant resource inside the tenant context derived from `scope`.
+    ///
+    /// # Errors
+    /// Returns [`PgAuthorityError::NotFoundOrDenied`] when no row matches, and
+    /// [`PgAuthorityError::Sqlx`] when the update or commit fails.
     pub async fn update_tenant_resource(
         &self,
         scope: &AuthorizedScope,
@@ -144,6 +172,11 @@ impl PgTestTenantRepository {
         Ok(())
     }
 
+    /// Deletes a tenant resource inside the tenant context derived from `scope`.
+    ///
+    /// # Errors
+    /// Returns [`PgAuthorityError::NotFoundOrDenied`] when no row matches, and
+    /// [`PgAuthorityError::Sqlx`] when the delete or commit fails.
     pub async fn delete_tenant_resource(
         &self,
         scope: &AuthorizedScope,
@@ -174,6 +207,11 @@ fn result_id_str(s: &str) -> &str {
 }
 
 /// Minimal test-only application orchestration seam verifying persistence invocation bounds.
+///
+/// # Errors
+/// Returns [`PgAuthorityError::Domain`] when the requested organization binding
+/// or effective-scope resolution is rejected, and propagates read failures from
+/// [`PgTestTenantRepository::get_tenant_resource`].
 pub async fn execute_application_tenant_operation(
     membership: &Membership,
     organization: &Organization,
@@ -181,11 +219,9 @@ pub async fn execute_application_tenant_operation(
     repo: &PgTestTenantRepository,
     resource_id: &str,
 ) -> Result<TenantResource, PgAuthorityError> {
-    let _trusted_org = bind_organization(requested_org_id, membership)
-        .map_err(|_| PgAuthorityError::NotFoundOrDenied)?;
+    let _trusted_org = bind_organization(requested_org_id, membership)?;
 
-    let eff_scope = resolve_effective_scope(membership, organization, None)
-        .map_err(|_| PgAuthorityError::NotFoundOrDenied)?;
+    let eff_scope = resolve_effective_scope(membership, organization, None)?;
 
     let authorized_scope = AuthorizedScope::from_effective(&eff_scope);
 
@@ -274,12 +310,11 @@ where
 async fn setup_test_context(
     schema_name_override: Option<&str>,
 ) -> Result<TestContext, Box<dyn std::error::Error + Send + Sync>> {
-    let schema_name = match schema_name_override {
-        Some(name) => name.to_string(),
-        None => {
-            let schema_id = uuid::Uuid::new_v4().simple().to_string();
-            format!("test_schema_{schema_id}")
-        }
+    let schema_name = if let Some(name) = schema_name_override {
+        name.to_string()
+    } else {
+        let schema_id = uuid::Uuid::new_v4().simple().to_string();
+        format!("test_schema_{schema_id}")
     };
 
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
@@ -302,7 +337,7 @@ async fn setup_test_context(
                 .execute(&admin_pool)
                 .await
                 .map(|_| ())
-                .map_err(|_| "failed to initialize app_runtime role".to_owned())
+                .map_err(|error| format!("failed to initialize app_runtime role: {error}"))
         })
         .await
         .as_ref()
@@ -405,74 +440,32 @@ async fn setup_test_context_inner(
 
     // Derive AuthorizedScope via full Phase 4 scope resolution pipeline
     let req_a = RequestedOrganizationId(org_a_id.clone());
-    let _trusted_a =
-        bind_organization(&req_a, &mem_a).map_err(|_| PgAuthorityError::SecurityViolation)?;
-    let eff_a = resolve_effective_scope(&mem_a, &org_a, None)
-        .map_err(|_| PgAuthorityError::SecurityViolation)?;
+    let _trusted_a = bind_organization(&req_a, &mem_a)?;
+    let eff_a = resolve_effective_scope(&mem_a, &org_a, None)?;
     let org_a_scope = AuthorizedScope::from_effective(&eff_a);
 
     let req_b = RequestedOrganizationId(org_b_id.clone());
-    let _trusted_b =
-        bind_organization(&req_b, &mem_b).map_err(|_| PgAuthorityError::SecurityViolation)?;
-    let eff_b = resolve_effective_scope(&mem_b, &org_b, None)
-        .map_err(|_| PgAuthorityError::SecurityViolation)?;
+    let _trusted_b = bind_organization(&req_b, &mem_b)?;
+    let eff_b = resolve_effective_scope(&mem_b, &org_b, None)?;
     let org_b_scope = AuthorizedScope::from_effective(&eff_b);
 
-    let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1))
-        .map_err(|_| PgAuthorityError::SecurityViolation)?;
+    let eff_a_b1 = resolve_effective_scope(&mem_a, &org_a, Some(&branch_a1))?;
     let org_a_b1_scope = AuthorizedScope::from_effective(&eff_a_b1);
 
     let repo = PgTestTenantRepository::new(pools.runtime_pool().clone());
 
-    // Seed Orgs A and B via admin pool
-    query(
-        "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
-    )
-    .bind(&org_a_id_str)
-    .bind("Organization A")
-    .bind("ACTIVE")
-    .bind(1i64)
-    .bind(&org_b_id_str)
-    .bind("Organization B")
-    .bind("ACTIVE")
-    .bind(1i64)
-    .execute(admin_pool)
-    .await?;
-
-    // Seed Branches A1, A2, B1 via admin pool
-    query(
-        "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES
-         ($1, $2, 'Branch A1', 'ACTIVE', 1),
-         ($3, $4, 'Branch A2', 'ACTIVE', 1),
-         ($5, $6, 'Branch B1', 'ACTIVE', 1)",
-    )
-    .bind(&branch_a1_id_str)
-    .bind(&org_a_id_str)
-    .bind(&branch_a2_id_str)
-    .bind(&org_a_id_str)
-    .bind(&branch_b1_id_str)
-    .bind(&org_b_id_str)
-    .execute(admin_pool)
-    .await?;
-
-    // Seed Tenant Resources via admin pool
-    query(
-        "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES
-         ($1, $2, $3, 'Secret Data A1'),
-         ($4, $5, $6, 'Secret Data A2'),
-         ($7, $8, $9, 'Secret Data B1')",
-    )
-    .bind(&res_a1_id)
-    .bind(&org_a_id_str)
-    .bind(&branch_a1_id_str)
-    .bind(&res_a2_id)
-    .bind(&org_a_id_str)
-    .bind(&branch_a2_id_str)
-    .bind(&res_b1_id)
-    .bind(&org_b_id_str)
-    .bind(&branch_b1_id_str)
-    .execute(admin_pool)
-    .await?;
+    // Seed the organizations, branches, and tenant resources the proofs need.
+    let fixtures = FixtureIds {
+        org_a: &org_a_id_str,
+        org_b: &org_b_id_str,
+        branch_a1: &branch_a1_id_str,
+        branch_a2: &branch_a2_id_str,
+        branch_b1: &branch_b1_id_str,
+        res_a1: &res_a1_id,
+        res_a2: &res_a2_id,
+        res_b1: &res_b1_id,
+    };
+    seed_fixtures(admin_pool, &fixtures).await?;
 
     if INJECT_SETUP_FAILURE.try_with(|b| *b).unwrap_or(false) {
         return Err(PgAuthorityError::SecurityViolation);
@@ -502,6 +495,107 @@ async fn setup_test_context_inner(
         _branch_a2_id_str: branch_a2_id_str,
         branch_b1_id_str,
     })
+}
+
+/// Identifiers of the rows seeded by the Part 7 fixture.
+struct FixtureIds<'a> {
+    org_a: &'a str,
+    org_b: &'a str,
+    branch_a1: &'a str,
+    branch_a2: &'a str,
+    branch_b1: &'a str,
+    res_a1: &'a str,
+    res_a2: &'a str,
+    res_b1: &'a str,
+}
+
+/// Seeds every row the Part 7 RLS proofs read: two organizations, three
+/// branches, and three tenant resources.
+async fn seed_fixtures(admin_pool: &PgPool, ids: &FixtureIds<'_>) -> Result<(), PgAuthorityError> {
+    seed_organizations(admin_pool, ids.org_a, ids.org_b).await?;
+    seed_branches(
+        admin_pool,
+        ids.org_a,
+        ids.org_b,
+        ids.branch_a1,
+        ids.branch_a2,
+        ids.branch_b1,
+    )
+    .await?;
+    seed_tenant_resources(admin_pool, ids).await
+}
+
+/// Seeds the two organizations used by the Part 7 fixture.
+async fn seed_organizations(
+    admin_pool: &PgPool,
+    org_a_id: &str,
+    org_b_id: &str,
+) -> Result<(), PgAuthorityError> {
+    query(
+        "INSERT INTO organizations (id, name, state, state_version) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
+    )
+    .bind(org_a_id)
+    .bind("Organization A")
+    .bind("ACTIVE")
+    .bind(1i64)
+    .bind(org_b_id)
+    .bind("Organization B")
+    .bind("ACTIVE")
+    .bind(1i64)
+    .execute(admin_pool)
+    .await?;
+    Ok(())
+}
+
+/// Seeds the active branches used by the Part 7 fixture.
+async fn seed_branches(
+    admin_pool: &PgPool,
+    org_a_id: &str,
+    org_b_id: &str,
+    branch_a1_id: &str,
+    branch_a2_id: &str,
+    branch_b1_id: &str,
+) -> Result<(), PgAuthorityError> {
+    query(
+        "INSERT INTO branches (id, organization_id, name, state, state_version) VALUES
+         ($1, $2, 'Branch A1', 'ACTIVE', 1),
+         ($3, $4, 'Branch A2', 'ACTIVE', 1),
+         ($5, $6, 'Branch B1', 'ACTIVE', 1)",
+    )
+    .bind(branch_a1_id)
+    .bind(org_a_id)
+    .bind(branch_a2_id)
+    .bind(org_a_id)
+    .bind(branch_b1_id)
+    .bind(org_b_id)
+    .execute(admin_pool)
+    .await?;
+    Ok(())
+}
+
+/// Seeds the tenant resources used by the Part 7 fixture.
+async fn seed_tenant_resources(
+    admin_pool: &PgPool,
+    ids: &FixtureIds<'_>,
+) -> Result<(), PgAuthorityError> {
+    query(
+        "INSERT INTO tenant_resources (id, organization_id, branch_id, data) VALUES
+         ($1, $2, $3, 'Secret Data A1'),
+         ($4, $5, $6, 'Secret Data A2'),
+         ($7, $8, $9, 'Secret Data B1')",
+    )
+    .bind(ids.res_a1)
+    .bind(ids.org_a)
+    .bind(ids.branch_a1)
+    .bind(ids.res_a2)
+    .bind(ids.org_a)
+    .bind(ids.branch_a2)
+    .bind(ids.res_b1)
+    .bind(ids.org_b)
+    .bind(ids.branch_b1)
+    .execute(admin_pool)
+    .await?;
+    Ok(())
 }
 
 // ============================================================================
@@ -1284,7 +1378,7 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() -> TestResult {
         let mut set = JoinSet::new();
 
         for i in 0..8 {
-            let ctx_clone = ctx.clone();
+            let ctx_clone = Arc::clone(&ctx);
             set.spawn(async move {
                 let item_id = format!("res_concurrent_{i}_{}", uuid::Uuid::new_v4().simple());
                 if i % 2 == 0 {

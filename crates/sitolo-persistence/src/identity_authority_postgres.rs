@@ -26,10 +26,23 @@ pub struct PgRequestIdentityAuthority {
     runtime_pool: PgPool,
 }
 
+impl std::fmt::Debug for PgRequestIdentityAuthority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PgRequestIdentityAuthority")
+            .finish_non_exhaustive()
+    }
+}
+
 impl PgRequestIdentityAuthority {
     /// The pool must authenticate directly as `app_runtime`, have the target
     /// schema pinned as its `search_path`, and prove both `current_user` and
     /// `session_user` before production composition constructs this repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`sitolo_auth::AuthError::ConfigurationInvalid`] when the schema
+    /// name is not a bounded trusted identifier.
     pub fn new(
         runtime_pool: PgPool,
         schema_name: impl Into<String>,
@@ -54,10 +67,11 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
             .bind(subject)
             .fetch_one(&self.runtime_pool)
             .await
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
         resolved
             .map(|id| {
-                UserId::new(id).map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
+                UserId::new(id)
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
             })
             .transpose()
     }
@@ -76,25 +90,25 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
             .bind(now)
             .fetch_optional(&self.runtime_pool)
             .await
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
             .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
 
         let session_id = SessionId::new(
             row.try_get::<String, _>("session_id")
-                .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
         )
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
         let user_id = UserId::new(
             row.try_get::<String, _>("user_id")
-                .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
         )
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
         let device_id = row
             .try_get::<Option<String>, _>("device_id")
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
             .map(DeviceId::new)
             .transpose()
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
         let session = Session {
             id: session_id,
             user_id,
@@ -126,56 +140,56 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
             .bind(expected_user_id.as_str())
             .fetch_optional(&self.runtime_pool)
             .await
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
         row.map(|row| {
             let user_id = UserId::new(
                 row.try_get::<String, _>("registered_by")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
             )
-            .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
             Ok(Device {
                 id: DeviceId::new(
                     row.try_get::<String, _>("id")
-                        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 )
-                .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 installation_id: row
                     .try_get::<Option<String>, _>("installation_id")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
                     .map(InstallationId::new)
                     .transpose()
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 organization_ref: row
                     .try_get("organization_ref")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 registered_by: user_id,
                 platform: parse_platform(&row)?,
                 app_version: row
                     .try_get("app_version")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 os_version: row
                     .try_get("os_version")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 device_key_reference: row
                     .try_get("device_key_reference")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
                 state: parse_device_state(&row)?,
                 security_version: get_version(&row, "security_version")?,
                 registered_at: get_time(&row, "registered_at")?,
                 last_seen_at: get_time(&row, "last_seen_at")?,
                 revoked_at: row
                     .try_get::<Option<DateTime<Utc>>, _>("revoked_at")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
                     .map(|value| {
                         from_utc(value).ok_or(sitolo_auth::AuthError::IdentityAuthorityUnavailable)
                     })
                     .transpose()?,
                 replacement_of: row
                     .try_get::<Option<String>, _>("replacement_of")
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?
                     .map(DeviceId::new)
                     .transpose()
-                    .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
+                    .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?,
             })
         })
         .transpose()
@@ -197,7 +211,7 @@ fn valid_schema_name(value: &str) -> bool {
 fn get_time(row: &sqlx_postgres::PgRow, name: &str) -> Result<SystemTime, sitolo_auth::AuthError> {
     let value: DateTime<Utc> = row
         .try_get(name)
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
     from_utc(value).ok_or(sitolo_auth::AuthError::IdentityAuthorityUnavailable)
 }
 
@@ -207,15 +221,15 @@ fn get_version(
 ) -> Result<SecurityVersion, sitolo_auth::AuthError> {
     let value: i64 = row
         .try_get(name)
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
     u64::try_from(value)
         .map(SecurityVersion)
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
 }
 
 fn text(row: &sqlx_postgres::PgRow, name: &str) -> Result<String, sitolo_auth::AuthError> {
     row.try_get(name)
-        .map_err(|_| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
+        .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)
 }
 
 fn parse_session_class(row: &sqlx_postgres::PgRow) -> Result<SessionClass, sitolo_auth::AuthError> {

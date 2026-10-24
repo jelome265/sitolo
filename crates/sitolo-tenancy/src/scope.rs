@@ -46,20 +46,28 @@ pub struct TrustedOrganizationId(pub OrganizationId);
 /// registry) so tenant existence is never enumerable.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ScopeError {
+    /// Authoritative tenancy records could not be read.
     #[error("authoritative tenancy records are unavailable")]
     AuthorityUnavailable,
+    /// The caller has no authority for the requested organization.
     #[error("no authority for the requested organization")]
     OrganizationDenied,
+    /// The caller has no authority for the requested branch.
     #[error("no authority for the requested branch")]
     BranchDenied,
+    /// The membership is not active enough to carry business authority.
     #[error("membership lacks ordinary business authority")]
     MembershipNotActive,
+    /// The organization is not in an operating state.
     #[error("organization is not operating")]
     OrganizationNotActive,
+    /// The branch is not in an operating state.
     #[error("branch is not operating")]
     BranchNotActive,
+    /// The membership lacks the permission the operation requires.
     #[error("membership lacks the required permission")]
     PermissionDenied,
+    /// No active scope grant covers the requested scope.
     #[error("no scope grant covers the requested scope")]
     ScopeDenied,
 }
@@ -68,6 +76,10 @@ pub enum ScopeError {
 /// (sections 5, 55). Succeeds only when the selector names the membership's
 /// own organization — a Tenant A member requesting Tenant B is denied without
 /// disclosing whether Tenant B exists.
+///
+/// # Errors
+/// Returns [`ScopeError::OrganizationDenied`] when the requested selector does
+/// not name the membership's own organization.
 pub fn bind_organization(
     requested: &RequestedOrganizationId,
     membership: &Membership,
@@ -89,11 +101,18 @@ pub fn bind_organization(
 /// "no permissions" outside the authorizing path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveScope {
+    /// Organization the authority was resolved for.
     pub organization_id: OrganizationId,
+    /// Membership that carries the authority.
     pub membership_id: MembershipId,
+    /// Requested branch, when the operation is branch-scoped.
     pub branch_id: Option<BranchId>,
+    /// Organization optimistic-concurrency version at resolution time.
     pub organization_version: u64,
+    /// Membership optimistic-concurrency version at resolution time.
     pub membership_version: u64,
+    /// Permissions resolved from effective role assignments. Empty means
+    /// unresolved, never "no permissions", outside the authorizing path.
     pub permissions: BTreeSet<Permission>,
 }
 
@@ -189,6 +208,14 @@ impl AuthorizedScope {
 /// state, suspended/revoked membership, non-operating organization or branch,
 /// branch owned by another organization, or a device/branch mismatch (branch
 /// binding arrives in a later Phase 4 PR).
+///
+/// # Errors
+/// Returns [`ScopeError::OrganizationDenied`] when the membership belongs to a
+/// different organization, [`ScopeError::OrganizationNotActive`] when the
+/// organization is not operating, [`ScopeError::MembershipNotActive`] when the
+/// membership cannot carry authority, [`ScopeError::BranchDenied`] when the
+/// branch belongs to another organization, and [`ScopeError::BranchNotActive`]
+/// when the branch is not operating.
 pub fn resolve_effective_scope(
     membership: &Membership,
     organization: &Organization,
@@ -341,7 +368,7 @@ mod tests {
             Err(ScopeError::MembershipNotActive)
         );
 
-        let mut suspended_branch = branch.clone();
+        let mut suspended_branch = branch;
         suspended_branch.suspend()?;
         assert_eq!(
             resolve_effective_scope(&membership, &organization, Some(&suspended_branch)),

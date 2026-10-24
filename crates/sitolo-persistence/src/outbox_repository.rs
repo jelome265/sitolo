@@ -161,6 +161,14 @@ pub struct PostgresOutboxRepository {
     pool: PgPool,
 }
 
+impl std::fmt::Debug for PostgresOutboxRepository {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PostgresOutboxRepository")
+            .finish_non_exhaustive()
+    }
+}
+
 impl PostgresOutboxRepository {
     /// Creates a repository over an existing connection pool.
     #[must_use]
@@ -231,7 +239,7 @@ impl OutboxWriter for PostgresOutboxRepository {
         // UPDATE` serialises concurrent writers for the same aggregate, so
         // there is no MAX()+1 race.
         let aggregate_sequence: i64 = query_scalar(
-            r#"
+            r"
             INSERT INTO outbox_aggregate_sequences (
                 aggregate_type, aggregate_id, next_sequence
             )
@@ -239,7 +247,7 @@ impl OutboxWriter for PostgresOutboxRepository {
             ON CONFLICT (aggregate_type, aggregate_id)
             DO UPDATE SET next_sequence = outbox_aggregate_sequences.next_sequence + 1
             RETURNING next_sequence - 1
-            "#,
+            ",
         )
         .bind(&event.aggregate_type)
         .bind(&event.aggregate_id)
@@ -251,7 +259,7 @@ impl OutboxWriter for PostgresOutboxRepository {
         }
 
         query(
-            r#"
+            r"
             INSERT INTO outbox_events (
                 event_id, aggregate_type, aggregate_id, event_name, event_version,
                 organization_id, branch_id, occurred_at, payload,
@@ -263,7 +271,7 @@ impl OutboxWriter for PostgresOutboxRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9,
                 $10, $11, $12, $13, $14, $15, $16, $17, $18
             )
-            "#,
+            ",
         )
         .bind(&event.event_id)
         .bind(&event.aggregate_type)
@@ -312,7 +320,7 @@ impl OutboxReader for PostgresOutboxRepository {
             .map_err(OutboxPersistenceError::InvalidDuration)?;
 
         let rows = query_as::<_, OutboxEventRow>(
-            r#"
+            r"
             SELECT
                 event_id, aggregate_type, aggregate_id, event_name, event_version,
                 organization_id, branch_id, occurred_at, payload::text AS payload,
@@ -320,7 +328,7 @@ impl OutboxReader for PostgresOutboxRepository {
                 last_error_class, deduplication_key, schema_version,
                 aggregate_sequence, claim_token, claim_generation
             FROM outbox_claim_events($1, $2, $3)
-            "#,
+            ",
         )
         .bind(batch_size)
         .bind(lease_interval)
@@ -471,86 +479,37 @@ impl TryFrom<OutboxEventRow> for OutboxEvent {
     type Error = OutboxPersistenceError;
 
     fn try_from(row: OutboxEventRow) -> Result<Self, Self::Error> {
-        let status = match row.status.as_str() {
-            "PENDING" => OutboxStatus::Pending,
-            "CLAIMED" => OutboxStatus::Claimed,
-            "PUBLISHED" => OutboxStatus::Published,
-            "QUARANTINED" => OutboxStatus::Quarantined,
-            _ => return Err(OutboxPersistenceError::InvalidRow("status")),
-        };
-        let event_version = u32::try_from(row.event_version).map_err(|source| {
-            OutboxPersistenceError::NumericRange {
-                field: "event_version",
-                source,
-            }
-        })?;
-        let attempt_count = u32::try_from(row.attempt_count).map_err(|source| {
-            OutboxPersistenceError::NumericRange {
-                field: "attempt_count",
-                source,
-            }
-        })?;
-        let schema_version = u32::try_from(row.schema_version).map_err(|source| {
-            OutboxPersistenceError::NumericRange {
-                field: "schema_version",
-                source,
-            }
-        })?;
-        let aggregate_sequence = u64::try_from(row.aggregate_sequence).map_err(|source| {
-            OutboxPersistenceError::NumericRange {
-                field: "aggregate_sequence",
-                source,
-            }
-        })?;
+        let status = parse_status(&row.status)?;
+        let event_version = u32_field(row.event_version, "event_version")?;
+        let attempt_count = u32_field(row.attempt_count, "attempt_count")?;
+        let schema_version = u32_field(row.schema_version, "schema_version")?;
+        let aggregate_sequence = u64_field(row.aggregate_sequence, "aggregate_sequence")?;
         if aggregate_sequence == 0 {
             return Err(OutboxPersistenceError::InvalidRow("aggregate_sequence"));
         }
-        let claim_generation = u64::try_from(row.claim_generation).map_err(|source| {
-            OutboxPersistenceError::NumericRange {
-                field: "claim_generation",
-                source,
-            }
-        })?;
-        let claim_token = row
-            .claim_token
-            .map(ClaimToken::new)
-            .transpose()
-            .map_err(|_| OutboxPersistenceError::InvalidRow("claim_token"))?;
-        if matches!(status, OutboxStatus::Claimed) && claim_token.is_none() {
-            return Err(OutboxPersistenceError::InvalidRow("claim_token"));
-        }
-        if !matches!(status, OutboxStatus::Claimed) && claim_token.is_some() {
-            return Err(OutboxPersistenceError::InvalidRow(
-                "claim_token_state_mismatch",
-            ));
-        }
-        if matches!(status, OutboxStatus::Claimed) && row.locked_at.is_none() {
-            return Err(OutboxPersistenceError::InvalidRow("locked_at"));
-        }
-        if matches!(status, OutboxStatus::Published) && row.published_at.is_none() {
-            return Err(OutboxPersistenceError::InvalidRow("published_at"));
-        }
+        let claim_generation = u64_field(row.claim_generation, "claim_generation")?;
+        let has_locked_at = row.locked_at.is_some();
+        let has_published_at = row.published_at.is_some();
+        let claim_token = parse_claim_token(row.claim_token)?;
+        validate_claim_state(
+            status,
+            claim_token.as_ref(),
+            has_locked_at,
+            has_published_at,
+        )?;
         let organization_id = sitolo_domain::tenancy::OrganizationId::new(&row.organization_id)
-            .map_err(|_| OutboxPersistenceError::InvalidRow("organization_id"))?;
+            .map_err(|_error| OutboxPersistenceError::InvalidRow("organization_id"))?;
         let branch_id = row
             .branch_id
             .map(|value| {
                 sitolo_domain::tenancy::BranchId::new(&value)
-                    .map_err(|_| OutboxPersistenceError::InvalidRow("branch_id"))
+                    .map_err(|_error| OutboxPersistenceError::InvalidRow("branch_id"))
             })
             .transpose()?;
-        let occurred_at =
-            from_utc(row.occurred_at).ok_or(OutboxPersistenceError::InvalidTimestamp)?;
-        let available_at =
-            from_utc(row.available_at).ok_or(OutboxPersistenceError::InvalidTimestamp)?;
-        let locked_at = match row.locked_at {
-            Some(value) => Some(from_utc(value).ok_or(OutboxPersistenceError::InvalidTimestamp)?),
-            None => None,
-        };
-        let published_at = match row.published_at {
-            Some(value) => Some(from_utc(value).ok_or(OutboxPersistenceError::InvalidTimestamp)?),
-            None => None,
-        };
+        let occurred_at = required_time(row.occurred_at)?;
+        let available_at = required_time(row.available_at)?;
+        let locked_at = optional_time(row.locked_at)?;
+        let published_at = optional_time(row.published_at)?;
 
         Ok(OutboxEvent {
             event_id: row.event_id,
@@ -575,6 +534,64 @@ impl TryFrom<OutboxEventRow> for OutboxEvent {
             claim_generation,
         })
     }
+}
+
+fn parse_status(value: &str) -> Result<OutboxStatus, OutboxPersistenceError> {
+    match value {
+        "PENDING" => Ok(OutboxStatus::Pending),
+        "CLAIMED" => Ok(OutboxStatus::Claimed),
+        "PUBLISHED" => Ok(OutboxStatus::Published),
+        "QUARANTINED" => Ok(OutboxStatus::Quarantined),
+        _ => Err(OutboxPersistenceError::InvalidRow("status")),
+    }
+}
+
+fn u32_field(value: i32, field: &'static str) -> Result<u32, OutboxPersistenceError> {
+    u32::try_from(value).map_err(|source| OutboxPersistenceError::NumericRange { field, source })
+}
+
+fn u64_field(value: i64, field: &'static str) -> Result<u64, OutboxPersistenceError> {
+    u64::try_from(value).map_err(|source| OutboxPersistenceError::NumericRange { field, source })
+}
+
+fn parse_claim_token(value: Option<String>) -> Result<Option<ClaimToken>, OutboxPersistenceError> {
+    value
+        .map(ClaimToken::new)
+        .transpose()
+        .map_err(|_error| OutboxPersistenceError::InvalidRow("claim_token"))
+}
+
+fn validate_claim_state(
+    status: OutboxStatus,
+    claim_token: Option<&ClaimToken>,
+    has_locked_at: bool,
+    has_published_at: bool,
+) -> Result<(), OutboxPersistenceError> {
+    if matches!(status, OutboxStatus::Claimed) && claim_token.is_none() {
+        return Err(OutboxPersistenceError::InvalidRow("claim_token"));
+    }
+    if !matches!(status, OutboxStatus::Claimed) && claim_token.is_some() {
+        return Err(OutboxPersistenceError::InvalidRow(
+            "claim_token_state_mismatch",
+        ));
+    }
+    if matches!(status, OutboxStatus::Claimed) && !has_locked_at {
+        return Err(OutboxPersistenceError::InvalidRow("locked_at"));
+    }
+    if matches!(status, OutboxStatus::Published) && !has_published_at {
+        return Err(OutboxPersistenceError::InvalidRow("published_at"));
+    }
+    Ok(())
+}
+
+fn required_time(value: DateTime<Utc>) -> Result<std::time::SystemTime, OutboxPersistenceError> {
+    from_utc(value).ok_or(OutboxPersistenceError::InvalidTimestamp)
+}
+
+fn optional_time(
+    value: Option<DateTime<Utc>>,
+) -> Result<Option<std::time::SystemTime>, OutboxPersistenceError> {
+    value.map(required_time).transpose()
 }
 
 #[cfg(test)]

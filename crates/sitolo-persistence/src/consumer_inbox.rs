@@ -14,28 +14,43 @@ const MAX_INBOX_PAYLOAD_BYTES: usize = 256 * 1024;
 /// Immutable identity and payload metadata for one validated integration event.
 #[derive(Debug, Clone, Copy)]
 pub struct ConsumerInboxRecord<'a> {
+    /// Stable consumer identity that owns this idempotency namespace.
     pub consumer_name: &'a str,
+    /// Producer-assigned event identifier.
     pub event_id: &'a str,
+    /// Canonical event name.
     pub event_name: &'a str,
+    /// Schema version of the event payload.
     pub event_version: i32,
+    /// Tenant that owns the event.
     pub organization_id: &'a str,
+    /// Optional branch scope of the event.
     pub branch_id: Option<&'a str>,
+    /// Aggregate family the event describes.
     pub aggregate_type: &'a str,
+    /// Aggregate instance the event describes.
     pub aggregate_id: &'a str,
+    /// Monotonic per-aggregate event sequence.
     pub aggregate_sequence: i64,
+    /// Time the producer recorded the event.
     pub occurred_at: DateTime<Utc>,
+    /// Serialized event payload used for duplicate-content comparison.
     pub payload: &'a [u8],
 }
 
 /// Inbox persistence failure. Details are deliberately not retained in logs.
 #[derive(Debug, ThisError)]
 pub enum ConsumerInboxError {
+    /// The database rejected or could not complete the inbox operation.
     #[error("consumer inbox database operation failed")]
     Database(#[from] Error),
+    /// The supplied record failed local validation.
     #[error("consumer inbox record is invalid")]
     InvalidRecord,
+    /// The event identifier was reused with different content.
     #[error("event identifier was reused with different content")]
     EventIdentityConflict,
+    /// A persisted row violated the inbox invariants.
     #[error("persisted consumer inbox row violates its invariant")]
     InvalidPersistedRecord,
 }

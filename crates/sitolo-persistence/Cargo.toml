@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 async-trait.workspace = true
 sha2.workspace = true
 sitolo-auth.workspace = true
+sitolo-application = { path = "../sitolo-application" }
 sitolo-audit.workspace = true
 sitolo-authz = { path = "../sitolo-authz" }
 sitolo-config.workspace = true

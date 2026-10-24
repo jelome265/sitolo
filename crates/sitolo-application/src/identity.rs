@@ -5,9 +5,14 @@
 //! limiting, audit emission, and enumeration-resistant public responses
 //! (Phase 3 specification, §22, §23, §37, §52).
 
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use crate::identity_ports::{
+    DeviceRegistrationInput, DeviceRevocationEffect, IdentityStores, MfaEnrollmentResult,
+    UserSnapshot,
+};
 use sitolo_audit::{AuthEventName, AuthenticationEvent, EventResult};
 use sitolo_auth::{
     AbuseClass, Assurance, AuditEventId, AuthenticationMethod, ClientPlatform, DeviceId,
@@ -16,25 +21,35 @@ use sitolo_auth::{
     SessionId, SessionPolicySet, TotpVerifier, UserId,
 };
 use sitolo_observability::RequestId;
-use sitolo_persistence::{
-    DeviceRegistrationInput, DeviceRevocationEffect, IdentityDatabase, IdentityStores,
-};
 use sitolo_security::{RandomSource, SecretValue};
 
 /// Service-level policy configuration.
+#[derive(Debug)]
 pub struct IdentityPolicy {
+    /// Per-class session lifetime policy.
     pub sessions: SessionPolicySet,
+    /// Lifetime of a refresh credential.
     pub refresh_ttl: Duration,
+    /// Lifetime of a password-reset artifact.
     pub reset_ttl: Duration,
+    /// Lifetime of an MFA challenge window.
     pub mfa_challenge_ttl: Duration,
+    /// Number of recovery codes issued at enrollment.
     pub recovery_code_count: u32,
+    /// Abuse-class rate-limit rules.
     pub abuse_rules: Vec<(AbuseClass, RateLimitRule)>,
+    /// Assurance level granted by a completed step-up enrollment.
     pub step_up_enrollment: Assurance,
 }
 
 impl IdentityPolicy {
     /// Fail-closed startup validation (§64). Rejects impossible security
     /// relationships instead of silently substituting a permissive default.
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError::ConfigurationInvalid`] when a session
+    /// lifetime, refresh/reset lifetime, MFA window, or recovery-code count
+    /// falls outside the accepted security range.
     pub fn validate(&self) -> Result<(), sitolo_auth::AuthError> {
         for class in [
             SessionClass::Merchant,
@@ -64,22 +79,32 @@ impl IdentityPolicy {
 
 /// The identity service (Phase 3 use cases).
 pub struct IdentityService {
-    db: Arc<IdentityDatabase>,
+    db: Arc<dyn IdentityStores>,
     hasher: Arc<dyn PasswordHasher>,
     // Wired for future OIDC provider use; not yet consulted by reference use cases.
-    #[expect(
-        dead_code,
-        reason = "The optional provider injection is reserved for the planned OIDC reference flow; request authentication uses the authority port today."
-    )]
     provider: Option<Arc<dyn IdentityProviderPort>>,
     limiter: Mutex<RateLimiter>,
     policy: IdentityPolicy,
     random: Arc<dyn RandomSource>,
 }
 
+impl fmt::Debug for IdentityService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IdentityService")
+            .field("policy", &self.policy)
+            .field("provider_configured", &self.provider.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl IdentityService {
+    /// Builds the service and validates its fail-closed policy.
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError::ConfigurationInvalid`] when the
+    /// supplied [`IdentityPolicy`] is not internally consistent.
     pub fn new(
-        db: Arc<IdentityDatabase>,
+        db: Arc<dyn IdentityStores>,
         hasher: Arc<dyn PasswordHasher>,
         provider: Option<Arc<dyn IdentityProviderPort>>,
         policy: IdentityPolicy,
@@ -88,7 +113,7 @@ impl IdentityService {
         policy.validate()?;
         let mut limiter = RateLimiter::new();
         for (class, rule) in &policy.abuse_rules {
-            let _ = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
+            let _registered = limiter.check(*class, "init", rule, SystemTime::UNIX_EPOCH);
         }
         Ok(IdentityService {
             db,
@@ -104,18 +129,20 @@ impl IdentityService {
         let mut limiter = self
             .limiter
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let rule = self
             .policy
             .abuse_rules
             .iter()
             .find(|(c, _)| *c == class)
-            .map(|(_, r)| *r)
-            .unwrap_or(RateLimitRule {
-                max_attempts: 10,
-                window: Duration::from_secs(60),
-                lockout: Duration::from_secs(300),
-            });
+            .map_or(
+                RateLimitRule {
+                    max_attempts: 10,
+                    window: Duration::from_secs(60),
+                    lockout: Duration::from_secs(300),
+                },
+                |(_, r)| *r,
+            );
         limiter.check(class, key, &rule, SystemTime::now())
     }
 
@@ -142,15 +169,11 @@ impl IdentityService {
         reason_class: Option<&'static str>,
         version: Option<SecurityVersion>,
         now: SystemTime,
-    ) {
+    ) -> Result<(), sitolo_auth::AuthError> {
         // The constructor receives only this fixed prefix and 16 lowercase
         // hexadecimal characters from `random_hex(8)`.
-        #[expect(
-            clippy::expect_used,
-            reason = "the generated audit identifier is restricted to its validated ASCII grammar and length"
-        )]
         let event_id = AuditEventId::new(format!("evt-{}", self.random_hex(8)))
-            .expect("generated audit event id is valid");
+            .map_err(|_error| sitolo_auth::AuthError::InvalidIdentifier)?;
         let event = AuthenticationEvent {
             event_id,
             event_name: name,
@@ -167,7 +190,11 @@ impl IdentityService {
             reason_class,
             security_version: version,
         };
-        let _ = self.db.append_audit(event).await;
+        self.db
+            .append_audit(event)
+            .await
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        Ok(())
     }
 }
 
@@ -175,6 +202,13 @@ impl IdentityService {
 
 impl IdentityService {
     /// Password login (§22, enumeration-resistant).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError::AuthenticationRateLimited`] when the
+    /// subject is locked out, the generic
+    /// [`sitolo_auth::AuthError::AuthenticationFailed`] for unknown, suspended,
+    /// verifier-less, or mismatched credentials, and propagates
+    /// identity-authority failures unchanged.
     pub async fn login_password(
         &self,
         class: SessionClass,
@@ -198,7 +232,7 @@ impl IdentityService {
                 None,
                 now,
             )
-            .await;
+            .await?;
             return Err(sitolo_auth::AuthError::AuthenticationRateLimited);
         }
         // Cheap structural validation before expensive password hashing (§47).
@@ -206,154 +240,22 @@ impl IdentityService {
         // produce the same generic failure; only internal audit distinguishes.
         let password = password.into_string();
         if password.is_empty() || password.len() > 512 || identifier.len() > 128 {
-            self.emit_audit(
-                AuthEventName::LoginFailure,
-                EventResult::Failure,
-                None,
-                None,
-                None,
-                Some(platform),
-                Some(AuthenticationMethod::Password),
-                None,
-                Some("invalid_credential"),
-                None,
-                now,
-            )
-            .await;
-            return Err(sitolo_auth::AuthError::AuthenticationFailed);
-        }
-        let user_id = match UserId::new(identifier) {
-            Ok(id) => id,
-            Err(_) => {
-                self.emit_audit(
-                    AuthEventName::LoginFailure,
-                    EventResult::Failure,
-                    None,
-                    None,
-                    None,
-                    Some(platform),
-                    Some(AuthenticationMethod::Password),
-                    None,
-                    Some("invalid_credential"),
-                    None,
-                    now,
-                )
-                .await;
-                return Err(sitolo_auth::AuthError::AuthenticationFailed);
-            }
-        };
-        let Some(user_snap) = self.db.user_snapshot(&user_id).await else {
-            self.emit_audit(
-                AuthEventName::LoginFailure,
-                EventResult::Failure,
-                None,
-                None,
-                None,
-                Some(platform),
-                Some(AuthenticationMethod::Password),
-                None,
-                Some("invalid_credential"),
-                None,
-                now,
-            )
-            .await;
-            return Err(sitolo_auth::AuthError::AuthenticationFailed);
-        };
-        if user_snap.suspended {
-            self.emit_audit(
-                AuthEventName::LoginFailure,
-                EventResult::Failure,
-                Some(&user_id),
-                None,
-                None,
-                Some(platform),
-                Some(AuthenticationMethod::Password),
-                None,
-                None,
-                Some(user_snap.security_version),
-                now,
-            )
-            .await;
-            return Err(sitolo_auth::AuthError::AuthenticationFailed);
-        }
-        if !user_snap.has_password {
-            self.emit_audit(
-                AuthEventName::LoginFailure,
-                EventResult::Failure,
-                Some(&user_id),
-                None,
-                None,
-                Some(platform),
-                Some(AuthenticationMethod::Password),
-                None,
-                Some("invalid_credential"),
-                Some(user_snap.security_version),
-                now,
-            )
-            .await;
-            return Err(sitolo_auth::AuthError::AuthenticationFailed);
-        }
-        if let Some(verifier) = &user_snap.password_verifier {
-            let ok = self
-                .hasher
-                .verify(
-                    SecretValue::new(password.clone()),
-                    &sitolo_auth::PasswordVerifierRecord {
-                        verifier: verifier.clone(),
-                        policy_version: user_snap.password_policy_version,
-                    },
-                )
+            self.emit_login_failure(None, platform, Some("invalid_credential"), None, now)
                 .await?;
-            if !ok {
-                self.emit_audit(
-                    AuthEventName::LoginFailure,
-                    EventResult::Failure,
-                    Some(&user_id),
-                    None,
-                    None,
-                    Some(platform),
-                    Some(AuthenticationMethod::Password),
-                    None,
-                    Some("invalid_credential"),
-                    Some(user_snap.security_version),
-                    now,
-                )
-                .await;
-                return Err(sitolo_auth::AuthError::AuthenticationFailed);
-            }
-            // Opportunistic rehash on success with an older cost policy (§9.3).
-            // Failed authentication never triggers rehashing.
-            if user_snap.password_policy_version < self.hasher.current_policy_version()
-                && let Ok(rehashed) = self.hasher.hash(SecretValue::new(password)).await
-            {
-                let _ = self
-                    .db
-                    .set_password_verifier(&user_id, rehashed.verifier, rehashed.policy_version)
-                    .await;
-            }
-        } else {
-            self.emit_audit(
-                AuthEventName::LoginFailure,
-                EventResult::Failure,
-                Some(&user_id),
-                None,
-                None,
-                Some(platform),
-                Some(AuthenticationMethod::Password),
-                None,
-                Some("missing_verifier"),
-                Some(user_snap.security_version),
-                now,
-            )
-            .await;
             return Err(sitolo_auth::AuthError::AuthenticationFailed);
         }
+        let Some(user_snap) = self
+            .authenticate_password(identifier, &password, platform, now)
+            .await?
+        else {
+            return Err(sitolo_auth::AuthError::AuthenticationFailed);
+        };
         // MFA step-up required later when mfa_active; initial grant stays A1.
         let assurance = Assurance::A1;
         let established = self
             .db
             .establish_session(
-                user_id.clone(),
+                user_snap.id.clone(),
                 None,
                 class,
                 AuthenticationMethod::Password,
@@ -365,7 +267,7 @@ impl IdentityService {
         self.emit_audit(
             AuthEventName::LoginSuccess,
             EventResult::Success,
-            Some(&user_id),
+            Some(&user_snap.id),
             Some(&established.session.id),
             None,
             Some(platform),
@@ -375,7 +277,7 @@ impl IdentityService {
             Some(user_snap.security_version),
             now,
         )
-        .await;
+        .await?;
         Ok(LoginResult {
             session: established.session.clone(),
             refresh_token: established.refresh_token.clone(),
@@ -383,7 +285,133 @@ impl IdentityService {
         })
     }
 
+    /// Emits the enumeration-resistant login-failure audit record.
+    async fn emit_login_failure(
+        &self,
+        user_id: Option<&UserId>,
+        platform: ClientPlatform,
+        reason_class: Option<&'static str>,
+        security_version: Option<SecurityVersion>,
+        now: SystemTime,
+    ) -> Result<(), sitolo_auth::AuthError> {
+        self.emit_audit(
+            AuthEventName::LoginFailure,
+            EventResult::Failure,
+            user_id,
+            None,
+            None,
+            Some(platform),
+            Some(AuthenticationMethod::Password),
+            None,
+            reason_class,
+            security_version,
+            now,
+        )
+        .await
+    }
+
+    /// Resolves the user and verifies the password without revealing which
+    /// step failed. Returns `None` for every enumeration-safe failure.
+    async fn authenticate_password(
+        &self,
+        identifier: &str,
+        password: &str,
+        platform: ClientPlatform,
+        now: SystemTime,
+    ) -> Result<Option<UserSnapshot>, sitolo_auth::AuthError> {
+        let Ok(user_id) = UserId::new(identifier) else {
+            self.emit_login_failure(None, platform, Some("invalid_credential"), None, now)
+                .await?;
+            return Ok(None);
+        };
+        let Some(user_snap) = self.db.user_snapshot(&user_id).await else {
+            self.emit_login_failure(None, platform, Some("invalid_credential"), None, now)
+                .await?;
+            return Ok(None);
+        };
+        if user_snap.suspended {
+            self.emit_login_failure(None, platform, None, Some(user_snap.security_version), now)
+                .await?;
+            return Ok(None);
+        }
+        if !user_snap.has_password {
+            self.emit_login_failure(
+                Some(&user_id),
+                platform,
+                Some("invalid_credential"),
+                Some(user_snap.security_version),
+                now,
+            )
+            .await?;
+            return Ok(None);
+        }
+        let Some(verifier) = &user_snap.password_verifier else {
+            self.emit_login_failure(
+                Some(&user_id),
+                platform,
+                Some("missing_verifier"),
+                Some(user_snap.security_version),
+                now,
+            )
+            .await?;
+            return Ok(None);
+        };
+        let ok = self
+            .hasher
+            .verify(
+                SecretValue::new(password.to_owned()),
+                &sitolo_auth::PasswordVerifierRecord {
+                    verifier: verifier.clone(),
+                    policy_version: user_snap.password_policy_version,
+                },
+            )
+            .await?;
+        if !ok {
+            self.emit_login_failure(
+                Some(&user_id),
+                platform,
+                Some("invalid_credential"),
+                Some(user_snap.security_version),
+                now,
+            )
+            .await?;
+            return Ok(None);
+        }
+        // Opportunistic rehash on success with an older cost policy (§9.3).
+        // Failed authentication never triggers rehashing.
+        self.maybe_rehash_password(&user_id, password, &user_snap)
+            .await;
+        Ok(Some(user_snap))
+    }
+
+    /// Best-effort rehash of a password verified under an older cost policy.
+    async fn maybe_rehash_password(
+        &self,
+        user_id: &UserId,
+        password: &str,
+        snapshot: &UserSnapshot,
+    ) {
+        if snapshot.password_policy_version >= self.hasher.current_policy_version() {
+            return;
+        }
+        let Ok(rehashed) = self
+            .hasher
+            .hash(SecretValue::new(password.to_owned()))
+            .await
+        else {
+            return;
+        };
+        // A failed write does not fail the login; the next login retries.
+        let _rehash_result: Result<(), sitolo_auth::AuthError> = self
+            .db
+            .set_password_verifier(user_id, rehashed.verifier, rehashed.policy_version)
+            .await;
+    }
+
     /// Refresh token rotation (§12).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the refresh credential is invalid, expired, reused, or persistence fails.
     pub async fn refresh(
         &self,
         raw_refresh: &str,
@@ -405,7 +433,7 @@ impl IdentityService {
                     None,
                     now,
                 )
-                .await;
+                .await?;
                 Ok(RefreshResult {
                     session_id: rotation.session_id,
                     user_id: rotation.user_id,
@@ -427,7 +455,7 @@ impl IdentityService {
                     None,
                     now,
                 )
-                .await;
+                .await?;
                 Err(sitolo_auth::AuthError::RefreshTokenReused)
             }
             Err(e) => Err(e),
@@ -435,6 +463,9 @@ impl IdentityService {
     }
 
     /// Logout (§10.3, §52.1).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the session is unknown or revocation fails.
     pub async fn logout(&self, session_id: &SessionId) -> Result<(), sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let snapshot = self
@@ -458,11 +489,14 @@ impl IdentityService {
             Some(snapshot.user_security_version),
             now,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
     /// Revoke all user sessions (§10.3).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the revocation scope cannot be applied.
     pub async fn revoke_all_user_sessions(
         &self,
         user_id: &UserId,
@@ -491,11 +525,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(count)
     }
 
     /// Password change (§10.3, §9.3).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the old password is wrong, the new password is rejected, or persistence fails.
     pub async fn change_password(
         &self,
         user_id: &UserId,
@@ -550,11 +587,14 @@ impl IdentityService {
             Some(version),
             now,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
     /// Request password reset (§21, enumeration-resistant).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the reset artifact cannot be persisted.
     pub async fn request_password_reset(
         &self,
         user_id: &UserId,
@@ -580,13 +620,16 @@ impl IdentityService {
                 None,
                 now,
             )
-            .await;
+            .await?;
         }
         // Always return Ok (non-enumerating, §22).
         Ok(())
     }
 
     /// Confirm password reset (§21.2, atomic).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the token is invalid, expired, used, or the new password is rejected.
     pub async fn confirm_password_reset(
         &self,
         raw_token: &str,
@@ -611,16 +654,19 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(user_id)
     }
 
     /// Begin MFA enrollment (§18.1).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when MFA is already active, enrollment conflicts, or persistence fails.
     pub async fn begin_mfa_enrollment(
         &self,
         user_id: UserId,
         kind: MfaKind,
-    ) -> Result<sitolo_persistence::MfaEnrollmentResult, sitolo_auth::AuthError> {
+    ) -> Result<MfaEnrollmentResult, sitolo_auth::AuthError> {
         let now = SystemTime::now();
         let result = self
             .db
@@ -639,11 +685,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(result)
     }
 
     /// Complete MFA enrollment (§18.1).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the authenticator is unknown, the challenge is unsatisfied, or persistence fails.
     pub async fn complete_mfa_enrollment(
         &self,
         authenticator_id: &sitolo_auth::MfaAuthenticatorId,
@@ -666,11 +715,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(codes)
     }
 
     /// Verify MFA code and elevate session (§17).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the code is invalid, replayed, or the session is not eligible for step-up.
     pub async fn mfa_verify(
         &self,
         session_id: &SessionId,
@@ -722,7 +774,7 @@ impl IdentityService {
                 None,
                 now,
             )
-            .await;
+            .await?;
             return Err(sitolo_auth::AuthError::MfaFailed);
         }
         self.db.record_totp_success(&auth.id, step).await?;
@@ -742,11 +794,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
     /// Redeem a recovery code (§20).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the recovery code is unknown or already consumed.
     pub async fn redeem_recovery_code(
         &self,
         user_id: &UserId,
@@ -767,11 +822,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
     /// Reset MFA for a user (§45, requires elevated assurance).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the actor is not permitted or the authenticator reset fails.
     pub async fn reset_mfa(
         &self,
         target: &UserId,
@@ -792,11 +850,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(revoked)
     }
 
     /// Register device (§25, authenticated enrollment).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when registration is rejected or persistence fails.
     pub async fn register_device(
         &self,
         user_id: UserId,
@@ -825,11 +886,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(device)
     }
 
     /// Finalize device registration (§25).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the device is unknown or completion fails.
     pub async fn finalize_device_registration(
         &self,
         device_id: &DeviceId,
@@ -849,11 +913,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(device)
     }
 
     /// Revoke device (§27).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the device is unknown or revocation fails.
     pub async fn revoke_device(
         &self,
         device_id: &DeviceId,
@@ -873,11 +940,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(effect)
     }
 
     /// Replace device (§28).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the old device is unknown or replacement fails.
     pub async fn replace_device(
         &self,
         old_id: &DeviceId,
@@ -897,11 +967,14 @@ impl IdentityService {
             None,
             now,
         )
-        .await;
+        .await?;
         Ok(device)
     }
 
     /// Build security context (§32).
+    ///
+    /// # Errors
+    /// Returns [`sitolo_auth::AuthError`] when the session is invalid, expired, revoked, or its assurance requirement is unmet.
     pub async fn build_security_context(
         &self,
         session_id: &SessionId,
@@ -944,12 +1017,17 @@ impl IdentityService {
 /// Login result (enumeration-resistant public surface).
 #[derive(Debug, Clone)]
 pub struct LoginResult {
+    /// The persisted session.
     pub session: sitolo_auth::Session,
+    /// Raw refresh token; returned once and never persisted.
     pub refresh_token: String,
+    /// Whether MFA step-up is required before protected operations.
     pub mfa_required: bool,
 }
 
 impl LoginResult {
+    /// Reduces the internal result to the enumeration-safe public outcome.
+    #[must_use]
     pub fn public_outcome(&self) -> PublicLoginOutcome {
         if self.mfa_required {
             PublicLoginOutcome::MfaRequired
@@ -962,63 +1040,10 @@ impl LoginResult {
 /// Refresh result.
 #[derive(Debug, Clone)]
 pub struct RefreshResult {
+    /// Session bound to the rotated credential.
     pub session_id: SessionId,
+    /// User that owns the refresh family.
     pub user_id: UserId,
+    /// Successor raw refresh token; returned once and never persisted.
     pub refresh_token: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sitolo_auth::{SessionPolicySet, TestPasswordHasher};
-    use sitolo_persistence::IdentityDatabase;
-    use sitolo_security::DeterministicRandom;
-
-    fn test_service() -> Result<IdentityService, sitolo_auth::AuthError> {
-        let policy = SessionPolicySet {
-            merchant: sitolo_auth::SessionLifetime {
-                idle: Duration::from_secs(30),
-                absolute: Duration::from_secs(60),
-            },
-            administrator: sitolo_auth::SessionLifetime {
-                idle: Duration::from_secs(60),
-                absolute: Duration::from_secs(120),
-            },
-            break_glass: sitolo_auth::SessionLifetime {
-                idle: Duration::from_secs(10),
-                absolute: Duration::from_secs(20),
-            },
-        };
-        let db = Arc::new(IdentityDatabase::new(policy, Duration::from_secs(3600)));
-        let hasher = Arc::new(TestPasswordHasher::new(1));
-        let random: Arc<dyn RandomSource> = Arc::new(DeterministicRandom::test_only([7u8; 32]));
-        IdentityService::new(
-            db,
-            hasher,
-            None,
-            IdentityPolicy {
-                sessions: policy,
-                refresh_ttl: Duration::from_secs(3600),
-                reset_ttl: Duration::from_secs(600),
-                mfa_challenge_ttl: Duration::from_secs(300),
-                recovery_code_count: 8,
-                abuse_rules: vec![(
-                    AbuseClass::Login,
-                    RateLimitRule {
-                        max_attempts: 5,
-                        window: Duration::from_secs(60),
-                        lockout: Duration::from_secs(300),
-                    },
-                )],
-                step_up_enrollment: Assurance::A2,
-            },
-            random,
-        )
-    }
-
-    #[test]
-    fn service_constructs() -> Result<(), sitolo_auth::AuthError> {
-        let _service = test_service()?;
-        Ok(())
-    }
 }

@@ -37,16 +37,46 @@ const MAX_SCOPE_BYTES: usize = 128;
 /// Raw provider settings parsed at the application configuration boundary.
 #[derive(Clone)]
 pub struct CognitoOidcSettings {
+    /// Trusted OIDC issuer identifier; the JWKS location is derived from it.
     pub issuer: String,
+    /// Cognito application client identifier expected in access tokens.
     pub client_id: String,
+    /// Optional resource audience expected in the token `aud` claim.
     pub resource_audience: Option<String>,
+    /// Provider token endpoint used for authorization-code exchange.
     pub token_endpoint: String,
+    /// Client redirect URI registered with the provider.
     pub redirect_uri: String,
+    /// Scopes every accepted access token must carry.
     pub required_scopes: Vec<String>,
+    /// Upper bound for each provider HTTP request.
     pub request_timeout: Duration,
+    /// Lifetime of a successfully fetched JWKS document.
     pub jwks_ttl: Duration,
+    /// Minimum spacing between forced refreshes for an unknown key id.
     pub unknown_kid_refresh_interval: Duration,
+    /// Allowed clock skew when validating token times.
     pub clock_skew: Duration,
+}
+
+impl fmt::Debug for CognitoOidcSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CognitoOidcSettings")
+            .field("issuer", &self.issuer)
+            .field("client_id", &"[configured]")
+            .field("resource_audience", &self.resource_audience)
+            .field("token_endpoint", &self.token_endpoint)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("required_scope_count", &self.required_scopes.len())
+            .field("request_timeout", &self.request_timeout)
+            .field("jwks_ttl", &self.jwks_ttl)
+            .field(
+                "unknown_kid_refresh_interval",
+                &self.unknown_kid_refresh_interval,
+            )
+            .field("clock_skew", &self.clock_skew)
+            .finish()
+    }
 }
 
 /// Validated static Cognito/OIDC settings.
@@ -68,6 +98,10 @@ pub struct CognitoOidcConfig {
 impl CognitoOidcConfig {
     /// Creates validated configuration and derives the JWKS URL from the
     /// trusted issuer. Callers cannot supply an independent key URL.
+    ///
+    /// # Errors
+    /// Returns [`AuthError::ConfigurationInvalid`] when any URL, identifier,
+    /// scope, or timeout falls outside the adapter's bounded contract.
     pub fn new(settings: CognitoOidcSettings) -> Result<Self, AuthError> {
         let CognitoOidcSettings {
             issuer: issuer_raw,
@@ -98,7 +132,7 @@ impl CognitoOidcConfig {
             return Err(AuthError::ConfigurationInvalid);
         }
         let redirect_uri =
-            Url::parse(&redirect_uri_raw).map_err(|_| AuthError::ConfigurationInvalid)?;
+            Url::parse(&redirect_uri_raw).map_err(|_error| AuthError::ConfigurationInvalid)?;
         if !matches!(redirect_uri.scheme(), "https" | "sitolo")
             || redirect_uri.host_str().is_none()
             || !redirect_uri.username().is_empty()
@@ -133,7 +167,7 @@ impl CognitoOidcConfig {
             "{}/.well-known/jwks.json",
             issuer.as_str().trim_end_matches('/')
         ))
-        .map_err(|_| AuthError::ConfigurationInvalid)?;
+        .map_err(|_error| AuthError::ConfigurationInvalid)?;
 
         Ok(Self {
             issuer,
@@ -194,16 +228,23 @@ pub struct CognitoOidcProvider {
 impl CognitoOidcProvider {
     /// Constructs the provider using TLS certificate verification and a
     /// bounded request timeout. Redirect following is disabled.
+    ///
+    /// # Errors
+    /// Returns [`AuthError::ConfigurationInvalid`] when no process-wide rustls
+    /// crypto provider can be installed or when the HTTPS connector rejects
+    /// the platform trust roots.
     pub fn new(config: CognitoOidcConfig) -> Result<Self, AuthError> {
         if rustls::crypto::CryptoProvider::get_default().is_none() {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            // Losing the installation race is harmless: another initialiser
+            // installed the process-wide provider and the check below decides.
+            drop(rustls::crypto::aws_lc_rs::default_provider().install_default());
         }
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             return Err(AuthError::ConfigurationInvalid);
         }
         let connector = HttpsConnectorBuilder::new()
             .with_native_roots()
-            .map_err(|_| AuthError::ConfigurationInvalid)?
+            .map_err(|_error| AuthError::ConfigurationInvalid)?
             .https_only()
             .enable_http1()
             .build();
@@ -256,9 +297,10 @@ impl CognitoOidcProvider {
             let cache = self.jwks.read().await;
             if let Some(cache) = cache.as_ref()
                 && now < cache.expires_at
-                && cache
-                    .last_forced_refresh_at
-                    .is_some_and(|last| now < last + self.config.unknown_kid_refresh_interval)
+                && cache.last_forced_refresh_at.is_some_and(|last| {
+                    last.checked_add(self.config.unknown_kid_refresh_interval)
+                        .is_some_and(|deadline| now < deadline)
+                })
             {
                 return Err(AuthError::IdentityKeyUnavailable);
             }
@@ -285,17 +327,17 @@ impl CognitoOidcProvider {
             .jwks_url
             .as_str()
             .parse::<Uri>()
-            .map_err(|_| AuthError::ConfigurationInvalid)?;
+            .map_err(|_error| AuthError::ConfigurationInvalid)?;
         let request = Request::builder()
             .method(Method::GET)
             .uri(uri)
             .body(Full::new(Bytes::new()))
-            .map_err(|_| AuthError::ConfigurationInvalid)?;
+            .map_err(|_error| AuthError::ConfigurationInvalid)?;
         let response =
             tokio::time::timeout(self.config.request_timeout, self.client.request(request))
                 .await
-                .map_err(|_| AuthError::IdentityProviderUnavailable)?
-                .map_err(|_| AuthError::IdentityProviderUnavailable)?;
+                .map_err(|_error| AuthError::IdentityProviderUnavailable)?
+                .map_err(|_error| AuthError::IdentityProviderUnavailable)?;
         let status = response.status();
         if !status.is_success() {
             return Err(map_provider_status(status));
@@ -305,16 +347,19 @@ impl CognitoOidcProvider {
             read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES),
         )
         .await
-        .map_err(|_| AuthError::IdentityProviderUnavailable)??;
+        .map_err(|_error| AuthError::IdentityProviderUnavailable)??;
         let keys = parse_jwks(&body)?;
         let now = SystemTime::now();
         let mut cache = self.jwks.write().await;
         let last_forced_refresh_at = cache
             .as_ref()
             .and_then(|previous| previous.last_forced_refresh_at);
+        let expires_at = now
+            .checked_add(self.config.jwks_ttl)
+            .ok_or(AuthError::ConfigurationInvalid)?;
         *cache = Some(CachedJwks {
             keys,
-            expires_at: now + self.config.jwks_ttl,
+            expires_at,
             last_forced_refresh_at: last_forced_refresh_at.or(Some(now)),
         });
         Ok(())
@@ -327,7 +372,8 @@ impl CognitoOidcProvider {
         {
             return Err(AuthError::AuthenticationFailed);
         }
-        let header: Header = decode_header(raw).map_err(|_| AuthError::AuthenticationFailed)?;
+        let header: Header =
+            decode_header(raw).map_err(|_error| AuthError::AuthenticationFailed)?;
         if header.alg != Algorithm::RS256
             || header.typ.as_deref() != Some("JWT")
             || header.kid.as_deref().is_none_or(str::is_empty)
@@ -349,7 +395,7 @@ impl CognitoOidcProvider {
         validation.set_issuer(&[self.config.issuer.as_str()]);
 
         let claims = decode::<CognitoAccessClaims>(raw, &key, &validation)
-            .map_err(|_| AuthError::AuthenticationFailed)?
+            .map_err(|_error| AuthError::AuthenticationFailed)?
             .claims;
         if claims.iss != self.config.issuer.as_str()
             || claims.sub.is_empty()
@@ -398,7 +444,7 @@ impl CognitoOidcProvider {
 
 fn parse_jwks(body: &[u8]) -> Result<HashMap<String, DecodingKey>, AuthError> {
     let jwks: JwkSet =
-        serde_json::from_slice(body).map_err(|_| AuthError::IdentityKeyUnavailable)?;
+        serde_json::from_slice(body).map_err(|_error| AuthError::IdentityKeyUnavailable)?;
     if jwks.keys.is_empty() || jwks.keys.len() > MAX_JWKS_KEYS {
         return Err(AuthError::IdentityKeyUnavailable);
     }
@@ -465,24 +511,24 @@ impl IdentityProviderPort for CognitoOidcProvider {
             ("redirect_uri", self.config.redirect_uri.as_str()),
             ("code_verifier", pkce_verifier),
         ])
-        .map_err(|_| AuthError::IdentityProviderRejected)?;
+        .map_err(|_error| AuthError::IdentityProviderRejected)?;
         let uri = self
             .config
             .token_endpoint
             .as_str()
             .parse::<Uri>()
-            .map_err(|_| AuthError::ConfigurationInvalid)?;
+            .map_err(|_error| AuthError::ConfigurationInvalid)?;
         let request = Request::builder()
             .method(Method::POST)
             .uri(uri)
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .body(Full::new(Bytes::from(form)))
-            .map_err(|_| AuthError::ConfigurationInvalid)?;
+            .map_err(|_error| AuthError::ConfigurationInvalid)?;
         let response =
             tokio::time::timeout(self.config.request_timeout, self.client.request(request))
                 .await
-                .map_err(|_| AuthError::IdentityProviderUnavailable)?
-                .map_err(|_| AuthError::IdentityProviderUnavailable)?;
+                .map_err(|_error| AuthError::IdentityProviderUnavailable)?
+                .map_err(|_error| AuthError::IdentityProviderUnavailable)?;
         let status = response.status();
         if !status.is_success() {
             return Err(map_provider_status(status));
@@ -492,9 +538,9 @@ impl IdentityProviderPort for CognitoOidcProvider {
             read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES),
         )
         .await
-        .map_err(|_| AuthError::IdentityProviderUnavailable)??;
+        .map_err(|_error| AuthError::IdentityProviderUnavailable)??;
         let token_response: CognitoTokenResponse =
-            serde_json::from_slice(&body).map_err(|_| AuthError::IdentityProviderRejected)?;
+            serde_json::from_slice(&body).map_err(|_error| AuthError::IdentityProviderRejected)?;
         if token_response.access_token.is_empty()
             || token_response.access_token.len() > MAX_ACCESS_TOKEN_BYTES
             || token_response.token_type != "Bearer"
@@ -577,7 +623,7 @@ async fn read_bounded(
     }
     let mut body = Vec::new();
     while let Some(frame) = response.frame().await {
-        let frame = frame.map_err(|_| AuthError::IdentityProviderUnavailable)?;
+        let frame = frame.map_err(|_error| AuthError::IdentityProviderUnavailable)?;
         let Ok(chunk) = frame.into_data() else {
             continue;
         };
@@ -598,7 +644,7 @@ fn map_provider_status(status: StatusCode) -> AuthError {
 }
 
 fn parse_https_url(raw: &str) -> Result<Url, AuthError> {
-    let url = Url::parse(raw).map_err(|_| AuthError::ConfigurationInvalid)?;
+    let url = Url::parse(raw).map_err(|_error| AuthError::ConfigurationInvalid)?;
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -673,19 +719,21 @@ mod tests {
         )?;
         *provider.jwks.write().await = Some(CachedJwks {
             keys: HashMap::from([("sitolo-test-key".to_owned(), key)]),
-            expires_at: SystemTime::now() + Duration::from_secs(300),
+            expires_at: SystemTime::now()
+                .checked_add(Duration::from_secs(300))
+                .ok_or_else(|| io::Error::other("fixture key expiry is representable"))?,
             last_forced_refresh_at: None,
         });
         Ok(provider)
     }
 
-    fn signed_access_token(claims: TestAccessClaims) -> Result<String, Box<dyn Error>> {
+    fn signed_access_token(claims: &TestAccessClaims) -> Result<String, Box<dyn Error>> {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("sitolo-test-key".to_owned());
         header.typ = Some("JWT".to_owned());
         Ok(encode(
             &header,
-            &claims,
+            claims,
             &EncodingKey::from_rsa_der(include_bytes!(
                 "../tests/fixtures/cognito-test-private.der"
             )),
@@ -697,9 +745,9 @@ mod tests {
         Ok(TestAccessClaims {
             iss: "https://cognito-idp.af-south-1.amazonaws.com/pool-id".to_owned(),
             sub: "provider-subject-123".to_owned(),
-            exp: now + 300,
-            iat: now - 30,
-            auth_time: now - 60,
+            exp: now.saturating_add(300),
+            iat: now.saturating_sub(30),
+            auth_time: now.saturating_sub(60),
             token_use: "access".to_owned(),
             client_id: "sitolo-mobile-client".to_owned(),
             scope: "sitolo/read".to_owned(),
@@ -739,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn configuration_rejects_http_and_unsafe_client_identifiers() -> Result<(), Box<dyn Error>> {
+    fn configuration_rejects_http_and_unsafe_client_identifiers() {
         let mut http_issuer_settings = settings();
         http_issuer_settings.issuer = "http://identity.example.test/pool".to_owned();
         let http_issuer = CognitoOidcConfig::new(http_issuer_settings);
@@ -752,7 +800,6 @@ mod tests {
             unsafe_client_id,
             Err(AuthError::ConfigurationInvalid)
         ));
-        Ok(())
     }
 
     #[tokio::test]
@@ -783,7 +830,7 @@ mod tests {
     async fn valid_signed_access_token_returns_only_the_external_identity_fact()
     -> Result<(), Box<dyn Error>> {
         let provider = provider_with_fixture_key().await?;
-        let token = signed_access_token(valid_claims()?)?;
+        let token = signed_access_token(&valid_claims()?)?;
         let identity = provider.validate_assertion(&token).await?;
         assert_eq!(
             identity.issuer,
@@ -821,7 +868,7 @@ mod tests {
         cases.push(insufficient_scope);
 
         for claims in cases {
-            let token = signed_access_token(claims)?;
+            let token = signed_access_token(&claims)?;
             assert_eq!(
                 provider
                     .validate_assertion(&token)
@@ -837,20 +884,17 @@ mod tests {
     #[tokio::test]
     async fn invalid_rsa_signature_is_denied() -> Result<(), Box<dyn Error>> {
         let provider = provider_with_fixture_key().await?;
-        let mut token = signed_access_token(valid_claims()?)?;
+        let mut token = signed_access_token(&valid_claims()?)?;
         let signature_index = token
             .rfind('.')
-            .ok_or_else(|| io::Error::other("JWT has a signature separator"))?
-            + 1;
-        let replacement = if token.as_bytes()[signature_index] == b'A' {
-            'B'
-        } else {
-            'A'
-        };
-        token.replace_range(
-            signature_index..signature_index + 1,
-            &replacement.to_string(),
-        );
+            .and_then(|separator| separator.checked_add(1))
+            .ok_or_else(|| io::Error::other("JWT has a signature separator"))?;
+        let signature_byte = *token
+            .as_bytes()
+            .get(signature_index)
+            .ok_or_else(|| io::Error::other("JWT has a signature byte"))?;
+        let replacement = if signature_byte == b'A' { 'B' } else { 'A' };
+        token.replace_range(signature_index..=signature_index, &replacement.to_string());
         assert_eq!(
             provider
                 .validate_assertion(&token)
@@ -863,10 +907,9 @@ mod tests {
     }
 
     #[test]
-    fn audience_handles_string_and_array_encodings() -> Result<(), Box<dyn Error>> {
+    fn audience_handles_string_and_array_encodings() {
         assert!(Audience::Single("resource-a".to_owned()).contains("resource-a"));
         assert!(!Audience::Single("resource-a".to_owned()).contains("resource-b"));
         assert!(Audience::Multiple(vec!["resource-a".to_owned()]).contains("resource-a"));
-        Ok(())
     }
 }

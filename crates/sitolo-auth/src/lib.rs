@@ -6,7 +6,7 @@
 //! offline capability, and the security context (§15, §32, §33).
 //!
 //! This crate deliberately provides protocol-neutral state machines and ports.
-//! OIDC, password hashing, TOTP, and WebAuthn protocol processing belong to
+//! OIDC, password hashing, TOTP, and `WebAuthn` protocol processing belong to
 //! maintained adapters selected at deployment time (§6.1); tenant membership
 //! and permission checks belong to later phases (§1.2, §69).
 #![forbid(unsafe_code)]

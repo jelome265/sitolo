@@ -73,14 +73,15 @@ impl Drop for EnvSnapshot {
             .filter(|(key, _)| managed(key))
             .map(|(key, _)| key)
             .collect();
-        // SAFETY: the test holds ENV_LOCK until after this snapshot is dropped.
-        unsafe {
-            for key in current {
-                std::env::remove_var(&key);
-            }
-            for (key, value) in &self.saved {
-                std::env::set_var(key, value);
-            }
+        for key in current {
+            // SAFETY: the test holds ENV_LOCK until after this snapshot is
+            // dropped, so no other test observes the process environment.
+            unsafe { std::env::remove_var(&key) };
+        }
+        for (key, value) in &self.saved {
+            // SAFETY: the test holds ENV_LOCK until after this snapshot is
+            // dropped, so no other test observes the process environment.
+            unsafe { std::env::set_var(key, value) };
         }
     }
 }
@@ -115,14 +116,18 @@ fn block_on<F: Future>(mut future: F) -> Result<F::Output, std::io::Error> {
 #[test]
 fn configuration_and_secret_value_namespaces_coexist() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
+    // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
+    // environment on drop.
     let _snapshot = unsafe { EnvSnapshot::isolate() };
     // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
     // environment on drop.
-    unsafe {
-        std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development");
-        std::env::set_var("SITOLO__DATABASE__HOST", "127.0.0.1");
-        std::env::set_var(SECRET_VAR, SENTINEL);
-    }
+    unsafe { std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development") };
+    // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
+    // environment on drop.
+    unsafe { std::env::set_var("SITOLO__DATABASE__HOST", "127.0.0.1") };
+    // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
+    // environment on drop.
+    unsafe { std::env::set_var(SECRET_VAR, SENTINEL) };
 
     let builder = EnvLoader::load().map_err(|error| std::io::Error::other(error.0))?;
     assert_eq!(builder.environment, Environment::Development);
@@ -137,13 +142,15 @@ fn configuration_and_secret_value_namespaces_coexist() -> Result<(), Box<dyn std
 #[test]
 fn unknown_configuration_key_still_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
+    // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
+    // environment on drop.
     let _snapshot = unsafe { EnvSnapshot::isolate() };
     // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
     // environment on drop.
-    unsafe {
-        std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development");
-        std::env::set_var(CONFIG_VAR, SENTINEL);
-    }
+    unsafe { std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development") };
+    // SAFETY: the test holds ENV_LOCK; the snapshot restores the process
+    // environment on drop.
+    unsafe { std::env::set_var(CONFIG_VAR, SENTINEL) };
 
     let error: UnknownKey = match EnvLoader::load() {
         Err(error) => error,

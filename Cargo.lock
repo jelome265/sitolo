@@ -1922,9 +1922,9 @@ dependencies = [
  "async-trait",
  "chrono",
  "rustls",
- "tracing",
  "serde_json",
  "sha2",
+ "sitolo-application",
  "sitolo-audit",
  "sitolo-auth",
  "sitolo-authz",
@@ -1937,6 +1937,7 @@ dependencies = [
  "sqlx-postgres",
  "thiserror",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

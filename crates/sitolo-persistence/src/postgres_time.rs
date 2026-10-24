@@ -1,7 +1,7 @@
 //! Timestamp conversion at the PostgreSQL boundary.
 //!
 //! Event and audit types carry `SystemTime` so the domain and application layers
-//! do not depend on a database driver's timestamp crate. SQLx binds
+//! do not depend on a database driver's timestamp crate. `SQLx` binds
 //! `chrono::DateTime<Utc>`, so conversion happens here, once, with no panics.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
