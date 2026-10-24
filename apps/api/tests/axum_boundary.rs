@@ -1,3 +1,9 @@
+//! Axum boundary regressions for the composed router.
+//!
+//! Exercises the real [`app_router`] with an injected secret provider so route
+//! inventory, body bounds, and public/protected access are checked through the
+//! same router the listener serves. No socket is bound here.
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;

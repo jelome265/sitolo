@@ -36,10 +36,10 @@ impl sitolo_security::SecretProvider for StubProvider {
     }
 }
 
-fn stub() -> Option<Arc<dyn sitolo_security::SecretProvider>> {
-    Some(Arc::new(StubProvider {
+fn stub() -> Arc<dyn sitolo_security::SecretProvider> {
+    Arc::new(StubProvider {
         value: PROBE_SECRET.to_string(),
-    }))
+    })
 }
 
 async fn probe_once(
@@ -58,9 +58,11 @@ async fn probe_once(
 
 #[tokio::test]
 async fn development_boots_and_serves_bounded_probes() -> Result<(), Box<dyn std::error::Error>> {
-    let dev =
-        StartupContext::build_from_pairs_with_provider(Vec::<(String, String)>::new(), stub())
-            .await?;
+    let dev = StartupContext::build_from_pairs_with_provider(
+        Vec::<(String, String)>::new(),
+        Some(stub()),
+    )
+    .await?;
     assert_eq!(dev.readiness(), Readiness::NotReady);
     assert!(dev.state().config_fingerprint().starts_with("sha256:"));
 
@@ -85,7 +87,7 @@ async fn development_boots_and_serves_bounded_probes() -> Result<(), Box<dyn std
         "unexpected unknown-path response: {missing}"
     );
 
-    let _ = shutdown_tx.send(());
+    let _sent = shutdown_tx.send(());
     let order = tokio::time::timeout(Duration::from_secs(15), serve).await??;
     let order = order?;
     assert_eq!(
@@ -124,7 +126,7 @@ async fn staging_boots_with_explicit_database_identity() -> Result<(), Box<dyn s
                 "https://app.example.com/callback",
             ),
         ],
-        stub(),
+        Some(stub()),
     )
     .await?;
     assert_eq!(staging.readiness(), Readiness::NotReady);
@@ -196,7 +198,7 @@ async fn explicit_provider_is_honored_in_production() -> Result<(), Box<dyn std:
             ),
             pair("SECRETS__ALLOW_LOCAL_PROVIDER", "false"),
         ],
-        stub(),
+        Some(stub()),
     )
     .await?;
     assert_eq!(production.readiness(), Readiness::NotReady);

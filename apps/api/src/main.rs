@@ -22,11 +22,18 @@ async fn run() -> Result<(), StartupError> {
     // Structural readiness gate: no socket exists before this point.
     let listener = tokio::net::TcpListener::bind(context.config().bind_address)
         .await
-        .map_err(|_| StartupError::ConfigRejected { problems: 0 })?;
+        .map_err(|source| {
+            // The OS error can quote the bound address; only the class crosses
+            // the startup boundary.
+            drop(source);
+            StartupError::ServeFailed {
+                class: "listener-bind",
+            }
+        })?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let serve_task = tokio::spawn(serve(listener, Arc::clone(context.state()), shutdown_rx));
     wait_for_shutdown_signal().await?;
-    let _ = shutdown_tx.send(());
+    let _sent = shutdown_tx.send(());
     match serve_task.await {
         Ok(Ok(_shutdown_order)) => Ok(()),
         Ok(Err(error)) => Err(StartupError::ServeFailed {
@@ -49,18 +56,23 @@ async fn wait_for_shutdown_signal() -> Result<(), StartupError> {
     {
         let mut terminate =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .map_err(|_| StartupError::SignalHandlerUnavailable)?;
+                .map_err(signal_error)?;
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
-                result.map_err(|_| StartupError::SignalHandlerUnavailable)
+                result.map_err(signal_error)
             },
             _ = terminate.recv() => Ok(()),
         }
     }
     #[cfg(not(unix))]
     {
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|_| StartupError::SignalHandlerUnavailable)
+        tokio::signal::ctrl_c().await.map_err(signal_error)
     }
+}
+
+/// Maps a signal-handler failure to its fail-closed startup class. The
+/// underlying OS error carries no operator-usable detail beyond the class.
+fn signal_error(source: std::io::Error) -> StartupError {
+    drop(source);
+    StartupError::SignalHandlerUnavailable
 }

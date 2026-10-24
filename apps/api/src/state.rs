@@ -33,7 +33,29 @@ pub struct AppState {
     runtime_ready: bool,
 }
 
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Trait-object dependencies and the telemetry buffer are represented by
+        // presence flags only: their internals must never reach a log line.
+        formatter
+            .debug_struct("AppState")
+            .field("service_name", &self.service_name)
+            .field("service_version", &self.service_version)
+            .field("config_fingerprint", &self.config_fingerprint)
+            .field("db_target", &self.db_target)
+            .field("has_identity_provider", &self.identity_provider.is_some())
+            .field("has_identity_authority", &self.identity_authority.is_some())
+            .field("has_tenancy_service", &self.tenancy_service.is_some())
+            .field("has_runtime_database", &self.runtime_database.is_some())
+            .field("runtime_ready", &self.runtime_ready)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AppState {
+    /// Creates state with no optional runtime dependency composed. Every
+    /// dependency must be installed explicitly by the composition root.
+    #[must_use]
     pub fn new(
         service_name: String,
         service_version: String,
@@ -114,11 +136,13 @@ impl AppState {
     ///
     /// # Panics
     /// This accessor does not panic.
+    #[must_use]
     pub fn tenancy_service(&self) -> Option<&TenancyService> {
         self.tenancy_service.as_deref()
     }
 
     /// Whether a durable tenancy command service has been composed.
+    #[must_use]
     pub fn has_tenancy_service(&self) -> bool {
         self.tenancy_service.is_some()
     }
@@ -158,6 +182,7 @@ impl AppState {
 
     /// Whether both the external identity provider and persistent session
     /// authority have been installed into the request path.
+    #[must_use]
     pub fn has_request_identity(&self) -> bool {
         self.identity_provider.is_some() && self.identity_authority.is_some()
     }
@@ -168,6 +193,12 @@ impl AppState {
     /// credentials still fail as authentication errors; a structurally valid request
     /// fails as dependency unavailable. Callers must perform tenant authorization
     /// before invoking protected commands.
+    ///
+    /// # Errors
+    /// Returns [`AppError::Authentication`] when the credential is missing,
+    /// malformed, or fails provider/session validation, and
+    /// [`AppError::DependencyUnavailable`] when the authentication dependencies
+    /// were never composed. No variant carries credential material.
     pub async fn authenticate_request(
         &self,
         authorization: Option<&str>,
@@ -178,8 +209,9 @@ impl AppState {
         };
         let session_id =
             SessionId::new(session_selector.to_owned()).map_err(|error| map_auth_error(&error))?;
-        let _credential = extract_bearer(authorization)?;
-        drop(_credential);
+        // The bearer credential is validated for shape and then dropped: this
+        // state never retains request credentials.
+        drop(extract_bearer(authorization)?);
 
         let (Some(identity_provider), Some(identity_authority)) =
             (&self.identity_provider, &self.identity_authority)
@@ -199,24 +231,32 @@ impl AppState {
         .await
     }
 
+    /// Configured service name reported by the liveness probe.
+    #[must_use]
     pub fn service_name(&self) -> &str {
         &self.service_name
     }
 
+    /// Configured service version reported by the liveness probe.
+    #[must_use]
     pub fn service_version(&self) -> &str {
         &self.service_version
     }
 
     /// Safe operational attribute; suitable for low-cardinality telemetry.
+    #[must_use]
     pub fn config_fingerprint(&self) -> &str {
         &self.config_fingerprint
     }
 
     /// Non-secret database identity for diagnostics.
+    #[must_use]
     pub fn db_target(&self) -> &DatabaseTarget {
         &self.db_target
     }
 
+    /// Shared bounded telemetry buffer.
+    #[must_use]
     pub fn telemetry(&self) -> &Arc<Mutex<TelemetryBuffer>> {
         &self.telemetry
     }

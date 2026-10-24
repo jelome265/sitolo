@@ -27,14 +27,14 @@ struct EnvGuard;
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        // SAFETY: every test holds ENV_LOCK until after this guard is dropped.
-        unsafe {
-            for key in CONFIG_KEYS {
-                std::env::remove_var(key);
-            }
-            std::env::remove_var(SECRET_KEY);
-            std::env::remove_var(OLD_CONFIG_KEY);
+        for key in CONFIG_KEYS {
+            // SAFETY: every test holds ENV_LOCK until after this guard is dropped.
+            unsafe { std::env::remove_var(key) };
         }
+        // SAFETY: every test holds ENV_LOCK until after this guard is dropped.
+        unsafe { std::env::remove_var(SECRET_KEY) };
+        // SAFETY: every test holds ENV_LOCK until after this guard is dropped.
+        unsafe { std::env::remove_var(OLD_CONFIG_KEY) };
     }
 }
 
@@ -43,12 +43,13 @@ async fn process_environment_config_and_secret_coexist() -> Result<(), Box<dyn s
     let _lock = ENV_LOCK.lock().await;
     let _guard = EnvGuard;
     // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
-    unsafe {
-        std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development");
-        std::env::set_var("SITOLO__DATABASE__HOST", "127.0.0.1");
-        std::env::set_var(SECRET_KEY, SENTINEL);
-        std::env::remove_var(OLD_CONFIG_KEY);
-    }
+    unsafe { std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development") };
+    // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
+    unsafe { std::env::set_var("SITOLO__DATABASE__HOST", "127.0.0.1") };
+    // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
+    unsafe { std::env::set_var(SECRET_KEY, SENTINEL) };
+    // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
+    unsafe { std::env::remove_var(OLD_CONFIG_KEY) };
 
     let context = StartupContext::build()
         .await
@@ -63,11 +64,11 @@ async fn unknown_configuration_key_still_fails_closed() -> Result<(), Box<dyn st
     let _lock = ENV_LOCK.lock().await;
     let _guard = EnvGuard;
     // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
-    unsafe {
-        std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development");
-        std::env::set_var(OLD_CONFIG_KEY, SENTINEL);
-        std::env::remove_var(SECRET_KEY);
-    }
+    unsafe { std::env::set_var("SITOLO__RUNTIME__ENVIRONMENT", "development") };
+    // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
+    unsafe { std::env::set_var(OLD_CONFIG_KEY, SENTINEL) };
+    // SAFETY: the test holds ENV_LOCK; EnvGuard removes these keys on drop.
+    unsafe { std::env::remove_var(SECRET_KEY) };
 
     let error = StartupContext::build()
         .await

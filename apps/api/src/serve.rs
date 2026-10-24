@@ -11,7 +11,7 @@ use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{MethodRouter, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -162,95 +162,7 @@ pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
 
     let mut router = Router::new();
     for spec in ROUTES {
-        let body_limit = DefaultBodyLimit::max(spec.body_limit);
-        let timeout = TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, spec.timeout);
-        router = match (spec.method, spec.path, spec.access) {
-            (Method::Get, "/process/live", Access::Public { .. }) => router.route(
-                spec.path,
-                get(liveness)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout),
-            ),
-            (Method::Get, "/process/ready", Access::Public { .. }) => router.route(
-                spec.path,
-                get(readiness)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout),
-            ),
-            (Method::Post, "/v1/organizations", Access::Permission(_)) => router.route(
-                spec.path,
-                post(create_organization_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout)
-                    .route_layer(middleware::from_fn_with_state(
-                        Arc::clone(&state),
-                        authenticate_protected_request,
-                    )),
-            ),
-            (
-                Method::Post,
-                "/v1/organizations/{organization_id}/branches",
-                Access::Permission(_),
-            ) => router.route(
-                spec.path,
-                post(create_branch_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout)
-                    .route_layer(middleware::from_fn_with_state(
-                        Arc::clone(&state),
-                        authenticate_protected_request,
-                    )),
-            ),
-            (
-                Method::Post,
-                "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
-                Access::Permission(_),
-            ) => router.route(
-                spec.path,
-                post(activate_branch_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout)
-                    .route_layer(middleware::from_fn_with_state(
-                        Arc::clone(&state),
-                        authenticate_protected_request,
-                    )),
-            ),
-            (
-                Method::Post,
-                "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
-                Access::Permission(_),
-            ) => router.route(
-                spec.path,
-                post(revoke_member_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout)
-                    .route_layer(middleware::from_fn_with_state(
-                        Arc::clone(&state),
-                        authenticate_protected_request,
-                    )),
-            ),
-            (
-                Method::Post,
-                "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
-                Access::Permission(_),
-            ) => router.route(
-                spec.path,
-                post(suspend_member_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout)
-                    .route_layer(middleware::from_fn_with_state(
-                        Arc::clone(&state),
-                        authenticate_protected_request,
-                    )),
-            ),
-            (Method::Post, _, Access::Permission(_)) => router.route(
-                spec.path,
-                post(protected_route)
-                    .layer::<_, Infallible>(body_limit)
-                    .layer::<_, Infallible>(timeout),
-            ),
-            _ => return Err(ServeError::InvalidRouteInventory),
-        };
+        router = router.route(spec.path, method_router(spec, &state)?);
     }
 
     Ok(router.with_state(state).layer(
@@ -266,6 +178,72 @@ pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
     ))
 }
 
+/// Builds the handler for one declared route. An undeclared method/path pair is
+/// rejected rather than silently served.
+fn method_router(
+    spec: &RouteSpec,
+    state: &Arc<AppState>,
+) -> Result<MethodRouter<Arc<AppState>>, ServeError> {
+    match (spec.method, spec.path, spec.access) {
+        (Method::Get, "/process/live", Access::Public { .. }) => Ok(bounded(spec, get(liveness))),
+        (Method::Get, "/process/ready", Access::Public { .. }) => Ok(bounded(spec, get(readiness))),
+        (Method::Post, "/v1/organizations", Access::Permission(_)) => {
+            Ok(authenticated(spec, state, post(create_organization_route)))
+        }
+        (Method::Post, "/v1/organizations/{organization_id}/branches", Access::Permission(_)) => {
+            Ok(authenticated(spec, state, post(create_branch_route)))
+        }
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(activate_branch_route))),
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(revoke_member_route))),
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(suspend_member_route))),
+        // The catch-all handler authenticates inside the handler body, so it is
+        // bounded but not wrapped in the authentication middleware.
+        (Method::Post, _, Access::Permission(_)) => Ok(bounded(spec, post(protected_route))),
+        _ => Err(ServeError::InvalidRouteInventory),
+    }
+}
+
+/// Applies the declared body limit and request deadline to a public handler.
+fn bounded<S>(spec: &RouteSpec, handler: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    handler
+        .layer::<_, Infallible>(DefaultBodyLimit::max(spec.body_limit))
+        .layer::<_, Infallible>(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            spec.timeout,
+        ))
+}
+
+/// Applies the declared body limit, request deadline, and authentication
+/// middleware to a protected handler.
+fn authenticated<S>(
+    spec: &RouteSpec,
+    state: &Arc<AppState>,
+    handler: MethodRouter<S>,
+) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    bounded(spec, handler).route_layer(middleware::from_fn_with_state(
+        Arc::clone(state),
+        authenticate_protected_request,
+    ))
+}
+
 /// Serves the validated router and drains in-flight requests within the process deadline.
 ///
 /// # Errors
@@ -278,7 +256,8 @@ pub async fn serve(
 ) -> Result<Vec<Subsystem>, ServeError> {
     let router = app_router(state)?;
     let server = axum::serve(listener, router).with_graceful_shutdown(async move {
-        let _ = shutdown.await;
+        // The sender dropping also requests shutdown; either outcome drains.
+        let _shutdown = shutdown.await;
     });
     match tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), server).await {
         Ok(Ok(())) => {
@@ -297,14 +276,17 @@ fn validate_route_inventory() -> Result<String, ServeError> {
             Access::Public { reason } => !reason.trim().is_empty(),
             Access::Permission(permission) => !permission.trim().is_empty(),
         };
+        let duplicate = ROUTES.get(..index).is_some_and(|prior| {
+            prior
+                .iter()
+                .any(|entry| entry.method == spec.method && entry.path == spec.path)
+        });
         if !access_ok
             || spec.body_limit == 0
             || spec.body_limit > MAX_INGRESS_BODY_BYTES
             || spec.timeout.is_zero()
             || spec.timeout > Duration::from_secs(60)
-            || ROUTES[..index]
-                .iter()
-                .any(|prior| prior.method == spec.method && prior.path == spec.path)
+            || duplicate
         {
             return Err(ServeError::InvalidRouteInventory);
         }
@@ -367,7 +349,7 @@ async fn authenticate_protected_request(
             request.extensions_mut().insert(security_context);
             next.run(request).await
         }
-        Err(error) => app_error_response(error),
+        Err(error) => app_error_response(&error),
     }
 }
 
@@ -378,8 +360,8 @@ async fn protected_route(State(state): State<Arc<AppState>>, request: Request<Bo
         .authenticate_request(authorization, session_selector)
         .await
     {
-        Ok(_security_context) => app_error_response(AppError::DependencyUnavailable),
-        Err(error) => app_error_response(error),
+        Ok(_security_context) => app_error_response(&AppError::DependencyUnavailable),
+        Err(error) => app_error_response(&error),
     }
 }
 
@@ -396,7 +378,7 @@ struct AuthenticatedCreateOrganizationBody {
 async fn create_organization_route(
     State(state): State<Arc<AppState>>,
     Extension(security_context): Extension<SecurityContext>,
-    axum::Json(body): axum::Json<AuthenticatedCreateOrganizationBody>,
+    Json(body): Json<AuthenticatedCreateOrganizationBody>,
 ) -> Response {
     let request = CreateOrganizationRequest {
         organization_id: body.organization_id,
@@ -407,26 +389,26 @@ async fn create_organization_route(
         default_branch_name: body.default_branch_name,
     };
     if let Err(error) = validate_create_organization_input(&request) {
-        return app_error_response(error);
+        return app_error_response(&error);
     }
     let organization_id = match OrganizationId::new(request.organization_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let membership_id = match MembershipId::new(request.owner_membership_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let owner_user_id = match TenantUserId::new(request.owner_user_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let branch_id = match BranchId::new(request.default_branch_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let Some(service) = state.tenancy_service() else {
-        return app_error_response(AppError::DependencyUnavailable);
+        return app_error_response(&AppError::DependencyUnavailable);
     };
     match service
         .provision_organization(
@@ -441,10 +423,10 @@ async fn create_organization_route(
     {
         Ok(bundle) => (
             StatusCode::CREATED,
-            axum::Json(ProvisionedOrganizationResponse::from(&bundle)),
+            Json(ProvisionedOrganizationResponse::from(&bundle)),
         )
             .into_response(),
-        Err(error) => app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => app_error_response(&sitolo_api::map_tenancy_error(&error)),
     }
 }
 
@@ -452,21 +434,21 @@ async fn create_branch_route(
     State(state): State<Arc<AppState>>,
     Path(organization_id): Path<String>,
     Extension(security_context): Extension<SecurityContext>,
-    axum::Json(request): axum::Json<CreateBranchRequest>,
+    Json(request): Json<CreateBranchRequest>,
 ) -> Response {
     if let Err(error) = validate_create_branch_input(&organization_id, &request) {
-        return app_error_response(error);
+        return app_error_response(&error);
     }
     let organization_id = match OrganizationId::new(organization_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let branch_id = match BranchId::new(request.branch_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let Some(service) = state.tenancy_service() else {
-        return app_error_response(AppError::DependencyUnavailable);
+        return app_error_response(&AppError::DependencyUnavailable);
     };
     match service
         .create_branch_for_authenticated_user(
@@ -477,8 +459,8 @@ async fn create_branch_route(
         )
         .await
     {
-        Ok(branch) => axum::Json(BranchResponse::from(&branch)).into_response(),
-        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+        Ok(branch) => Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
     }
 }
 
@@ -489,21 +471,21 @@ async fn activate_branch_route(
 ) -> Response {
     let organization_id = match OrganizationId::new(organization_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let branch_id = match BranchId::new(branch_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let Some(service) = state.tenancy_service() else {
-        return app_error_response(AppError::DependencyUnavailable);
+        return app_error_response(&AppError::DependencyUnavailable);
     };
     match service
         .activate_branch_for_authenticated_user(&security_context, organization_id, branch_id)
         .await
     {
-        Ok(branch) => axum::Json(BranchResponse::from(&branch)).into_response(),
-        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+        Ok(branch) => Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
     }
 }
 
@@ -514,21 +496,21 @@ async fn revoke_member_route(
 ) -> Response {
     let organization_id = match OrganizationId::new(organization_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let membership_id = match MembershipId::new(membership_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let Some(service) = state.tenancy_service() else {
-        return app_error_response(AppError::DependencyUnavailable);
+        return app_error_response(&AppError::DependencyUnavailable);
     };
     match service
         .revoke_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
         .await
     {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
     }
 }
 
@@ -539,25 +521,25 @@ async fn suspend_member_route(
 ) -> Response {
     let organization_id = match OrganizationId::new(organization_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let membership_id = match MembershipId::new(membership_id) {
         Ok(value) => value,
-        Err(error) => return app_error_response(sitolo_api::map_tenancy_error(&error)),
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
     let Some(service) = state.tenancy_service() else {
-        return app_error_response(AppError::DependencyUnavailable);
+        return app_error_response(&AppError::DependencyUnavailable);
     };
     match service
         .suspend_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
         .await
     {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => app_error_response(map_authorized_tenancy_error(&error)),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
     }
 }
 
-fn header_text(headers: &HeaderMap, name: impl axum::http::header::AsHeaderName) -> Option<&str> {
+fn header_text(headers: &HeaderMap, name: impl header::AsHeaderName) -> Option<&str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
@@ -570,9 +552,9 @@ async fn ingress_error(error: Box<dyn StdError + Send + Sync>) -> Response {
         .into_response()
 }
 
-fn app_error_response(error: AppError) -> Response {
+fn app_error_response(error: &AppError) -> Response {
     let request_id = RequestId::new_server();
-    let details = ProblemDetails::from_error(&error, &request_id);
+    let details = ProblemDetails::from_error(error, &request_id);
     let status = StatusCode::from_u16(details.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (
         status,

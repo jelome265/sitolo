@@ -14,14 +14,14 @@ use axum::response::Response;
 use sitolo_api_bin::bootstrap::StartupContext;
 use sitolo_api_bin::serve::app_router;
 use sitolo_api_bin::state::AppState;
-use sitolo_application::{TenancyEvidenceSink, TenancyService};
+use sitolo_application::TenancyService;
 use sitolo_auth::{
     Assurance, AuthenticationMethod, ClientPlatform, IdentityProviderPort, SessionClass,
     SessionLifetime, SessionPolicySet, TestIdentityProvider, UserId,
 };
-use sitolo_persistence::audit_repository::PostgresAuditWriter;
-use sitolo_persistence::outbox_repository::PostgresOutboxRepository;
-use sitolo_persistence::{IdentityDatabase, IdentityStores, RequestIdentityAuthority};
+use sitolo_persistence::{
+    IdentityDatabase, IdentityStores, PgTenancyUnitOfWork, RequestIdentityAuthority,
+};
 use sqlx_core::query::query;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -39,7 +39,10 @@ impl sitolo_security::SecretProvider for StubSecretProvider {
     }
 }
 
-#[allow(clippy::expect_used)] // Test bootstrap is a fixed, validated fixture.
+#[expect(
+    clippy::expect_used,
+    reason = "Test bootstrap is a fixed, validated fixture."
+)]
 async fn base_state() -> AppState {
     let context = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),
@@ -52,8 +55,8 @@ async fn base_state() -> AppState {
 
 fn identity_database() -> Arc<IdentityDatabase> {
     let lifetime = SessionLifetime {
-        idle: Duration::from_secs(30 * 60),
-        absolute: Duration::from_secs(8 * 60 * 60),
+        idle: Duration::from_mins(30),
+        absolute: Duration::from_hours(8),
     };
     Arc::new(IdentityDatabase::new(
         SessionPolicySet {
@@ -65,7 +68,10 @@ fn identity_database() -> Arc<IdentityDatabase> {
     ))
 }
 
-#[allow(clippy::expect_used)] // Fixed fixture IDs and in-memory identity setup are asserted test preconditions.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed fixture IDs and in-memory identity setup are asserted test preconditions."
+)]
 async fn provision_identity(
     database: &IdentityDatabase,
     user: &str,
@@ -98,7 +104,10 @@ async fn provision_identity(
         .id
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn router_with_identity(database: Arc<IdentityDatabase>) -> Router {
     let provider: Arc<dyn IdentityProviderPort> =
         Arc::new(TestIdentityProvider::new("subject-1", Assurance::A1));
@@ -111,7 +120,6 @@ async fn router_with_identity(database: Arc<IdentityDatabase>) -> Router {
     app_router(state).expect("route inventory validates")
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn router_with_identity_and_tenancy(
     database: Arc<IdentityDatabase>,
     tenancy: Arc<TenancyService>,
@@ -119,7 +127,10 @@ async fn router_with_identity_and_tenancy(
     router_with_identity_and_tenancy_subject(database, tenancy, "subject-1").await
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn router_with_identity_and_tenancy_subject(
     database: Arc<IdentityDatabase>,
     tenancy: Arc<TenancyService>,
@@ -148,7 +159,10 @@ async fn post_organization(
         .status()
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn post_organization_response(
     app: Router,
     authorization: Option<&str>,
@@ -174,7 +188,10 @@ async fn post_organization_response(
     .expect("Axum returns an HTTP response")
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn post_branch(
     app: Router,
     organization_id: &str,
@@ -201,7 +218,10 @@ async fn post_branch(
     .expect("Axum returns an HTTP response")
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn post_branch_activation(
     app: Router,
     organization_id: &str,
@@ -223,7 +243,10 @@ async fn post_branch_activation(
         .expect("Axum returns an HTTP response")
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP fixture identifiers make the request deterministic.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP fixture identifiers make the request deterministic."
+)]
 async fn post_member_revoke(
     app: Router,
     organization_id: &str,
@@ -245,7 +268,10 @@ async fn post_member_revoke(
         .expect("Axum returns an HTTP response")
 }
 
-#[allow(clippy::expect_used)] // Fixed HTTP fixture identifiers make the request deterministic.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP fixture identifiers make the request deterministic."
+)]
 async fn post_member_suspend(
     app: Router,
     organization_id: &str,
@@ -268,7 +294,10 @@ async fn post_member_suspend(
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn live_route_rejects_missing_credentials() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     assert_eq!(
@@ -278,7 +307,10 @@ async fn live_route_rejects_missing_credentials() {
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn protected_branch_route_authenticates_before_json_extraction() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     let response = post_branch(app, "org-a", None, None, "{").await;
@@ -286,7 +318,10 @@ async fn protected_branch_route_authenticates_before_json_extraction() {
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn live_route_requires_a_well_formed_session_id_header() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", true).await;
@@ -327,7 +362,6 @@ async fn live_route_requires_a_well_formed_session_id_header() {
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_rejects_unknown_external_identity_without_mutating_tenancy() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", false).await;
@@ -344,7 +378,6 @@ async fn live_route_rejects_unknown_external_identity_without_mutating_tenancy()
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
 async fn live_route_rejects_session_owned_by_another_mapped_user() {
     let database = identity_database();
     let _mapped_session = provision_identity(&database, "user-1", true).await;
@@ -362,7 +395,10 @@ async fn live_route_rejects_session_owned_by_another_mapped_user() {
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn live_organization_route_fails_closed_without_provision_command() {
     let database = identity_database();
     let session_id = provision_identity(&database, "user-1", true).await;
@@ -390,7 +426,10 @@ async fn live_organization_route_fails_closed_without_provision_command() {
 }
 
 #[tokio::test]
-#[allow(clippy::expect_used)] // Fixed HTTP and identity fixtures assert harness invariants.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
 async fn health_probes_are_public_through_the_router() {
     let app = app_router(Arc::new(base_state().await)).expect("route inventory validates");
     for path in ["/process/live", "/process/ready"] {
@@ -479,11 +518,7 @@ async fn live_organization_route_derives_owner_and_audit_actor_from_authenticate
     let db = api_tenancy_db().await?;
     let tenancy = Arc::new(TenancyService::new_postgres(
         Vec::new(),
-        TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
-        ),
+        Arc::new(PgTenancyUnitOfWork::new(db.runtime.clone())),
     ));
     let identities = identity_database();
     let session_id = provision_identity(&identities, "user-1", true).await;
@@ -539,10 +574,10 @@ async fn live_organization_route_derives_owner_and_audit_actor_from_authenticate
     Ok(())
 }
 
-#[tokio::test]
-async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
--> Result<(), Box<dyn std::error::Error>> {
-    let db = api_tenancy_db().await?;
+/// Seeds two tenants where `member-a` owns `org-a` organization-wide, so the
+/// branch-create route can be exercised on both the allowed and cross-tenant
+/// paths.
+async fn seed_branch_route_fixtures(db: &ApiTenancyDb) -> Result<(), Box<dyn std::error::Error>> {
     query("INSERT INTO organizations (id, name, state, state_version) VALUES ('org-a', 'Org A', 'ACTIVE', 1), ('org-b', 'Org B', 'ACTIVE', 1)")
         .execute(&db.admin)
         .await?;
@@ -556,13 +591,38 @@ async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
         .execute(&db.admin)
         .await?;
 
+    Ok(())
+}
+
+/// Asserts that every denied branch-create attempt left neither a branch row
+/// nor an evidence pair behind; the two authorized attempts are the only ones.
+async fn assert_denied_branch_attempts_left_no_state(
+    db: &ApiTenancyDb,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let denied_mutations: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM branches WHERE id IN ('branch-b1', 'branch-spoof', 'branch-suspended', 'branch-revoked')",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_mutations, 0);
+    let denied_evidence: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT (SELECT count(*) FROM audit_events WHERE event_name = 'iam.branch.created') + (SELECT count(*) FROM outbox_events WHERE event_name = 'iam.branch.created')",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_evidence, 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = api_tenancy_db().await?;
+    seed_branch_route_fixtures(&db).await?;
     let tenancy = Arc::new(TenancyService::new_postgres(
         Vec::new(),
-        TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
-        ),
+        Arc::new(PgTenancyUnitOfWork::new(db.runtime.clone())),
     ));
     let identities = identity_database();
     let session_id = provision_identity(&identities, "user-1", true).await;
@@ -648,19 +708,7 @@ async fn live_branch_route_authorizes_and_mutates_only_the_verified_tenant()
     )
     .await;
     assert_eq!(revoked.status(), StatusCode::FORBIDDEN);
-    let denied_mutations: i64 = sqlx_core::query_scalar::query_scalar(
-        "SELECT count(*) FROM branches WHERE id IN ('branch-b1', 'branch-spoof', 'branch-suspended', 'branch-revoked')",
-    )
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(denied_mutations, 0);
-    let denied_evidence: i64 = sqlx_core::query_scalar::query_scalar(
-        "SELECT (SELECT count(*) FROM audit_events WHERE event_name = 'iam.branch.created') + (SELECT count(*) FROM outbox_events WHERE event_name = 'iam.branch.created')",
-    )
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(denied_evidence, 2);
-
+    assert_denied_branch_attempts_left_no_state(&db).await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
@@ -702,11 +750,7 @@ async fn live_branch_activation_authenticates_and_commits_authorized_transition(
         .await?;
     let tenancy = Arc::new(TenancyService::new_postgres(
         Vec::new(),
-        TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
-        ),
+        Arc::new(PgTenancyUnitOfWork::new(db.runtime.clone())),
     ));
     let identities = identity_database();
     let session_id = provision_identity(&identities, "user-1", true).await;
@@ -780,10 +824,11 @@ async fn live_branch_activation_authenticates_and_commits_authorized_transition(
     Ok(())
 }
 
-#[tokio::test]
-async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
--> Result<(), Box<dyn std::error::Error>> {
-    let db = api_tenancy_db().await?;
+/// Seeds the owner, cashier, target, denied and cross-tenant memberships used
+/// by the revoke and suspend routes.
+async fn seed_membership_revoke_fixtures(
+    db: &ApiTenancyDb,
+) -> Result<(), Box<dyn std::error::Error>> {
     query("INSERT INTO organizations (id, name, state, state_version) VALUES ('org-revoke', 'Org', 'ACTIVE', 1), ('org-revoke-other', 'Other', 'ACTIVE', 1)")
         .execute(&db.admin)
         .await?;
@@ -797,13 +842,62 @@ async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
         .execute(&db.admin)
         .await?;
 
+    Ok(())
+}
+
+/// Proves a cashier session cannot revoke inside its own tenant or across
+/// tenants, and that both denials leave state and evidence untouched.
+async fn assert_cashier_revocations_are_denied(
+    identities: Arc<IdentityDatabase>,
+    tenancy: Arc<TenancyService>,
+    cashier_session: &sitolo_auth::SessionId,
+    db: &ApiTenancyDb,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let denied_app =
+        router_with_identity_and_tenancy_subject(identities, tenancy, "subject-2").await;
+    let denied = post_member_revoke(
+        denied_app.clone(),
+        "org-revoke",
+        "member-denied",
+        Some("Bearer syntactically-valid-token"),
+        Some(cashier_session.as_str()),
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let cross_tenant = post_member_revoke(
+        denied_app,
+        "org-revoke-other",
+        "member-other-tenant",
+        Some("Bearer syntactically-valid-token"),
+        Some(cashier_session.as_str()),
+    )
+    .await;
+    assert_eq!(cross_tenant.status(), StatusCode::FORBIDDEN);
+    let (denied_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
+        "SELECT m.state, (SELECT count(*) FROM audit_events WHERE organization_id = 'org-revoke' AND target_ref = 'member-denied') + (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-revoke' AND aggregate_id = 'member-denied') FROM organization_memberships m WHERE m.organization_id = 'org-revoke' AND m.id = 'member-denied'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(denied_state, "ACTIVE");
+    assert_eq!(denied_evidence, 0);
+    let other_tenant_state: String = sqlx_core::query_scalar::query_scalar(
+        "SELECT state FROM organization_memberships WHERE organization_id = 'org-revoke-other' AND id = 'member-other-tenant'",
+    )
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(other_tenant_state, "ACTIVE");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = api_tenancy_db().await?;
+    seed_membership_revoke_fixtures(&db).await?;
     let tenancy = Arc::new(TenancyService::new_postgres(
         Vec::new(),
-        TenancyEvidenceSink::new(
-            db.runtime.clone(),
-            Arc::new(PostgresAuditWriter::new()),
-            Arc::new(PostgresOutboxRepository::new(db.runtime.clone())),
-        ),
+        Arc::new(PgTenancyUnitOfWork::new(db.runtime.clone())),
     ));
     let identities = identity_database();
     let owner_session = provision_identity(&identities, "user-1", true).await;
@@ -871,40 +965,7 @@ async fn live_membership_revoke_authorizes_tenant_and_records_verified_actor()
         ("SUSPENDED".to_owned(), 1, 1, Some("user-1".to_owned()))
     );
 
-    let denied_app =
-        router_with_identity_and_tenancy_subject(identities, tenancy, "subject-2").await;
-    let denied = post_member_revoke(
-        denied_app.clone(),
-        "org-revoke",
-        "member-denied",
-        Some("Bearer syntactically-valid-token"),
-        Some(cashier_session.as_str()),
-    )
-    .await;
-    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-    let cross_tenant = post_member_revoke(
-        denied_app,
-        "org-revoke-other",
-        "member-other-tenant",
-        Some("Bearer syntactically-valid-token"),
-        Some(cashier_session.as_str()),
-    )
-    .await;
-    assert_eq!(cross_tenant.status(), StatusCode::FORBIDDEN);
-    let (denied_state, denied_evidence): (String, i64) = sqlx_core::query_as::query_as(
-        "SELECT m.state, (SELECT count(*) FROM audit_events WHERE organization_id = 'org-revoke' AND target_ref = 'member-denied') + (SELECT count(*) FROM outbox_events WHERE organization_id = 'org-revoke' AND aggregate_id = 'member-denied') FROM organization_memberships m WHERE m.organization_id = 'org-revoke' AND m.id = 'member-denied'",
-    )
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(denied_state, "ACTIVE");
-    assert_eq!(denied_evidence, 0);
-    let other_tenant_state: String = sqlx_core::query_scalar::query_scalar(
-        "SELECT state FROM organization_memberships WHERE organization_id = 'org-revoke-other' AND id = 'member-other-tenant'",
-    )
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(other_tenant_state, "ACTIVE");
-
+    assert_cashier_revocations_are_denied(identities, tenancy, &cashier_session, &db).await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
