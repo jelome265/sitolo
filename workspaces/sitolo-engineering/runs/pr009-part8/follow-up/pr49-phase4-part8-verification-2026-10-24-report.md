@@ -10,7 +10,7 @@ run_slug: "pr009-part8"
 **Remediation input:** `workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-remediation-2026-10-24-report.md`
 **Audit input:** `docs/phase4_part8_pr009_remediation_report.md` (source `a1d29ae`)
 **Security relevant:** yes
-**Verification date:** 2026-10-24
+**Verification window:** 2026-10-24 to 2026-10-25
 
 ## Commands
 
@@ -20,9 +20,14 @@ run_slug: "pr009-part8"
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASSED (exit 0, no diagnostics) | Whole workspace, all targets, all features, strict policy unchanged |
 | `cargo check --workspace --all-targets --all-features --locked` | PASSED | Whole workspace, all targets |
 | `cargo test --workspace --lib --all-features --locked` | PASSED — 259 tests, 0 failed | Library unit tests across 17 packages |
+| `cargo build --workspace --release --locked` | PASSED — finished in 8m 42s | Whole workspace, release profile |
 | `python scripts/ci/check-crate-boundaries.py` | PASSED — 17 packages classified | Exhaustive application/persistence dependency contract |
 | `./scripts/ci/check-architecture` | PASSED | Pure-crate graph, single global logging installer, single config-fingerprint owner, boundary contract |
 | `./scripts/ci/check-phase2-policy` | PASSED | Configuration/secret/logging policy |
+| `./scripts/ci/check-workflow-policy` | PASSED | GitHub Actions workflow policy |
+| `./scripts/ci/check-release-workflow` | PASSED | Release workflow provenance and promotion policy |
+| `./scripts/ci/check-security-icm-policy` | PASSED | Security ICM policy |
+| `python scripts/ci/check-doc-references` | PASSED — 238 files, 1053 references, 0 errors | Documentation link integrity |
 | `cargo deny check` | PASSED — advisories, bans, licenses, sources | Dependency and license policy |
 | `./scripts/ci/check-icm-workspace` | PASSED — 9 stages, exact handoffs, no synthetic approval | ICM routing, stage contracts, mechanical cold walk, System Map source hop |
 | `cargo metadata --format-version 1 --locked` | PASSED | Lockfile is current |
@@ -39,11 +44,12 @@ Per-crate library results: `sitolo-api` 20, `sitolo-api-bin` 7, `sitolo-audit` 4
 - `rustc`/`cargo` 1.98.1 (matches CI toolchain pin); Python 3.14.7.
 - No local PostgreSQL instance was installed, started, or used.
 - `cargo-deny` 0.x is installed locally. `cargo-audit` is **not** installed locally.
-- `scripts/ci/check-architecture`, `check-phase2-policy` and `check-icm-workspace` were executed
-  through small local `rg`/`python3` shims because the host lacks ripgrep and the `python3`
-  alias. The shims only translate the exact flags those scripts use (`-n`, `-g`) and forward to
-  `grep`/the real Python interpreter; the checks themselves are unmodified. CI runs the same
-  scripts with native `rg` and `python3`.
+- `scripts/ci/check-architecture`, `check-phase2-policy`, `check-workflow-policy`,
+  `check-release-workflow` and `check-icm-workspace` were executed through small local
+  `rg`/`python3` shims because the host lacks ripgrep and the `python3` alias. The shims only
+  translate the flags those scripts use (`-n`, `-q`, `-g`) and forward to `grep`/the real Python
+  interpreter; the checks themselves are unmodified. CI runs the same scripts with native `rg` and
+  `python3`.
 
 ## Security control evidence
 
@@ -78,6 +84,9 @@ Per-crate library results: `sitolo-api` 20, `sitolo-api-bin` 7, `sitolo-audit` 4
   helpers instead of one unverifiable block.
 - `apps/api` and `apps/worker` opt into `[lints] workspace = true` and now pass the same strict
   policy as the libraries.
+- Every code gate above was executed against commit `98d49304c8318f708e79019d79449fe33f0069d3`
+  with a clean working tree. The later System Map card refresh is documentation-only and does not
+  alter any Rust source, manifest, workflow, or gate script.
 
 ## Limitations
 
@@ -90,7 +99,7 @@ Per-crate library results: `sitolo-api` 20, `sitolo-api-bin` 7, `sitolo-audit` 4
   the PostgreSQL suite and `cargo audit`. Its non-database steps were executed individually and are
   recorded above.
 - A green local run is evidence only for the code paths it exercised. Exact-head GitHub Actions
-  remains the authority for database, advisory, and release-build gates.
+  remains the authority for the database and advisory gates.
 
 ## Audit status
 
