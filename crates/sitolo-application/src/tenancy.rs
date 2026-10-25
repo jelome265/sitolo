@@ -68,7 +68,8 @@ use sitolo_tenancy::{EffectiveScope, ScopeError, resolve_effective_scope};
 
 use crate::tenancy_ports::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, InvitationRecord,
-    MembershipSelector, TenancyStores, TenancyTransaction, TenancyUnitOfWork,
+    MembershipSelector, RoleAssignmentOutcome, TenancyStores, TenancyTransaction,
+    TenancyUnitOfWork,
 };
 
 #[derive(Clone, Copy)]
@@ -290,29 +291,35 @@ impl TenancyService {
             return Err(TenancyError::InvalidTransition.into());
         }
 
-        let assignment = tx
+        let outcome = tx
             .insert_role_assignment(organization_id, membership_id, assignment_id, role)
             .await?;
-        self.record_evidence_in_transaction(
-            tx.as_mut(),
-            IamEventName::RoleAssigned,
-            organization_id,
-            None,
-            TargetRef::Membership(membership_id.clone()),
-            actor,
-            "assign_role",
-            "role_assignment",
-            assignment_id.to_string(),
-            serde_json::json!({
-                "organization_id": organization_id.as_str(),
-                "membership_id": membership_id.as_str(),
-                "assignment_id": assignment_id.as_str(),
-                "role": role.as_str(),
-                "state": "EFFECTIVE",
-                "state_version": assignment.state_version,
-            }),
-        )
-        .await?;
+        let assignment = match outcome {
+            RoleAssignmentOutcome::Created(assignment) => {
+                self.record_evidence_in_transaction(
+                    tx.as_mut(),
+                    IamEventName::RoleAssigned,
+                    organization_id,
+                    None,
+                    TargetRef::Membership(membership_id.clone()),
+                    actor,
+                    "assign_role",
+                    "role_assignment",
+                    assignment_id.to_string(),
+                    serde_json::json!({
+                        "organization_id": organization_id.as_str(),
+                        "membership_id": membership_id.as_str(),
+                        "assignment_id": assignment_id.as_str(),
+                        "role": role.as_str(),
+                        "state": "EFFECTIVE",
+                        "state_version": assignment.state_version,
+                    }),
+                )
+                .await?;
+                assignment
+            }
+            RoleAssignmentOutcome::Replayed(assignment) => assignment,
+        };
         tx.commit()
             .await
             .map_err(|_error| TenancyError::EvidencePersistenceFailedAt {

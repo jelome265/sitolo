@@ -27,6 +27,6 @@ pub use identity_ports::{
 pub use tenancy::{AuthorizedTenancyError, TenancyService};
 pub use tenancy_ports::{
     AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ExpiredInvitation,
-    InvitationRecord, MembershipRecord, MembershipSelector, ScopeMaterial, TenancyStores,
-    TenancyTransaction, TenancyUnitOfWork,
+    InvitationRecord, MembershipRecord, MembershipSelector, RoleAssignmentOutcome, ScopeMaterial,
+    TenancyStores, TenancyTransaction, TenancyUnitOfWork,
 };

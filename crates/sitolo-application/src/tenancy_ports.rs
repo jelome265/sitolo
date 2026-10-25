@@ -48,6 +48,20 @@ pub struct CreatedInvitation {
     pub invitation: Invitation,
 }
 
+/// The outcome of one role-assignment insert attempt.
+///
+/// A repeated identical command is an idempotent replay, not a new state
+/// transition. Mandatory audit/outbox evidence is written only for
+/// [`RoleAssignmentOutcome::Created`]; a divergent request is
+/// [`TenancyError::Conflict`] and writes no evidence at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoleAssignmentOutcome {
+    /// This command created the effective assignment.
+    Created(RoleAssignment),
+    /// An identical assignment already existed; no transition occurred.
+    Replayed(RoleAssignment),
+}
+
 /// Creation parameters for [`TenancyStores::create_invitation`]. Grouped so
 /// the port keeps an explicit, reviewable parameter list instead of eleven
 /// positional arguments.
@@ -509,15 +523,17 @@ pub trait TenancyTransaction: Send {
         assignment_id: &RoleAssignmentId,
     ) -> Result<Option<RoleAssignment>, TenancyError>;
 
-    /// Inserts an effective role assignment, returning an identical existing
-    /// record or conflicting on divergent semantics.
+    /// Inserts an effective role assignment and reports whether this command
+    /// created it. Returns [`RoleAssignmentOutcome::Replayed`] for an
+    /// identical existing record and [`TenancyError::Conflict`] for divergent
+    /// semantics.
     async fn insert_role_assignment(
         &mut self,
         organization_id: &OrganizationId,
         membership_id: &MembershipId,
         assignment_id: &RoleAssignmentId,
         role: Role,
-    ) -> Result<RoleAssignment, TenancyError>;
+    ) -> Result<RoleAssignmentOutcome, TenancyError>;
 
     /// Revokes the effective assignment for a role.
     async fn revoke_role_assignment(

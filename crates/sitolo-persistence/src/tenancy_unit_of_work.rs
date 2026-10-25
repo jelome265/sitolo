@@ -19,8 +19,8 @@ use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgPool, Postgres};
 
 use sitolo_application::{
-    ExpiredInvitation, InvitationRecord, MembershipRecord, MembershipSelector, ScopeMaterial,
-    TenancyTransaction, TenancyUnitOfWork,
+    ExpiredInvitation, InvitationRecord, MembershipRecord, MembershipSelector,
+    RoleAssignmentOutcome, ScopeMaterial, TenancyTransaction, TenancyUnitOfWork,
 };
 use sitolo_audit::IamAuditEvent;
 use sitolo_authz::{
@@ -433,7 +433,7 @@ impl TenancyTransaction for PgTenancyTransaction {
         membership_id: &MembershipId,
         assignment_id: &RoleAssignmentId,
         role: Role,
-    ) -> Result<RoleAssignment, TenancyError> {
+    ) -> Result<RoleAssignmentOutcome, TenancyError> {
         if let Some(existing) = self.role_assignment(assignment_id).await? {
             if existing.organization_id != *organization_id
                 || existing.membership_id != *membership_id
@@ -441,7 +441,7 @@ impl TenancyTransaction for PgTenancyTransaction {
             {
                 return Err(TenancyError::Conflict);
             }
-            return Ok(existing);
+            return Ok(RoleAssignmentOutcome::Replayed(existing));
         }
 
         let state_version: i64 = query_scalar(
@@ -457,7 +457,7 @@ impl TenancyTransaction for PgTenancyTransaction {
         .fetch_one(&mut *self.tx)
         .await
         .map_err(tenancy_insert_error)?;
-        Ok(RoleAssignment {
+        Ok(RoleAssignmentOutcome::Created(RoleAssignment {
             id: assignment_id.clone(),
             organization_id: organization_id.clone(),
             membership_id: membership_id.clone(),
@@ -465,7 +465,7 @@ impl TenancyTransaction for PgTenancyTransaction {
             state: RoleAssignmentState::Effective,
             state_version: u64::try_from(state_version)
                 .map_err(|_error| TenancyError::EvidencePersistenceFailed)?,
-        })
+        }))
     }
 
     async fn revoke_role_assignment(

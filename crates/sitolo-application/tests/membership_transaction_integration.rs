@@ -13,8 +13,8 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use sitolo_application::{
-    ExpiredInvitation, InvitationRecord, MembershipRecord, MembershipSelector, ScopeMaterial,
-    TenancyService, TenancyTransaction, TenancyUnitOfWork,
+    ExpiredInvitation, InvitationRecord, MembershipRecord, MembershipSelector,
+    RoleAssignmentOutcome, ScopeMaterial, TenancyService, TenancyTransaction, TenancyUnitOfWork,
 };
 use sitolo_audit::{ActorRef, IamAuditEvent};
 use sitolo_auth::{
@@ -505,7 +505,7 @@ impl TenancyTransaction for FailingTransaction {
         membership_id: &MembershipId,
         assignment_id: &RoleAssignmentId,
         role: Role,
-    ) -> Result<RoleAssignment, TenancyError> {
+    ) -> Result<RoleAssignmentOutcome, TenancyError> {
         self.inner
             .insert_role_assignment(organization_id, membership_id, assignment_id, role)
             .await
@@ -756,7 +756,7 @@ async fn authenticated_membership_suspend_authorizes_and_records_server_actor()
 
     let denied = tenancy
         .suspend_member_for_authenticated_user(
-            &authenticated_context("user-target")?,
+            &authenticated_context("user-denied-target")?,
             &organization_id,
             &MembershipId::new("member-denied-target")?,
         )
@@ -822,7 +822,7 @@ async fn authenticated_membership_revoke_authorizes_and_records_server_actor()
 
     let denied = tenancy
         .revoke_member_for_authenticated_user(
-            &authenticated_context("user-revoke-target")?,
+            &authenticated_context("user-revoke-denied")?,
             &organization_id,
             &MembershipId::new("member-revoke-denied")?,
         )
@@ -952,13 +952,32 @@ async fn authenticated_role_assignment_authorizes_and_records_server_actor()
         )
         .await?;
     assert_eq!(assigned.state, RoleAssignmentState::Effective);
-    let actor: String = sqlx_core::query_scalar::query_scalar(
-        "SELECT actor_subject_ref FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.assigned' AND target_ref = 'assignment-target'",
+    let audit_target: (String, String, String) = sqlx_core::query_as::query_as(
+        "SELECT target_type, target_ref, actor_subject_ref FROM audit_events \
+         WHERE organization_id = $1 AND event_name = 'iam.role.assigned'",
     )
     .bind(organization_id.as_str())
     .fetch_one(&db.admin)
     .await?;
-    assert_eq!(actor, "user-1");
+    assert_eq!(
+        audit_target,
+        (
+            "Membership".to_owned(),
+            "member-role-target".to_owned(),
+            "user-1".to_owned(),
+        )
+    );
+    let outbox_aggregate: (String, String) = sqlx_core::query_as::query_as(
+        "SELECT aggregate_type, aggregate_id FROM outbox_events \
+         WHERE organization_id = $1 AND event_name = 'iam.role.assigned'",
+    )
+    .bind(organization_id.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(
+        outbox_aggregate,
+        ("role_assignment".to_owned(), "assignment-target".to_owned())
+    );
 
     let denied = tenancy
         .assign_role_for_authenticated_user(
@@ -977,7 +996,7 @@ async fn authenticated_role_assignment_authorizes_and_records_server_actor()
     ));
     let (assignment_count, denied_evidence): (i64, i64) = sqlx_core::query_as::query_as(
         "SELECT (SELECT count(*) FROM role_assignments WHERE organization_id = $1 AND id = 'assignment-denied'), \
-         (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND target_ref = 'assignment-denied') + \
+         (SELECT count(*) FROM audit_events WHERE organization_id = $1 AND event_name = 'iam.role.assigned' AND target_ref = 'member-role-denied') + \
          (SELECT count(*) FROM outbox_events WHERE organization_id = $1 AND aggregate_id = 'assignment-denied')",
     )
     .bind(organization_id.as_str())
