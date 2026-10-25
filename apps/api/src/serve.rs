@@ -162,10 +162,10 @@ pub enum ServeError {
 
 /// Builds the single live router from its validated permission/body/deadline inventory.
 ///
-/// Every protected route authenticates before typed request extraction and
-/// invokes only a durable, transaction-authorized command. The one
-/// contract-declared exception is listed in [`CLOSED_PROTECTED_ROUTES`] and
-/// fails closed; an undeclared protected route is a startup error.
+/// Every declared protected route authenticates before typed request extraction
+/// and invokes a durable, transaction-authorized command. An undeclared
+/// protected route is a startup error; the unavailable organization activation
+/// route is absent from both the inventory and the router.
 ///
 /// # Errors
 /// Returns [`ServeError::InvalidRouteInventory`] if declarations are invalid or the
