@@ -1,51 +1,53 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** NOT READY — exact-head PostgreSQL integration failures; do not merge  
+**Status:** NOT READY FOR MERGE — three PostgreSQL-backed provision/invitation evidence tests remain failing; independent Stage 06 re-audit is outstanding.  
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
-**Implementation code commit:** `5a128c4f95db61f7f6cf9fd885d22911b78553c1`  
-**Candidate head with CI evidence:** `68f5ae5be7cdb8659e0cbd4f90fae16a7ee24a85`  
+**Current PR head when checked:** `22d276a64baa3254a3842296c315b61cccfa6de5`  
+**Implementation commit whose fixes were tested:** `3ee27a3a660557975e602f48535916bd44e82b90`  
 **Date:** 2026-10-25  
 **Binding contract:** `docs/phase4_part8_audit_outbox_implementation_contract.md`  
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
-**Exact-head follow-up findings:** [ICM follow-up record](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-read-only-re-audit-2026-10-25.md)
+**Exact-head verification record:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)  
+**Previous findings snapshot:** [2026-10-25 read-only follow-up findings](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-read-only-re-audit-2026-10-25.md)
 
 ## Exact-head CI result
 
-The runs below evaluated candidate head `68f5ae5be7cdb8659e0cbd4f90fae16a7ee24a85`. They supersede earlier “CI pending” statements for that candidate.
+The checks below were observed on PR head `22d276a64baa3254a3842296c315b61cccfa6de5`. These workflows rerun when documentation changes create a new head; do not attribute these results to any later commit without checking that commit's runs.
 
 | Workflow | Result | Run |
 |---|---|---|
-| Policy | **PASS** | [40156547558](https://github.com/jelome265/sitolo/actions/runs/40156547558) |
-| Rust | **FAIL** | [40156547515](https://github.com/jelome265/sitolo/actions/runs/40156547515) |
-| Integration | **FAIL** | [40156547478](https://github.com/jelome265/sitolo/actions/runs/40156547478) |
-| Security | **PASS** | [40156547500](https://github.com/jelome265/sitolo/actions/runs/40156547500) |
+| Policy | **PASS** | [40159185647](https://github.com/jelome265/sitolo/actions/runs/40159185647) |
+| Rust | **FAIL** | [40159185592](https://github.com/jelome265/sitolo/actions/runs/40159185592) |
+| Integration | **FAIL** | [40159185631](https://github.com/jelome265/sitolo/actions/runs/40159185631) |
+| Security | **PASS** | [40159185632](https://github.com/jelome265/sitolo/actions/runs/40159185632) |
 
-The PostgreSQL-backed application transaction suite reports **38 passed, 6 failed**. Failures cover role-assignment audit lookup, membership suspend/revoke authorization error mapping, duplicate audit/outbox evidence on assignment retry/idempotent replay, and duplicate evidence during revoke/regrant. See the linked follow-up record for each test name, expected/actual values, source trace, and ordered correction plan.
+## Resolved findings from the previous audit snapshot
 
-## What is materially improved
+The six membership transaction failures reported against the earlier candidate are fixed. At implementation commit `3ee27a3`, `membership_transaction_integration.rs` reports **44/44 passing** in PostgreSQL-backed CI (run [40158776564](https://github.com/jelome265/sitolo/actions/runs/40158776564)). The remediation adds typed `RoleAssignmentOutcome::Created/Replayed` semantics, emits role-assignment evidence only for a new transition, corrects the audit target identity, makes denied suspend/revoke requests produce the contract-defined permission-denied result, and preserves exact event-count assertions.
 
-- Application-owned ports live in `crates/sitolo-application/src/identity_ports.rs` and `tenancy_ports.rs`; PostgreSQL implementation is behind `sitolo-persistence`.
-- The metadata-driven crate-boundary contract covers all 17 workspace packages. The independent architecture/boundary job passes on the evaluated candidate.
-- Strict workspace Clippy passes on the evaluated candidate with `--all-targets --all-features --locked -- -D warnings`.
-- The R2 route-boundary tests pass: all six declared protected routes reject missing credentials.
-- The R4 schema/catalogue tests pass for five lifecycle event names and version-1 shape validation. Full transition-to-persisted-event/relay proof remains open.
-- The Security workflow passes, including its advisories/cargo-audit job.
+The API crate's production dependency on `sitolo-persistence`/SQLx is also already removed; the three dependencies are development/test-only. Format, strict Clippy, workspace check, 259 library tests, release build, architecture/boundary checks, R2 route-boundary tests, R4 event-catalogue tests, policy checks and ICM validation are reported green in the linked verification record.
 
-These passes do not override the failed database-backed tests or close the remaining semantic audit gates.
+## Remaining exact-head failures
 
-## Open exit criteria
+The PostgreSQL target `part8_provision_organization_evidence_tests.rs` reports **15 passed, 3 failed** on implementation commit `3ee27a3` and keeps Rust/Integration CI red:
 
-1. Fix role assignment/revocation outcome semantics so identical retries and no-op transitions cannot emit duplicate audit/outbox events.
-2. Align role-assignment audit target identity with the approved contract; correct suspend/revoke permission-denial mapping; prove denied requests leave state and evidence unchanged.
-3. Make the full PostgreSQL-backed Rust and Integration workflows pass on the same final source head.
-4. Finish the owner-approved SQS FIFO queue/consumer contract and compose the existing consumer/inbox infrastructure with an approved concrete business effect in the worker runtime. AUD-01 remains open.
-5. Complete the restricted worker role and documented migration/release path across identity, tenancy, audit, outbox and inbox schemas. AUD-05 remains open/partial.
-6. Resolve the organization-activation route: implement a real persisted `PROVISIONING` transition or remove the route from the declared inventory/contract.
-7. Complete the source-grounded R3 mutation matrix and R4 transition/evidence trace; AUD-04 remains open.
-8. Obtain the independent Stage 06 re-audit and required human review. Verify the architecture/boundary job is required by repository branch protection.
-9. Refresh the PR description after the source fixes and final exact-head evidence are available; its existing head/CI statements are stale.
+1. `expire_invitation_commits_membership_audit_and_outbox_together` — `EvidencePersistenceFailed`.
+2. `mark_member_pending_commits_state_audit_and_outbox_together` — `RowNotFound`.
+3. `concurrent_mark_member_pending_emits_one_semantic_event` — expected evidence count mismatch.
 
-## Evidence precedence
+The verification artifact identifies these as outside the six-test role-assignment remediation slice because that code change does not touch the invitation / membership-lifecycle path. That scope attribution does **not** make the failures green or waive them as release gates. They remain documented open work related to invitation/lifecycle evidence, AUD-01 and R4, and require the approved owner contract before a business effect is invented. Do not weaken assertions or claim overall CI passes.
 
-The 2026-10-24 remediation and verification reports document earlier source/local checks and remain historical evidence. They are not proof that the PostgreSQL suite passed on candidate head `68f5ae5`. The new ICM follow-up records the current failed exact-head tests; it does not claim to be the independent Stage 06 audit. No merge or Phase 4 Part 8 closure is approved.
+## Remaining Phase 4 Part 8 closure gates
+
+- **AUD-01:** approve the SQS FIFO queue/consumer contract and exact business effect; compose the consumer/inbox flow into the worker runtime and prove inbox deduplication, effect and commit are atomic, with acknowledgement after commit.
+- **AUD-05:** finish the restricted worker role/pool and documented migration/release path for identity, tenancy, audit, outbox and inbox schemas.
+- **R3:** complete a source-grounded mutation matrix covering principal/actor, tenant scope, authorization, state mutation, audit/outbox transaction, and denied/no-write evidence.
+- **R4 / AUD-04:** trace each approved lifecycle transition through persisted event schema and relay acceptance; catalogue/schema validation alone is not closure.
+- **Organization activation:** implement a real persisted `PROVISIONING` transition under contract, or remove the activation route from the declared API inventory; keep it closed until then.
+- **Stage 06 and human review:** independent re-audit at the final implementation SHA, followed by required human review. The linked verification artifact is Stage 08 evidence, **not** independent Stage 06 approval.
+- **PR metadata:** the current PR description still contains stale head `90f8f610...` and an already-remediated Application→Persistence/SQLx dependency allegation. Refresh it before handoff; do not use those stale claims as current evidence.
+
+## Disposition
+
+Keep PR #49 **open and unmerged**. The six assigned membership failures are proven fixed, but the overall Rust and Integration workflows still fail on three provision/invitation evidence tests and the independent Stage 06 re-audit has not occurred. Do not mark the PR merge-ready, close Phase 4 Part 8, or proceed to delivery until unresolved contract gates and repository merge requirements are satisfied.
