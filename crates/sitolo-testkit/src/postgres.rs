@@ -181,6 +181,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unapproved_port_and_missing_dsns_before_network_access() {
+        assert!(
+            parse_disposable_targets(
+                "true",
+                "postgres://postgres@127.0.0.1:5433/sitolo_test",
+                RUNTIME,
+                WORKER,
+            )
+            .is_err()
+        );
+        assert!(parse_disposable_targets("true", "", RUNTIME, WORKER).is_err());
+        assert!(parse_disposable_targets("true", ADMIN, "", WORKER).is_err());
+        assert!(parse_disposable_targets("true", ADMIN, RUNTIME, "").is_err());
+    }
+
+    #[test]
     fn generated_schema_names_are_limited_to_known_prefixes_and_uuid_hex() {
         assert!(
             validate_generated_schema_name("test_part8_app_0123456789abcdef0123456789abcdef")

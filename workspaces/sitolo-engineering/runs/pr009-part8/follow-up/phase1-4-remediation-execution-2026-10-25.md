@@ -59,6 +59,23 @@ Exact-head GitHub Actions observed for `ef0e97b3cd9e239db42c16c876828eea5454f62d
 
 These workflow results belong only to `ef0e97b`; later commits require their own exact-head status checks.
 
+### R-01 extension — shared disposable PostgreSQL guard (commit `18dce7e`)
+
+Follow-up inspection found that the two application PostgreSQL suites and the RLS suite still had separate connection setup paths; the earlier guard covered only Part 8 persistence. Added `sitolo-testkit::postgres` as shared test-only infrastructure and routed the application provisioning/membership suites, persistence Part 8 suite, and persistence RLS suite through it. All three DSNs are parsed and validated before connection or DDL: explicit disposable opt-in, loopback address and port, allowlisted database, expected admin/runtime/worker role, and a common host/port/database target. Generated schema names for the consuming suites are validated against allowlisted prefixes and lowercase UUID suffixes before SQL interpolation. Parser-only negative tests exercise unsafe targets without opening a connection. The security-harness contract now requires the same checks for every PostgreSQL harness.
+
+Local evidence on `18dce7e59c945cedcccf793b2e69b354b9b86e4d`: testkit unit tests **6 passed**; application and persistence integration targets compile with `--no-run`; strict Clippy for the three affected crates, format, crate-boundary, Rust policy, architecture, doc-reference, Phase 2 policy, and diff checks pass. The approved disposable GitHub PostgreSQL integration workflow ran and passed; no local database was started.
+
+Exact-head GitHub Actions for `18dce7e59c945cedcccf793b2e69b354b9b86e4d`:
+
+| Workflow | Result | Run |
+|---|---|---|
+| Rust, canonical verification and PostgreSQL suites | PASS | [40182743696](https://github.com/jelome265/sitolo/actions/runs/40182743696) |
+| Integration, PostgreSQL application/contract tests | PASS | [40182743665](https://github.com/jelome265/sitolo/actions/runs/40182743665) |
+| Security, including CodeQL and offensive regression | PASS | [40182743667](https://github.com/jelome265/sitolo/actions/runs/40182743667) |
+| Policy | PASS | [40182743657](https://github.com/jelome265/sitolo/actions/runs/40182743657) |
+
+This closes the shared test-target guard gap only. It does not resolve the concrete production consumer/effect, canonical migration/release owner and artifact, full mutation evidence, Phase 3 requirements, independent Stage 06 review or human/branch-protection requirements. PR #49 remains open and not ready for merge or Phase 4 closure.
+
 ### R-08 — automated policy enforcement and scope reconciliation
 
 Added `scripts/ci/check-rust-policy.py` to fail closed on workspace lint-policy drift, package lint overrides, Rust lint suppressions without reasons, unsafe production Rust, compiler lint-bypass flags, and removal/filtering of required workspace, Part 8, or RLS test commands. The canonical Unix and PowerShell verifiers run this check and require the database suites. The Policy workflow runs it directly. CI now installs exact pinned `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 versions through one version-checking installer.

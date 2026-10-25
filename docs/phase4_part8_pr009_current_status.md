@@ -3,13 +3,15 @@
 **Status:** NOT READY FOR MERGE — current exact-head Rust, Integration, Security and Policy checks pass; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Latest implementation source:** `4858341fcd16459aad10494d8b75ddb684859861` (shared testkit fixtures are in `468186c`; organization activation route disposition is in `4858341`).
-**Latest exact-head verification:** documentation head `d53e05297963b5457d44006e236522c4a179d257` includes that implementation source. [Rust](https://github.com/jelome265/sitolo/actions/runs/40179488202), [Integration](https://github.com/jelome265/sitolo/actions/runs/40179488191), [Security](https://github.com/jelome265/sitolo/actions/runs/40179488204), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40179488198) all pass on that exact SHA.
-**Recent remediation:** commits `289ae0c` (database target guards), `e48b12a` (optional fingerprint encoding), `ef0e97b` (lint/CI policy), `468186c` (shared testkit fixtures), and `4858341` (remove unavailable organization activation route).
+**Latest implementation source:** `18dce7e59c945cedcccf793b2e69b354b9b86e4d` (shared disposable PostgreSQL target validation across application, Part 8 and RLS test harnesses).
+**Latest exact-head verification:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40182743696), [Integration](https://github.com/jelome265/sitolo/actions/runs/40182743665), [Security](https://github.com/jelome265/sitolo/actions/runs/40182743667), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40182743657) pass on exact SHA `18dce7e59c945cedcccf793b2e69b354b9b86e4d`.
+**Recent remediation:** commits `289ae0c`, `e48b12a`, `ef0e97b`, `468186c`, `4858341`, `db4fcba`, `a4cb381`, and `18dce7e` cover database target/schema guards, optional fingerprint encoding, lint/CI policy, shared testkit fixtures, organization activation route disposition, exact-head ICM evidence, and shared PostgreSQL test target checks.
 **Cross-phase evidence:** [Phase 1–4 deep audit](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-deep-audit-2026-10-25.md), [remediation plan](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-remediation-plan-2026-10-25.md), [follow-up index](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/README.md).
 **Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
 **Date:** 2026-10-25
+
+The historical checkpoint details below are retained for provenance. They do not supersede the exact-head source and CI evidence above.
 
 ## Remaining release blockers
 
