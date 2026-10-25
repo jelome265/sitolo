@@ -2,52 +2,58 @@
 
 **PR:** [#49](https://github.com/jelome265/sitolo/pull/49)  
 **Branch:** `feat/phase4-pr009-audit-outbox`  
-**Last tested implementation revision:** `3ee27a3a660557975e602f48535916bd44e82b90`  
-**ICM verification-report commit:** `22d276a64baa3254a3842296c315b61cccfa6de5`  
+**Lifecycle-payload fix:** `b095768f9903c86b399c13d788714ebd0294c2a2`  
+**Verification evidence commit:** `555f2d5e5631fe6d879e2ff4c92a5ec7a1e25773`  
 **Status:** NOT READY FOR MERGE; keep open and unmerged
 
-The previous 2026-09-24 execution contract is preserved at `docs/phase4_part8_pr009_remediation_execution_contract_2026-09-24_historical.md`. The 2026-10-24 remediation/verification reports describe their named source/local checks and are historical. Use this guide together with the latest current-status pointer and the exact-head ICM verification artifact.
+The earlier 2026-09-24 execution contract remains historical. Use the current-status document and the dated ICM verification report for current evidence.
 
 **Current status:** `docs/phase4_part8_pr009_current_status.md`  
 **Exact-head verification:** `workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md`  
-**Prior audit findings snapshot:** `workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-read-only-re-audit-2026-10-25.md`
+**Historical findings snapshot:** `workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-read-only-re-audit-2026-10-25.md`
 
 ## 1. Verification status
 
-On the tested implementation revision `3ee27a3`, the PostgreSQL-backed `membership_transaction_integration.rs` target reports **44/44 passed** in CI run [40158776564](https://github.com/jelome265/sitolo/actions/runs/40158776564). This closes the six earlier membership failures from the previous audit snapshot without weakening expected event cardinality.
+The three provision/invitation evidence failures have been resolved and proven green by [Integration run 40160964822](https://github.com/jelome265/sitolo/actions/runs/40160964822). Root cause: `transition_membership_with_evidence` included `organization_id` in the strict `iam.membership.pending_acceptance` payload. The event schema permits only `membership_id`, `from_state`, `to_state`, and `state_version`. Removing the extra JSON key restores evidence persistence while keeping `organization_id` in the dedicated audit column. No tests were weakened and no new business effect was invented.
 
-The fix adds typed `RoleAssignmentOutcome::Created/Replayed` semantics and only writes role-assignment evidence for a real state transition. It also resolves the audit target mismatch and corrects the denied suspend/revoke test actor so the expected `ScopeError::PermissionDenied` is exercised. The API's production dependency boundary is fixed: `sitolo-persistence` and SQLx are development/test-only dependencies of `sitolo-application`. Formatting, strict Clippy, workspace check, 259 library tests, release build and architecture/boundary checks passed in the verification record.
+The six previously failing membership transaction tests also remain fixed: `membership_transaction_integration.rs` reports **44/44 passing** on implementation revision `3ee27a3`, with later PostgreSQL Integration CI green on `b095768`. The role-assignment outcome now distinguishes `Created` from `Replayed`, so identical retries do not emit a second audit/outbox evidence pair.
 
-**The PR is not fully green.** The same source revision's `part8_provision_organization_evidence_tests.rs` target reports 15 passed and 3 failed. The runs on PR documentation/report commit `22d276a` were Policy PASS ([40159185647](https://github.com/jelome265/sitolo/actions/runs/40159185647)), Security PASS ([40159185632](https://github.com/jelome265/sitolo/actions/runs/40159185632)), Rust FAIL ([40159185592](https://github.com/jelome265/sitolo/actions/runs/40159185592)) and Integration FAIL ([40159185631](https://github.com/jelome265/sitolo/actions/runs/40159185631)).
+The Application → Persistence/SQLx production dependency violation is resolved: production code uses application-owned ports; the persistence and SQLx dependencies in `sitolo-application` are dev/test-only. Strict Clippy and the independent architecture/boundary check pass in the verification evidence.
 
-Those remaining test failures are:
-- `expire_invitation_commits_membership_audit_and_outbox_together` — `EvidencePersistenceFailed`.
-- `mark_member_pending_commits_state_audit_and_outbox_together` — `RowNotFound`.
-- `concurrent_mark_member_pending_emits_one_semantic_event` — evidence-count mismatch.
+## 2. Latest documented CI
 
-The verification report attributes them to the invitation / membership-lifecycle evidence surface, untouched by the scoped role-assignment fix. Record them as **remaining open CI blockers**, not as passes or waived findings. No approved business effect or contract should be invented to force these tests green.
+The latest fully observed result set is for the report commit `555f2d5e5631fe6d879e2ff4c92a5ec7a1e25773`:
 
-## 2. Current implementation boundary
+| Workflow | Result | Run |
+|---|---|---|
+| Policy | PASS | [40161606057](https://github.com/jelome265/sitolo/actions/runs/40161606057) |
+| Security | PASS | [40161606063](https://github.com/jelome265/sitolo/actions/runs/40161606063) |
+| Integration | PASS | [40161606055](https://github.com/jelome265/sitolo/actions/runs/40161606055) |
+| Rust | FAIL | [40161606051](https://github.com/jelome265/sitolo/actions/runs/40161606051) |
 
-The API composes managed production secret resolution, Cognito OIDC validation, an `app_runtime` PostgreSQL pool, persisted identity/session authority and the durable tenancy service. Application-owned ports live in `sitolo-application`; PostgreSQL implementations live behind `sitolo-persistence`. The intended mutation, authorization and audit/outbox evidence share one transaction.
+These checks apply to that exact head. A later documentation commit triggers new workflow runs; verify the new source head rather than carrying statuses forward automatically.
 
-Five of the six declared protected routes have authenticated application paths. The organization activation endpoint remains deliberately closed because provisioning currently activates the organization before inserting it, so no persisted `PROVISIONING` state is available for that transition. Keep it closed until the lifecycle contract is implemented, or remove the route from the inventory after an approved contract decision.
+## 3. Remaining Rust blocker: Part 8 RLS policy-count assertion
 
-The worker relay/SNS FIFO publishing infrastructure exists. Consumer infrastructure and durable inbox support also exist, but the production worker entry point does not yet compose and run the SQS consumer with an owner-approved concrete business effect. Do not describe abstractions or inbox storage alone as complete end-to-end consumer delivery.
+Rust CI still fails in `test_part8_relation_ownership_and_rls_metadata`: it expects exactly three Part 8 RLS policies but observes four. The additional row is `consumer_inbox_tenant_policy` from `crates/sitolo-persistence/schema/consumer_inbox.sql`, attached to the consumer inbox table and targeting the `app_worker` role. The Part 8 test's `pg_policies` query currently counts the extra consumer-inbox policy.
 
-## 3. Required work before closure
+The verification artifact identifies this policy as pre-existing (added in `0cdd771`) and outside the one-line lifecycle payload change in `b095768`. That attribution alone does not resolve the failed CI check. The next action is to establish the intended scope from the binding contracts:
+- Is the assertion intended to count policies only on the Part 8 audit/outbox evidence tables, in which case the query may need to filter to those tables?
+- Or does the policy's existence/role target actually violate the binding security contract?
 
-1. **Independent Stage 06 audit.** Re-audit the final implementation SHA, distinguish resolved findings from the three remaining provision/invitation failures, and record the audit only through the prescribed ICM stage. The Stage 08 verification report is evidence, not Stage 06 approval.
-2. **Resolve remaining PostgreSQL failures.** Keep the three `part8_provision_organization_evidence_tests.rs` failures open. Obtain the owner-approved invitation/lifecycle contract needed to determine expected semantics; then implement and regression-test without weakening evidence/rollback assertions.
-3. **AUD-01:** approve the SQS FIFO queue/consumer contract and exact business effect; wire the consumer into worker runtime; prove inbox idempotency, effect and database commit are atomic, acknowledgement follows commit, and retry/quarantine paths behave correctly.
-4. **AUD-05:** establish the restricted worker role/pool and independently documented migration/release path for identity, tenancy, audit, outbox and inbox schemas.
-5. **R3:** complete the source-grounded mandatory-mutation matrix for actor provenance, tenant scope, authorization, state mutation, transactional audit/outbox and denied/no-write proof.
-6. **R4 / AUD-04:** trace all approved lifecycle transitions to persisted event schemas and relay acceptance. Catalogue/validator tests alone do not establish that each state transition emits its required evidence.
-7. **Organization activation:** implement persisted `PROVISIONING` semantics with contract and tests, or remove the route from the declared API inventory. Do not reopen the handler alone.
-8. **PR metadata and branch rules:** the PR description has stale head `90f8f610...` claims, including the already-fixed Application→Persistence/SQLx dependency allegation. Refresh the description before handoff. Ensure the architecture/boundary job is required by branch protection and obtain human review.
+Do not change the policy or weaken the assertion before answering that contract question. Any corrective change needs a test that verifies the intended relation/role ownership rule and live PostgreSQL RLS behavior.
 
-## 4. Evidence and merge rule
+## 4. Remaining Part 8 closure gates
 
-The verification artifact documents local non-database checks as green and the six assigned membership failures as fixed. GitHub Actions still reports Rust and Integration failing because of the three provision/invitation tests. The last observed check runs are attached to PR head `22d276a`; any later documentation commit can trigger new runs and must be rechecked rather than inheriting a pass claim automatically.
+1. **RLS metadata finding:** resolve `test_part8_relation_ownership_and_rls_metadata` according to the binding table/role contract and obtain a passing required Rust workflow or a formally documented, approved exception.
+2. **AUD-01:** obtain owner approval for the SQS FIFO queue/consumer contract and exact business effect; compose the consumer into the worker runtime; prove inbox deduplication, effect and commit are one transaction, acknowledgement follows commit, and retry/quarantine behaviour is correct.
+3. **AUD-05:** complete the restricted worker role/pool and documented migration/release path for identity, tenancy, audit, outbox and inbox schemas.
+4. **R3:** complete a source-grounded mutation matrix for actor provenance, tenant scope, authorization, state mutation, transactional audit/outbox and denied/no-write proof.
+5. **R4 / AUD-04:** trace all approved lifecycle transitions from state mutation through persisted event schema and relay acceptance. Catalogue/schema validation alone is insufficient.
+6. **Organization activation:** introduce a contract-backed persisted `PROVISIONING` transition or remove the route from the declared inventory; keep it closed until that decision is implemented.
+7. **Independent review:** request and record Stage 06 re-audit against the final implementation source, then obtain the required human review. Stage 08 verification evidence is not Stage 06 audit approval.
+8. **Handoff metadata:** refresh the stale PR description before reviewer handoff; it still contains old current-head and Application→Persistence/SQLx claims that no longer describe the code.
 
-Keep PR #49 open and unmerged. Do not enter delivery or close Phase 4 Part 8 until the remaining test failures are resolved under an approved contract, required workflows pass on the same final source head, AUD-01/AUD-05/R3/R4 gates are evidenced, and independent Stage 06 plus human review are recorded.
+## 5. Closure rule
+
+PR #49 remains open and unmerged. The six membership transaction failures and three provision/invitation evidence failures are fixed. Policy, Security and Integration pass on the currently documented head, but Rust remains red because of the RLS metadata assertion. Phase 4 Part 8 must not close and delivery must not begin until that finding is correctly dispositioned, AUD-01/AUD-05/R3/R4 are evidenced, and independent Stage 06 plus human review are complete.
