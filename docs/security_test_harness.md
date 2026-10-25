@@ -216,6 +216,15 @@ The second category is where enterprise security evidence becomes meaningful.
 
 Security integration tests must run against isolated environments.
 
+Every PostgreSQL integration harness validates its database targets before
+opening a connection or executing DDL. The suite requires the explicit
+`SITOLO_TEST_DATABASE_DISPOSABLE=true` opt-in, loopback `127.0.0.1:5432`, an
+approved `sitolo_test` or `sitolo_offensive` database, the expected admin and
+runtime roles, and matching server/database identity across DSNs. The Part 8
+suite also validates the worker role and its target. CI supplies this opt-in
+only alongside its disposable PostgreSQL service; the guard does not permit a
+remote-host override.
+
 A test environment should be reproducible from:
 
 ```text

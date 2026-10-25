@@ -74,6 +74,7 @@ require "--health-cmd pg_isready"
 require "ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test"
 require "RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test"
 require "WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test"
+require "SITOLO_TEST_DATABASE_DISPOSABLE: \"true\""
 require "cargo test --workspace --all-targets --all-features --locked"
 
 if [[ "$fail" -ne 0 ]]; then

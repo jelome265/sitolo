@@ -15,8 +15,9 @@
 //!   differs.
 
 use std::env;
-use std::str::FromStr;
 use std::time::Duration;
+
+mod common;
 
 use sitolo_audit::{ActorRef, IamAuditEvent, IamEventName, TargetRef};
 use sitolo_auth::{AuditEventId, SessionId, UserId};
@@ -109,14 +110,9 @@ impl<'r> FromRow<'r, PgRow> for RelationSecurityRow {
 /// `RUNTIME_DATABASE_URL` and `WORKER_DATABASE_URL` are both required. The
 /// worker identity is deliberately not allowed to fall back to the runtime
 /// identity: the tests must prove the narrow worker role, not the superuser.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
-)]
 async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>> {
-    let admin_url = env::var("ADMIN_DATABASE_URL")?;
-    let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
-    let worker_url = env::var("WORKER_DATABASE_URL")?;
+    let targets = common::targets_from_env().map_err(std::io::Error::other)?;
+    let worker_target = worker_target_from_env(&targets).map_err(std::io::Error::other)?;
 
     let schema_id = Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_part8_{schema_id}");
@@ -124,7 +120,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     // The schema must exist before a pool can set it as its search_path.
     let bootstrap = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&admin_url)
+        .connect_with(targets.admin.clone())
         .await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""
@@ -133,8 +129,9 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     .await?;
     bootstrap.close().await;
 
-    let admin_opts =
-        PgConnectOptions::from_str(&admin_url)?.options([("search_path", schema_name.as_str())]);
+    let admin_opts = targets
+        .admin
+        .options([("search_path", schema_name.as_str())]);
     let admin_pool = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(admin_opts)
@@ -156,15 +153,15 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .execute(&admin_pool)
         .await?;
 
-    let runtime_opts =
-        PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema_name.as_str())]);
+    let runtime_opts = targets
+        .runtime
+        .options([("search_path", schema_name.as_str())]);
     let runtime_pool = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(runtime_opts)
         .await?;
 
-    let worker_opts =
-        PgConnectOptions::from_str(&worker_url)?.options([("search_path", schema_name.as_str())]);
+    let worker_opts = worker_target.options([("search_path", schema_name.as_str())]);
     let worker_pool = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(worker_opts)
@@ -208,6 +205,18 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         worker_pool,
         schema_name,
     })
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The Part 8 integration-test boundary reads its required worker DSN before any connection or DDL; production configuration remains parsed at the binary boundary."
+)]
+fn worker_target_from_env(
+    targets: &common::TestDatabaseTargets,
+) -> Result<PgConnectOptions, String> {
+    let raw = env::var("WORKER_DATABASE_URL")
+        .map_err(|_error| "WORKER_DATABASE_URL is required".to_owned())?;
+    common::validate_worker_target(targets, &raw)
 }
 
 #[tokio::test]

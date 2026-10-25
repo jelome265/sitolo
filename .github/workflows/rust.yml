@@ -74,6 +74,7 @@ jobs:
           cargo install cargo-audit --locked
       - name: Run canonical verification
         env:
+          SITOLO_TEST_DATABASE_DISPOSABLE: "true"
           # The admin DSN is used only for schema and role setup. Runtime and
           # worker authenticate as their own restricted LOGIN roles, which the
           # isolated-schema fixture creates before the pools connect.

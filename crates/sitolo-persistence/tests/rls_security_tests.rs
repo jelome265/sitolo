@@ -20,13 +20,14 @@ use sqlx_core::raw_sql::raw_sql;
 use sqlx_core::row::Row;
 use sqlx_core::transaction::Transaction;
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, Postgres};
-use std::env;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
+
+mod common;
 
 static MIGRATIONS_INIT: OnceCell<Result<(), String>> = OnceCell::const_new();
 
@@ -311,10 +312,6 @@ where
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
-)]
 async fn setup_test_context(
     schema_name_override: Option<&str>,
 ) -> Result<TestContext, Box<dyn std::error::Error + Send + Sync>> {
@@ -325,10 +322,9 @@ async fn setup_test_context(
         format!("test_schema_{schema_id}")
     };
 
-    let admin_url = env::var("ADMIN_DATABASE_URL")?;
-    let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
-    let mut admin_opts: PgConnectOptions = admin_url.parse()?;
-    let mut runtime_opts: PgConnectOptions = runtime_url.parse()?;
+    let targets = common::targets_from_env().map_err(std::io::Error::other)?;
+    let mut admin_opts: PgConnectOptions = targets.admin;
+    let mut runtime_opts: PgConnectOptions = targets.runtime;
 
     admin_opts = admin_opts.options([("search_path", schema_name.as_str())]);
     runtime_opts = runtime_opts.options([("search_path", schema_name.as_str())]);
@@ -1461,20 +1457,14 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() -> TestResult {
 // ============================================================================
 
 #[tokio::test]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "FW-CLP-02: the integration-test harness reads the CI-provided admin DSN; production configuration is parsed at the binary boundary."
-)]
 async fn test_setup_failure_injection_cleans_up_schema() -> TestResult {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
 
-    let admin_url = env::var("ADMIN_DATABASE_URL")?;
-
-    let admin_opts: PgConnectOptions = admin_url.parse()?;
+    let targets = common::targets_from_env().map_err(std::io::Error::other)?;
     let admin_pool = PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(admin_opts)
+        .connect_with(targets.admin)
         .await?;
 
     // Verify schema does not exist prior to setup
