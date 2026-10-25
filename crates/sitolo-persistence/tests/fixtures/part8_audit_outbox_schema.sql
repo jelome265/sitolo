@@ -129,7 +129,7 @@ CREATE TABLE __SCHEMA__.outbox_events (
         last_error_class IS NULL OR last_error_class ~ '^[a-z][a-z0-9_.-]{0,63}$'
     ),
     CONSTRAINT uq_outbox_aggregate_sequence
-        UNIQUE (aggregate_type, aggregate_id, aggregate_sequence),
+        UNIQUE (organization_id, aggregate_type, aggregate_id, aggregate_sequence),
     CONSTRAINT chk_outbox_claim_state CHECK (
         (status = 'CLAIMED' AND claim_token IS NOT NULL AND locked_at IS NOT NULL)
         OR (status <> 'CLAIMED' AND claim_token IS NULL)
@@ -145,7 +145,7 @@ CREATE INDEX idx_outbox_events_status
 CREATE INDEX idx_outbox_events_org
     ON __SCHEMA__.outbox_events(organization_id);
 CREATE INDEX idx_outbox_events_aggregate_order
-    ON __SCHEMA__.outbox_events(aggregate_type, aggregate_id, aggregate_sequence);
+    ON __SCHEMA__.outbox_events(organization_id, aggregate_type, aggregate_id, aggregate_sequence);
 
 ALTER TABLE __SCHEMA__.outbox_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE __SCHEMA__.outbox_events FORCE ROW LEVEL SECURITY;
@@ -171,17 +171,32 @@ CREATE POLICY outbox_events_owner_policy ON __SCHEMA__.outbox_events
 -- ============================================================================
 --
 -- The row lock taken by `ON CONFLICT DO UPDATE` serialises concurrent
--- enqueues for one aggregate. The application role never computes MAX()+1.
+-- enqueues for one organization-scoped aggregate. The application role never
+-- computes MAX()+1.
 -- A rolled-back enqueue rolls back the increment in the same transaction.
 
 CREATE TABLE __SCHEMA__.outbox_aggregate_sequences (
+    organization_id TEXT NOT NULL,
     aggregate_type TEXT NOT NULL,
     aggregate_id TEXT NOT NULL,
     next_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
-    PRIMARY KEY (aggregate_type, aggregate_id)
+    PRIMARY KEY (organization_id, aggregate_type, aggregate_id)
 );
 
 ALTER TABLE __SCHEMA__.outbox_aggregate_sequences OWNER TO app_outbox_owner;
+ALTER TABLE __SCHEMA__.outbox_aggregate_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE __SCHEMA__.outbox_aggregate_sequences FORCE ROW LEVEL SECURITY;
+CREATE POLICY outbox_aggregate_sequences_tenant_policy
+    ON __SCHEMA__.outbox_aggregate_sequences
+    FOR ALL TO app_runtime
+    USING (
+        organization_id = current_setting('app.organization_id', true)
+        AND current_setting('app.organization_id', true) <> ''
+    )
+    WITH CHECK (
+        organization_id = current_setting('app.organization_id', true)
+        AND current_setting('app.organization_id', true) <> ''
+    );
 ALTER TABLE __SCHEMA__.audit_events OWNER TO app_outbox_owner;
 ALTER TABLE __SCHEMA__.outbox_events OWNER TO app_outbox_owner;
 
@@ -252,12 +267,13 @@ BEGIN
           AND NOT EXISTS (
               SELECT 1
               FROM __SCHEMA__.outbox_events AS earlier
-              WHERE earlier.aggregate_type = event.aggregate_type
+              WHERE earlier.organization_id = event.organization_id
+                AND earlier.aggregate_type = event.aggregate_type
                 AND earlier.aggregate_id = event.aggregate_id
                 AND earlier.aggregate_sequence < event.aggregate_sequence
                 AND earlier.status <> 'PUBLISHED'
           )
-        ORDER BY event.available_at ASC, event.aggregate_type ASC,
+        ORDER BY event.available_at ASC, event.organization_id ASC, event.aggregate_type ASC,
                  event.aggregate_id ASC, event.aggregate_sequence ASC
         LIMIT p_batch_size
         FOR UPDATE SKIP LOCKED

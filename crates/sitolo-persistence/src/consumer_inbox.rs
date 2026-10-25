@@ -53,6 +53,9 @@ pub enum ConsumerInboxError {
     /// A persisted row violated the inbox invariants.
     #[error("persisted consumer inbox row violates its invariant")]
     InvalidPersistedRecord,
+    /// An earlier sequence for this consumer and aggregate is not committed.
+    #[error("consumer aggregate sequence is waiting for its predecessor")]
+    AggregateSequenceOutOfOrder,
 }
 
 /// Transactional consumer inbox port.
@@ -108,7 +111,18 @@ impl ConsumerInboxWriter for PostgresConsumerInbox {
             .execute(&mut **tx)
             .await?;
 
+        lock_aggregate(tx, event).await?;
+
         let payload_hash = Sha256::digest(event.payload).to_vec();
+        if let Some(matches) = existing_event_matches(tx, event, &payload_hash).await? {
+            return if matches {
+                Ok(false)
+            } else {
+                Err(ConsumerInboxError::EventIdentityConflict)
+            };
+        }
+        ensure_next_sequence(tx, event).await?;
+
         let inserted: Option<String> = query_scalar(
             "INSERT INTO consumer_inbox \
              (consumer_name, event_id, event_name, event_version, organization_id, branch_id, \
@@ -133,33 +147,101 @@ impl ConsumerInboxWriter for PostgresConsumerInbox {
             return Ok(true);
         }
 
-        let existing: Option<PgRow> = query(
-            "SELECT event_name, event_version, organization_id, branch_id, aggregate_type, \
-             aggregate_id, aggregate_sequence, occurred_at, payload_sha256 \
-             FROM consumer_inbox WHERE consumer_name = $1 AND event_id = $2",
-        )
-        .bind(event.consumer_name)
-        .bind(event.event_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-        let Some(row) = existing else {
+        let Some(matches) = existing_event_matches(tx, event, &payload_hash).await? else {
             return Err(ConsumerInboxError::InvalidPersistedRecord);
         };
-        let same = row.try_get::<String, _>("event_name")? == event.event_name
-            && row.try_get::<i32, _>("event_version")? == event.event_version
-            && row.try_get::<String, _>("organization_id")? == event.organization_id
-            && row.try_get::<Option<String>, _>("branch_id")? == event.branch_id.map(str::to_owned)
-            && row.try_get::<String, _>("aggregate_type")? == event.aggregate_type
-            && row.try_get::<String, _>("aggregate_id")? == event.aggregate_id
-            && row.try_get::<i64, _>("aggregate_sequence")? == event.aggregate_sequence
-            && row.try_get::<DateTime<Utc>, _>("occurred_at")? == event.occurred_at
-            && row.try_get::<Vec<u8>, _>("payload_sha256")? == payload_hash;
-        if same {
+        if matches {
             Ok(false)
         } else {
             Err(ConsumerInboxError::EventIdentityConflict)
         }
     }
+}
+
+async fn lock_aggregate(
+    tx: &mut Transaction<'_, Postgres>,
+    event: ConsumerInboxRecord<'_>,
+) -> Result<(), ConsumerInboxError> {
+    // The transaction lock is released on commit or rollback; unrelated
+    // aggregates can proceed independently. Length separation prevents
+    // component values from colliding at the key-encoding boundary.
+    let lock_key = format!(
+        "{}:{}{}:{}{}:{}{}:{}",
+        event.consumer_name.len(),
+        event.consumer_name,
+        event.organization_id.len(),
+        event.organization_id,
+        event.aggregate_type.len(),
+        event.aggregate_type,
+        event.aggregate_id.len(),
+        event.aggregate_id
+    );
+    query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(lock_key)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn existing_event_matches(
+    tx: &mut Transaction<'_, Postgres>,
+    event: ConsumerInboxRecord<'_>,
+    payload_hash: &[u8],
+) -> Result<Option<bool>, ConsumerInboxError> {
+    let existing: Option<PgRow> = query(
+        "SELECT event_name, event_version, organization_id, branch_id, aggregate_type, \
+         aggregate_id, aggregate_sequence, occurred_at, payload_sha256 \
+         FROM consumer_inbox WHERE consumer_name = $1 AND event_id = $2",
+    )
+    .bind(event.consumer_name)
+    .bind(event.event_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    existing
+        .as_ref()
+        .map(|row| inbox_row_matches(row, event, payload_hash))
+        .transpose()
+}
+
+async fn ensure_next_sequence(
+    tx: &mut Transaction<'_, Postgres>,
+    event: ConsumerInboxRecord<'_>,
+) -> Result<(), ConsumerInboxError> {
+    let previous_sequence: Option<i64> = query_scalar(
+        "SELECT MAX(aggregate_sequence) FROM consumer_inbox \
+         WHERE consumer_name = $1 AND organization_id = $2 \
+           AND aggregate_type = $3 AND aggregate_id = $4",
+    )
+    .bind(event.consumer_name)
+    .bind(event.organization_id)
+    .bind(event.aggregate_type)
+    .bind(event.aggregate_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let expected_sequence = previous_sequence
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or(ConsumerInboxError::InvalidPersistedRecord)?;
+    if event.aggregate_sequence != expected_sequence {
+        return Err(ConsumerInboxError::AggregateSequenceOutOfOrder);
+    }
+    Ok(())
+}
+
+fn inbox_row_matches(
+    row: &PgRow,
+    event: ConsumerInboxRecord<'_>,
+    payload_hash: &[u8],
+) -> Result<bool, ConsumerInboxError> {
+    Ok(row.try_get::<String, _>("event_name")? == event.event_name
+        && row.try_get::<i32, _>("event_version")? == event.event_version
+        && row.try_get::<String, _>("organization_id")? == event.organization_id
+        && row.try_get::<Option<String>, _>("branch_id")? == event.branch_id.map(str::to_owned)
+        && row.try_get::<String, _>("aggregate_type")? == event.aggregate_type
+        && row.try_get::<String, _>("aggregate_id")? == event.aggregate_id
+        && row.try_get::<i64, _>("aggregate_sequence")? == event.aggregate_sequence
+        && row.try_get::<DateTime<Utc>, _>("occurred_at")? == event.occurred_at
+        && row.try_get::<Vec<u8>, _>("payload_sha256")? == payload_hash)
 }
 
 fn valid_component(value: &str, max_len: usize) -> bool {

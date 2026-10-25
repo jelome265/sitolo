@@ -389,6 +389,33 @@ async fn enqueue_pending_event(
     Ok(())
 }
 
+async fn enqueue_aggregate_event(
+    ctx: &TestContext,
+    organization_id: &OrganizationId,
+    aggregate_id: &str,
+    event_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let event = OutboxEvent::new(
+        event_id.to_owned(),
+        "Organization".to_owned(),
+        aggregate_id.to_owned(),
+        "iam.organization.created".to_owned(),
+        1,
+        organization_id.clone(),
+        None,
+        r"{}".to_owned(),
+    )?;
+    let writer = PostgresOutboxRepository::new(ctx.runtime_pool.clone());
+    let mut tx = ctx.runtime_pool.begin().await?;
+    query("SELECT set_config('app.organization_id', $1, true)")
+        .bind(organization_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    writer.enqueue(&mut tx, &event).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// The repository boundary must revalidate public event fields before it
 /// mutates either the outbox or the aggregate sequence table.
 #[tokio::test]
@@ -1223,9 +1250,10 @@ async fn test_concurrent_aggregate_sequence_assignment() -> Result<(), Box<dyn s
         let sequences: Vec<i64> = query_scalar(
             "SELECT aggregate_sequence \
              FROM outbox_events \
-             WHERE aggregate_type = $1 AND aggregate_id = $2 \
+             WHERE organization_id = $1 AND aggregate_type = $2 AND aggregate_id = $3 \
              ORDER BY aggregate_sequence",
         )
+        .bind(org_id.to_string())
         .bind("Organization")
         .bind(&aggregate_id)
         .fetch_all(&ctx.admin_pool)
@@ -1237,6 +1265,39 @@ async fn test_concurrent_aggregate_sequence_assignment() -> Result<(), Box<dyn s
             sequences, expected,
             "concurrent enqueues must produce unique contiguous sequences"
         );
+
+        // Aggregate sequence identity includes organization scope, matching
+        // the approved SNS FIFO group identity and consumer inbox ordering key.
+        let other_org = OrganizationId::new("org-sequence-other")?;
+        let other_event = OutboxEvent::new(
+            "outbox-seq-other-org".to_owned(),
+            "Organization".to_owned(),
+            aggregate_id.clone(),
+            "iam.organization.created".to_owned(),
+            1,
+            other_org.clone(),
+            None,
+            r"{}".to_owned(),
+        )?;
+        let writer = PostgresOutboxRepository::new(ctx.runtime_pool.clone());
+        let mut other_tx = ctx.runtime_pool.begin().await?;
+        query("SELECT set_config('app.organization_id', $1, true)")
+            .bind(other_org.to_string())
+            .execute(&mut *other_tx)
+            .await?;
+        writer.enqueue(&mut other_tx, &other_event).await?;
+        other_tx.commit().await?;
+
+        let other_org_sequence: i64 = query_scalar(
+            "SELECT aggregate_sequence FROM outbox_events \
+             WHERE organization_id = $1 AND aggregate_type = $2 AND aggregate_id = $3",
+        )
+        .bind(other_org.to_string())
+        .bind("Organization")
+        .bind(&aggregate_id)
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(other_org_sequence, 1);
 
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
@@ -1301,6 +1362,55 @@ async fn test_same_aggregate_claims_follow_sequence() -> Result<(), Box<dyn std:
             "the successor carries aggregate sequence two"
         );
 
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
+/// Test: tenant-scoped aggregates do not block each other's ordered stream.
+#[tokio::test]
+async fn test_outbox_aggregate_ordering_is_organization_scoped()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        let org_a = OrganizationId::new("org-order-a")?;
+        let org_b = OrganizationId::new("org-order-b")?;
+        let aggregate_id = "shared-aggregate-id";
+        let reader = PostgresOutboxRepository::new(ctx.worker_pool.clone());
+
+        enqueue_aggregate_event(&ctx, &org_b, aggregate_id, "outbox-order-b-1").await?;
+        let first_claim = reader.claim_batch(claim_policy(10, 300)?).await?;
+        assert_eq!(first_claim.len(), 1);
+        let first_token = first_claim
+            .first()
+            .ok_or_else(|| std::io::Error::other("organization B first event was not claimed"))?
+            .claim_token
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("claimed event missing claim token"))?;
+        reader
+            .mark_published("outbox-order-b-1", first_token)
+            .await?;
+
+        enqueue_aggregate_event(&ctx, &org_b, aggregate_id, "outbox-order-b-2").await?;
+        enqueue_aggregate_event(&ctx, &org_a, aggregate_id, "outbox-order-a-1").await?;
+
+        let claim = reader.claim_batch(claim_policy(10, 300)?).await?;
+        let mut event_ids: Vec<&str> = claim.iter().map(|event| event.event_id.as_str()).collect();
+        event_ids.sort_unstable();
+        assert_eq!(
+            event_ids,
+            ["outbox-order-a-1", "outbox-order-b-2"],
+            "an earlier sequence in another organization must not block this aggregate"
+        );
+        let org_b_second = claim
+            .iter()
+            .find(|event| event.event_id == "outbox-order-b-2")
+            .ok_or_else(|| std::io::Error::other("organization B successor was not claimed"))?;
+        assert_eq!(org_b_second.aggregate_sequence, Some(2));
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
@@ -1724,7 +1834,7 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
 /// Asserts the Part 8 policy set targets exactly the runtime and outbox-owner
 /// roles, and never the worker role.
 fn assert_part8_policies(policies: &[(String, String, String, String)]) {
-    assert_eq!(policies.len(), 3, "exactly three Part 8 policies expected");
+    assert_eq!(policies.len(), 4, "exactly four Part 8 policies expected");
     assert!(
         policies.iter().any(|(table, policy, roles, command)| {
             table == "audit_events"
@@ -1751,6 +1861,15 @@ fn assert_part8_policies(policies: &[(String, String, String, String)]) {
                 && command == "ALL"
         }),
         "outbox owner policy must target app_outbox_owner only: {policies:?}"
+    );
+    assert!(
+        policies.iter().any(|(table, policy, roles, command)| {
+            table == "outbox_aggregate_sequences"
+                && policy == "outbox_aggregate_sequences_tenant_policy"
+                && roles == "app_runtime"
+                && command == "ALL"
+        }),
+        "aggregate sequence rows must be tenant scoped: {policies:?}"
     );
     assert!(
         !policies
@@ -1810,6 +1929,18 @@ async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn 
             .ok_or_else(|| std::io::Error::other("outbox table is not catalogued"))?;
         assert!(outbox.relrowsecurity, "outbox_events must enable RLS");
         assert!(outbox.relforcerowsecurity, "outbox_events must force RLS");
+        let aggregate_sequences = relations
+            .iter()
+            .find(|relation| relation.relname == "outbox_aggregate_sequences")
+            .ok_or_else(|| std::io::Error::other("aggregate sequence table is not catalogued"))?;
+        assert!(
+            aggregate_sequences.relrowsecurity,
+            "outbox_aggregate_sequences must enable RLS"
+        );
+        assert!(
+            aggregate_sequences.relforcerowsecurity,
+            "outbox_aggregate_sequences must force RLS"
+        );
 
         // Assert the Part 8 evidence-table policy inventory only. The consumer
         // inbox (consumer_inbox_tenant_policy on consumer_inbox, targeting
@@ -1817,14 +1948,15 @@ async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn 
         // restricted app_worker role under its own RLS contract
         // (crates/sitolo-persistence/schema/consumer_inbox.sql; schema/README.md
         // §29-33). It is not a Part 8 evidence table and is intentionally outside
-        // this inventory. The Part 8 evidence tables are audit_events and
-        // outbox_events, which carry exactly three policies targeting
-        // app_runtime and app_outbox_owner.
+        // this inventory. Part 8 audit/outbox evidence and sequence metadata
+        // carry four policies targeting app_runtime and app_outbox_owner.
         let policies: Vec<(String, String, String, String)> = query_as(
             "SELECT tablename, policyname, array_to_string(roles, ',') AS roles, cmd
              FROM pg_policies
              WHERE schemaname = $1
-               AND tablename IN ('audit_events', 'outbox_events')
+               AND tablename IN (
+                   'audit_events', 'outbox_events', 'outbox_aggregate_sequences'
+               )
              ORDER BY tablename, policyname",
         )
         .bind(&ctx.schema_name)
@@ -1939,6 +2071,27 @@ async fn test_outbox_cross_tenant_insert_is_denied() -> Result<(), Box<dyn std::
             "expected RLS violation, got: {error}"
         );
         tx.rollback().await?;
+
+        let mut sequence_tx = ctx.runtime_pool.begin().await?;
+        raw_sql("SET LOCAL app.organization_id = 'org-A'")
+            .execute(&mut *sequence_tx)
+            .await?;
+        let sequence_insert = query(
+            "INSERT INTO outbox_aggregate_sequences \
+             (organization_id, aggregate_type, aggregate_id, next_sequence) \
+             VALUES ('org-B', 'Organization', 'org-B', 2)",
+        )
+        .execute(&mut *sequence_tx)
+        .await;
+        let sequence_error = sequence_insert.err().ok_or_else(|| {
+            std::io::Error::other("cross-tenant aggregate sequence insert must be denied")
+        })?;
+        assert_eq!(
+            sqlstate(&sequence_error)?,
+            "42501",
+            "expected aggregate sequence RLS violation, got: {sequence_error}"
+        );
+        sequence_tx.rollback().await?;
 
         Ok::<(), Box<dyn std::error::Error>>(())
     }
@@ -2102,7 +2255,10 @@ async fn test_consumer_inbox_rolls_back_and_deduplicates_identical_events()
             .begin_processing(&mut out_of_order, later_record)
             .await;
         assert!(
-            out_of_order_result.is_err(),
+            matches!(
+                out_of_order_result,
+                Err(ConsumerInboxError::AggregateSequenceOutOfOrder)
+            ),
             "a later aggregate sequence must wait for its predecessor"
         );
         out_of_order.rollback().await?;
@@ -2160,6 +2316,107 @@ async fn test_consumer_inbox_rolls_back_and_deduplicates_identical_events()
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
+/// Concurrent deliveries for one aggregate serialize on the durable inbox lock.
+#[tokio::test]
+async fn test_consumer_inbox_serializes_concurrent_aggregate_sequences()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        let inbox = PostgresConsumerInbox;
+        let first_record = ConsumerInboxRecord {
+            consumer_name: "iam-projection",
+            event_id: "evt-order-1",
+            event_name: "iam.invitation.issued",
+            event_version: 1,
+            organization_id: "org-order",
+            branch_id: None,
+            aggregate_type: "Invitation",
+            aggregate_id: "inv-order",
+            aggregate_sequence: 1,
+            occurred_at: chrono::Utc::now(),
+            payload: br#"{"invitation_id":"inv-order","membership_id":"mem-order","expires_at":"2026-11-23T00:00:00Z","state_version":1}"#,
+        };
+        let second_payload = br#"{"invitation_id":"inv-order","membership_id":"mem-order","expires_at":"2026-11-23T00:00:00Z","state_version":2}"#;
+
+        // Holding the first transaction after its inbox marker forces the
+        // second delivery to wait on the same aggregate lock.
+        let mut first_tx = ctx.worker_pool.begin().await?;
+        assert!(inbox.begin_processing(&mut first_tx, first_record).await?);
+
+        let worker_pool = ctx.worker_pool.clone();
+        let (pid_sender, pid_receiver) = tokio::sync::oneshot::channel();
+        let mut second_delivery = tokio::task::JoinSet::new();
+        second_delivery.spawn(async move {
+            let mut tx = worker_pool.begin().await?;
+            let backend_pid: i32 = query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _sent = pid_sender.send(backend_pid);
+            let record = ConsumerInboxRecord {
+                consumer_name: "iam-projection",
+                event_id: "evt-order-2",
+                event_name: "iam.invitation.issued",
+                event_version: 1,
+                organization_id: "org-order",
+                branch_id: None,
+                aggregate_type: "Invitation",
+                aggregate_id: "inv-order",
+                aggregate_sequence: 2,
+                occurred_at: chrono::Utc::now(),
+                payload: second_payload,
+            };
+            match inbox.begin_processing(&mut tx, record).await {
+                Ok(is_new) => {
+                    tx.commit().await?;
+                    Ok(is_new)
+                }
+                Err(error) => {
+                    tx.rollback().await?;
+                    Err(error)
+                }
+            }
+        });
+        let backend_pid = pid_receiver.await?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting_for_lock: bool = query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE pid = $1 AND wait_event_type = 'Lock')",
+                )
+                .bind(backend_pid)
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+                if waiting_for_lock {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok::<(), Error>(())
+        })
+        .await??;
+
+        first_tx.commit().await?;
+        let Some(second_result) = second_delivery.join_next().await else {
+            return Err(std::io::Error::other("concurrent consumer task disappeared").into());
+        };
+        assert!(second_result??);
+        let event_count: i64 = query_scalar(
+            "SELECT count(*) FROM consumer_inbox \
+             WHERE consumer_name = 'iam-projection' AND organization_id = 'org-order' \
+               AND aggregate_type = 'Invitation' AND aggregate_id = 'inv-order'",
+        )
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(event_count, 2, "both ordered effects must commit once");
+        Ok::<(), Box<dyn std::error::Error>>(() )
+    }
+    .await;
+
     teardown_test_context(&ctx).await?;
     result?;
     Ok(())

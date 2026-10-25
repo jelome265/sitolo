@@ -241,14 +241,15 @@ impl OutboxWriter for PostgresOutboxRepository {
         let aggregate_sequence: i64 = query_scalar(
             r"
             INSERT INTO outbox_aggregate_sequences (
-                aggregate_type, aggregate_id, next_sequence
+                organization_id, aggregate_type, aggregate_id, next_sequence
             )
-            VALUES ($1, $2, 2)
-            ON CONFLICT (aggregate_type, aggregate_id)
+            VALUES ($1, $2, $3, 2)
+            ON CONFLICT (organization_id, aggregate_type, aggregate_id)
             DO UPDATE SET next_sequence = outbox_aggregate_sequences.next_sequence + 1
             RETURNING next_sequence - 1
             ",
         )
+        .bind(event.organization_id.to_string())
         .bind(&event.aggregate_type)
         .bind(&event.aggregate_id)
         .fetch_one(&mut **tx)

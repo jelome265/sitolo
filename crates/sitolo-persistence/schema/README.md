@@ -30,7 +30,13 @@ an operator must not point the runtime at a partially provisioned schema.
 grants only SELECT and INSERT on that table to the existing restricted
 `app_worker` role and applies forced tenant RLS; the consumer transaction sets
 the organization context locally, inserts an uncommitted marker, applies its
-approved business effect, and commits both together. The file is a schema
-artifact only. It must be included in the externally controlled migration
-release after the consumer role/schema contract is confirmed; no production
-migration owner or deployment mechanism is defined here.
+approved business effect, and commits both together. Before inserting a new
+marker, the adapter takes a transaction-scoped advisory lock for that
+consumer/organization/aggregate and requires the next contiguous aggregate
+sequence. A gap leaves the message unacknowledged, so an earlier quarantined
+sequence blocks later effects until it is replayed or an audited skip operation
+is implemented and authorized. The production migration must also scope
+`outbox_aggregate_sequences` and the outbox aggregate-sequence uniqueness
+constraint by organization to match the approved SNS FIFO message group. These
+schema changes remain subject to the externally controlled migration release;
+no production migration owner or deployment mechanism is defined here.
