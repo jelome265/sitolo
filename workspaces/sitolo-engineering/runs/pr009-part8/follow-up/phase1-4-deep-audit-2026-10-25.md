@@ -137,7 +137,7 @@ Required evidence to close:
 
 **Severity: P0 / release-blocking. Status: Verified documentation gap.**
 
-Evidence: crates/sitolo-persistence/schema/README.md says there is no automatic production migration runner and no versioned canonical Phase 5 migration bundle in this repository. It says the production migration owner and mechanism are not defined here, and the runtime must not target a partially provisioned schema.
+Evidence: [the persistence schema README](../../../../../crates/sitolo-persistence/schema/README.md) says there is no automatic production migration runner and no versioned canonical Phase 5 migration bundle in this repository. It says the production migration owner and mechanism are not defined here, and the runtime must not target a partially provisioned schema.
 
 Impact: correct SQL files and tests do not make a reproducible deployment. Production can drift if schema order, ownership, RLS policies or function definitions differ from the tested fixtures.
 
