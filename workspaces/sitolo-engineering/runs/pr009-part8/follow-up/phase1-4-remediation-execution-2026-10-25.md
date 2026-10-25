@@ -127,6 +127,12 @@ The Phase 3 and current-status report additions are included in exact documentat
 ## Focused test-harness follow-up — `db4fcba`
 
 Added an explicit validator for the generated `test_part8_<32 lowercase hex>` schema identifier and call it before the first PostgreSQL connection or DDL. The regression rejects SQL metacharacters and unrelated identifiers using parser-only input. Local focused test (1), strict Clippy, formatting and diff checks passed. The full Rust verifier, PostgreSQL Integration, Security and Policy workflows all passed on exact code head `db4fcbaa69f12b96971d95d8bc6c2786c978858f`; evidence is in the [verification follow-up](pr49-phase4-part8-verification-follow-up-2026-10-25.md). No local database was started. This closes only the generated-identifier guard subrequirement; the consumer, canonical migration/release, complete mutation evidence, Phase 3 and independent/human review blockers remain open.
+### R-06 extension — persisted suspension and security-version denial (commit `23d8e14`)
+
+Extended `postgres_identity_mapping_and_session_authority_fail_closed` with real PostgreSQL coverage for a suspended user's external-identity lookup and active-looking session denial, plus invalidation of an existing session after the persisted user's `security_version` advances. This exercises the production `resolve_external_identity` and `accept_sitolo_session` database functions through `PgRequestIdentityAuthority`; it does not claim a distinct disabled state or complete session lifecycle.
+
+Local evidence: `cargo fmt --all -- --check`, strict Clippy for the affected persistence integration target, and `cargo test -p sitolo-persistence --test part8_postgres_integration_tests --no-run --locked` passed. The integration target was not executed locally. The approved disposable PostgreSQL Integration workflow executed and passed on exact source head `23d8e14aa357dc213fb4e42a80c94c0c6e010445`: Rust [40192070689](https://github.com/jelome265/sitolo/actions/runs/40192070689), Integration [40192070759](https://github.com/jelome265/sitolo/actions/runs/40192070759), Security [40192070695](https://github.com/jelome265/sitolo/actions/runs/40192070695), and Policy [40192070679](https://github.com/jelome265/sitolo/actions/runs/40192070679) all passed. No local PostgreSQL server was started.
+
 ## Remaining findings and blockers
 
 The following are still open from the cross-phase audit and remediation plan:

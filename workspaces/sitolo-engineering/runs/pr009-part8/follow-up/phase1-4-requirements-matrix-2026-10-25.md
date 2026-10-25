@@ -3,14 +3,14 @@ artifact_type: phase-requirements-matrix
 status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
-implementation_source: "d8032eff0422edb9447239ccc13f403f285c00db"
-verification_head: "6220b3b3165a01d831a3e48a83e5578c34c47525"
+implementation_source: "23d8e14aa357dc213fb4e42a80c94c0c6e010445"
+verification_head: "23d8e14aa357dc213fb4e42a80c94c0c6e010445"
 date: "2026-10-25"
 ---
 
 # Phase 1–4 requirements matrix — PR #49
 
-This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on the approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. The shared PostgreSQL harness guard implementation is pinned to `d8032ef`; current exact-head Rust, Integration, Security and Policy workflows pass on documentation head `6220b3b3165a01d831a3e48a83e5578c34c47525`. Later commits reconcile API route and System Map evidence without changing the guarded harness implementation. See the [remediation execution record](phase1-4-remediation-execution-2026-10-25.md) for source evidence.
+This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. Shared target validation and redacted diagnostics are sourced at `d8032ef`. Phase 3 suspended-identity and security-version invalidation assertions executed against PostgreSQL on `23d8e14`; all exact-head workflows pass on that SHA. Phase 3 remains incomplete for other durable lifecycle/provider requirements. See the [remediation execution record](phase1-4-remediation-execution-2026-10-25.md) for source evidence.
 
 | Requirement | Contract / source of truth | Implementation and executable evidence | Status | Remaining remediation |
 |---|---|---|---|---|
