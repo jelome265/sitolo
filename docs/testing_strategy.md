@@ -1546,22 +1546,27 @@ CI secret exposure regression
 9. OpenTelemetry Semantic Conventions: https://opentelemetry.io/docs/specs/semconv/  
 10. OpenTelemetry general semantic conventions: https://opentelemetry.io/docs/specs/semconv/general/
 
-## Scope Exception SCOPE-EXC-001 — PostgreSQL Integration Harness Deferred
+## Bounded Workflow Scope SCOPE-EXC-001 — Persistence Tests in the Integration Job
 
-**Status:** Active, bounded exception (audit F-018).
+**Status:** Active, bounded workflow-scope record; it is not a waiver of
+database testing or a database-security exception.
 **Owner:** platform.
-**Reason:** SQLx/schema/RLS implementation belongs to Phase 5; no database
-semantics exist yet to integrate against, so a PostgreSQL service job would
-exercise nothing.
-**Scope:** `.github/workflows/integration.yml` runs boundary and contract
-tests only; its `Record explicit Phase 1 exclusion` step names this record.
-**Review/expiry:** review on 2026-12-01 or at Phase 5 start, whichever comes
-first. Phase 5 database work automatically retires this exception by adding
-a real PostgreSQL 18 service job; a production certification MUST NOT treat
-this exception as satisfied evidence for database claims.
-**Release restriction:** database security/integrity claims (RLS, roles,
-transactions, concurrency) require real-PostgreSQL evidence once Phase 5
-begins; unit-test success is not a substitute.
+**Current scope:** `.github/workflows/integration.yml` runs application and
+contract tests with PostgreSQL but excludes direct tests from the
+`sitolo-persistence` package. The historical rationale that no database
+semantics existed is obsolete: Phase 3/4 PostgreSQL, RLS, transaction and
+outbox tests now exist.
+**Required database evidence:** `.github/workflows/rust.yml` runs the
+canonical `scripts/ci/verify`, which executes unfiltered workspace tests and
+explicit `part8_postgres_integration_tests` and `rls_security_tests` targets.
+`.github/workflows/security.yml` also runs the authorized PostgreSQL
+offensive-regression suite. Those suites must not be filtered or skipped, and
+their exact-head Rust/Security workflows must pass before making claims about
+the behaviors they exercise. The Integration job alone is not evidence for
+the persistence package.
+**Review:** review on 2026-12-01 or earlier when the workflow/test matrix
+changes. This record does not waive production certification requirements or
+complete Phase 5 migration/release evidence.
 
 Document end — Sitolo Testing Strategy, Phase 0 / File 09 of 16.
 

@@ -33,7 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: python3 ./scripts/ci/install-policy-tools.py --tool cargo-audit
       - name: Advisory scan
         run: cargo audit
 

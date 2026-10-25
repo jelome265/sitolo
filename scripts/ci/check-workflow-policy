@@ -42,8 +42,14 @@ wf_quiet() {
 
 fail=0
 
-# Phase 1 requires trusted artifact and promotion controls. PostgreSQL harness
-# enforcement is excluded by the approved scope exception.
+if ! python3 ./scripts/ci/check-rust-policy.py; then
+  echo "POLICY VIOLATION: Rust lint and test policy check failed."
+  fail=1
+fi
+
+# Require trusted artifact and promotion controls. Direct persistence-package
+# coverage is excluded only from integration.yml; the mandatory PostgreSQL
+# suites are enforced by the canonical verifier and Security workflow.
 for workflow in artifact.yml release.yml integration.yml; do
   if [[ ! -f ".github/workflows/$workflow" ]]; then
     echo "POLICY VIOLATION: required Phase 1 workflow missing: $workflow"

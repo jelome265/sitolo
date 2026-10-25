@@ -52,6 +52,14 @@ Exact-head GitHub Actions observed for `e48b12a5995b4d79aca86a7443b014144d893164
 
 These workflow results belong only to `e48b12a`; later documentation commits require their own exact-head status checks.
 
+### R-08 — automated policy enforcement and scope reconciliation
+
+Added `scripts/ci/check-rust-policy.py` to fail closed on workspace lint-policy drift, package lint overrides, Rust lint suppressions without reasons, unsafe production Rust, compiler lint-bypass flags, and removal/filtering of required workspace, Part 8, or RLS test commands. The canonical Unix and PowerShell verifiers run this check and require the database suites. The Policy workflow runs it directly. CI now installs exact pinned `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 versions through one version-checking installer.
+
+Reconciled `SCOPE-EXC-001`: it records only that the Integration workflow excludes direct `sitolo-persistence` package tests. Its old rationale that database semantics did not exist was obsolete. The Rust canonical verifier and Security workflow retain required PostgreSQL suites; the scope record is not a testing waiver. Branch-protection evidence remains unavailable through the current repository permissions and still requires an administrator.
+
+Local R-08 evidence: `python scripts/ci/check-rust-policy.py`, `cargo deny check`, and `cargo audit` — PASS. `scripts/ci/check-release-workflow` — PASS. The combined workflow-policy shell check needs `python3`, which is not available in this Windows Git Bash environment; its Rust policy subcheck passed when run directly with Python, and the workflow-policy check is enforced in Ubuntu CI. Exact-head workflow evidence is pending for this new patch.
+
 ## Remaining findings and blockers
 
 The following are still open from the cross-phase audit and remediation plan:
@@ -62,7 +70,7 @@ The following are still open from the cross-phase audit and remediation plan:
 - **F-03 / R-05, P1:** organization activation is fail-closed; a product/domain owner must approve persisted lifecycle semantics or explicitly defer/remove the route from the declared API contract.
 - **R-06:** Phase 3 production login/session/refresh/MFA/device lifecycle evidence remains incomplete against its full contract.
 - **F-06 / R-07:** `sitolo-testkit` remains an unused scaffold; no approved removal/deferment or shared fixture API was completed.
-- **F-07 / F-08 / R-08:** complete lint-override/unsafe policy inventory, test-scope exception reconciliation and branch-protection evidence remain outstanding. Branch-protection settings require a repository administrator; prior API access returned 403.
+- **F-07 / F-08 / R-08:** automated lint/unsafe policy enforcement and the stale scope-exception reconciliation are implemented. Branch-protection evidence remains outstanding; settings require a repository administrator and prior API access returned 403.
 - **F-10:** the independent Stage 06 audit and human review must evaluate the final implementation head. This supplemental report is not independent approval.
 
 No P0/P1 finding is waived by this work. PR #49 is not technically ready for independent closure review until the source-level blockers above have the required implementation/evidence; the final changes are ready for an independent audit of this bounded patch once its exact-head workflows finish.

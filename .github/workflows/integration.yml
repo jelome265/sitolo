@@ -39,10 +39,9 @@ jobs:
           RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
           WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test
         run: cargo test --workspace --all-targets --all-features --locked --exclude sitolo-persistence
-      # F-018 scope-exception governance. This textual record is backed by
-      # docs/testing_strategy.md ("PostgreSQL integration exception
-      # SCOPE-EXC-001"), which names the owner, scope, review date, and the
-      # Phase 5 completion gate that retires it.
-      - name: Record explicit Phase 1 exclusion
+      # SCOPE-EXC-001 is only this job's direct persistence-package boundary.
+      # Required PostgreSQL suites run in Rust canonical verification and the
+      # Security offensive-regression workflow; this job alone is not their proof.
+      - name: Record bounded persistence package scope
         run: >-
-          echo "SCOPE-EXC-001 active: PostgreSQL integration harness deferred to Phase 5 (owner: platform; review: 2026-12-01; see docs/testing_strategy.md)."
+          echo "SCOPE-EXC-001: this Integration job excludes sitolo-persistence; required Part 8 and RLS PostgreSQL suites run in Rust and Security workflows (see docs/testing_strategy.md)."

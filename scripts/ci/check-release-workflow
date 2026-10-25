@@ -57,8 +57,7 @@ require_in_verify() {
 # mandatory policy and dependency tools. It must install them rather than
 # assuming the runner image provides them.
 require_in_verify "ripgrep"
-require_in_verify "cargo install cargo-deny --locked"
-require_in_verify "cargo install cargo-audit --locked"
+require_in_verify "python3 ./scripts/ci/install-policy-tools.py"
 
 # GitHub Actions jobs do not share service containers or step environments.
 # The exact-source test step must therefore have its own PostgreSQL service and

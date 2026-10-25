@@ -69,7 +69,7 @@ A contract alone is not evidence of implementation. A passing test is evidence o
 
 ## Known evidence limitation
 
-The security-test corpus contains the bounded PostgreSQL testing exception `SCOPE-EXC-001`. It does not authorize production claims about database/RLS semantics and remains governed by `docs/security_test_harness.md`.
+The testing strategy contains the bounded workflow-scope record `SCOPE-EXC-001`. It does not waive the mandatory Rust/Security PostgreSQL suites or authorize unproven production database claims.
 
 ## Change triggers
 
