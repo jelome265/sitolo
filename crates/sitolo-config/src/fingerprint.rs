@@ -221,6 +221,53 @@ mod tests {
         Ok(validate(defaults::Builder::development())?)
     }
 
+    /// Exhaustively names every `AppConfig` field so adding one forces this
+    /// fingerprint test module to review its serialization and change test.
+    fn assert_fingerprint_field_inventory_is_exhaustive(config: &AppConfig) {
+        let AppConfig {
+            environment: _,
+            service_name: _,
+            service_version: _,
+            bind_address: _,
+            max_request_body_bytes: _,
+            request_header_timeout_ms: _,
+            keepalive_timeout_ms: _,
+            db_host: _,
+            db_port: _,
+            db_name: _,
+            db_schema: _,
+            db_user: _,
+            db_password_ref: _,
+            worker_db_password_ref: _,
+            oidc_issuer: _,
+            oidc_client_id: _,
+            oidc_token_endpoint: _,
+            oidc_redirect_uri: _,
+            db_pool_min: _,
+            db_pool_max: _,
+            db_acquire_timeout_ms: _,
+            otel_endpoint: _,
+            otel_export_timeout_ms: _,
+            otel_max_queue: _,
+            trace_sample_ratio: _,
+            log_level: _,
+            allow_local_secret_provider: _,
+            config_schema_version: _,
+            relay_aws_region: _,
+            relay_sns_topic_arn: _,
+            relay_batch_size: _,
+            relay_max_attempts: _,
+            relay_backoff_max_ms: _,
+            secrets_aws_region: _,
+        } = config;
+    }
+
+    #[test]
+    fn fingerprint_tests_inventory_every_configuration_field() -> Result<(), Box<dyn Error>> {
+        assert_fingerprint_field_inventory_is_exhaustive(&base()?);
+        Ok(())
+    }
+
     #[test]
     fn digest_is_lowercase_sha256() -> Result<(), Box<dyn Error>> {
         let fingerprint = config_fingerprint(&base()?);
