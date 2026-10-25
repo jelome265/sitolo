@@ -10,6 +10,7 @@ run_slug: "pr009-part8"
 **Branch:** `feat/phase4-pr009-audit-outbox`
 **Audit input:** `docs/phase4_part8_pr009_remediation_report.md` (source `a1d29ae`)
 **Remediation contract:** `docs/phase4_part8_pr009_remediation_execution_contract.md`
+**Current source basis:** `5a128c4f95db61f7f6cf9fd885d22911b78553c1` (2026-10-25)
 **Security relevant:** yes
 
 ## Audit input provenance
@@ -49,9 +50,26 @@ then missing tests, then operational gaps, then documentation drift.
 | C-10 (test quality) `verify_part8_provisioning_rls_metadata` was a 598-line unverifiable block; concurrency tests joined threads as they were created | Structure, not intent | Split into an orchestrator plus focused helpers; concurrency tests now spawn all threads before joining any, so they prove real contention | `crates/sitolo-persistence/src/postgres.rs`; `tenancy.rs` concurrency tests |
 | C-11 (operational) 17 packages carried no real metadata | Missing package fields | Every package carries description, repository, readme, keywords and categories; `multiple_crate_versions` is allowed at workspace level with a written reason | `cargo metadata`; workspace `Cargo.toml` |
 
-Not closed by this report: R2 route coverage, R3 command-by-command mutation matrix, R4/AUD-04
-transition mapping, AUD-01 consumer completion, AUD-05 worker runtime/migration path. These need
-the owner-approved consumer and migration contracts and an independent audit; see Remaining risks.
+Not closed by this report: R3 command-by-command mutation matrix, R4/AUD-04 transition mapping,
+AUD-01 consumer completion, AUD-05 worker runtime/migration path. These need the owner-approved
+consumer and migration contracts and an independent audit; see Remaining risks.
+
+## Follow-up hardening at `5a128c4`
+
+After the first remediation commit, the framework-ban policy and the protected-route inventory were
+reconciled. These changes do not weaken any gate; they make the existing policy executable.
+
+| Change | Reason | Proof |
+|---|---|---|
+| Activated the reachable framework bans from the enterprise reference policy (`tokio::spawn`, runtime construction, raw `reqwest` clients, `Router::route`, `TimeoutLayer::new`, clap exit-on-error parsing, direct environment reads, rustls dangerous APIs, blocking HTTP) | The workspace policy claimed `disallowed_methods`/`disallowed_types` were deny but the call-site bans were incomplete | `cargo clippy --workspace --all-targets --all-features -- -D warnings` exits 0 with the bans active |
+| Documented and proved two deliberate omissions | `Runtime::block_on` fires on all 183 `#[tokio::test]` expansions, so a workspace ban would need 183 suppressions; `disable_recursion_limit` is unreachable without the `unbounded_depth` feature | Scratch-crate probes; `[[bans.features]]` for `serde_json/unbounded_depth` in `deny.toml` fires with `error[feature-banned]`, exit 2 |
+| Added item-scoped `#[expect(..., reason = ...)]` at the two runtime entry points, the reviewed route registry, the local-only secret adapter, and bounded test spawn/DSN helpers | Genuine structural exceptions only; no blanket suppression | `cargo clippy` clean; each reason states why the exception is safe |
+| Made route wiring exhaustive and the organization-activate gap explicit | A wildcard handler hid which protected routes were unimplemented, and provisioning never persists `PROVISIONING`, so the activate route is unreachable | `CLOSED_PROTECTED_ROUTES`, `declared_routes()`, `InvalidRouteInventory` on an undeclared route; R2 partition test |
+| Added R2 deny-by-default proof over the inventory | Route coverage was previously asserted per-route and could drift | `apps/api/tests/axum_boundary.rs`: all six protected routes reject missing credentials; exactly five are wired and one is closed |
+| Added R4 catalogue/validator consistency proof | The five approved names and the payload validator are separate registries that could drift | `crates/sitolo-application/tests/lifecycle_event_contract.rs`: each name accepts only its v1 shape and rejects wrong versions and unknown fields |
+
+R4 transition emission (which domain transition constructs which payload and persists it) is still a
+source-trace item for Stage 06; the new test proves registry consistency, not emission coverage.
 
 ## Tests
 
@@ -63,10 +81,17 @@ installed, started, or used.
 | Format | `cargo fmt --all -- --check` | PASSED |
 | Lint | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASSED (exit 0, no diagnostics) |
 | Compile | `cargo check --workspace --all-targets --all-features --locked` | PASSED |
+| Release build | `cargo build --workspace --release --locked` | PASSED (finished in 5m 21s) |
 | Unit tests | `cargo test --workspace --lib --all-features --locked` | PASSED — 259 tests across 17 packages, 0 failed |
+| R2 route coverage | `cargo test -p sitolo-api-bin --test axum_boundary --all-features --locked` | PASSED — 3 tests: every declared protected route rejects missing credentials; closed set is exactly the documented gap |
+| R4 event contract | `cargo test -p sitolo-application --test lifecycle_event_contract --all-features --locked` | PASSED — 2 tests: five approved names, v1-only shapes, unknown-field rejection, unique names |
 | Crate boundaries | `python scripts/ci/check-crate-boundaries.py` | PASSED (17 workspace packages classified) |
 | Architecture | `./scripts/ci/check-architecture` | PASSED (pure-crate graph, single logging installer, single fingerprint owner, boundary contract) |
 | Phase 2 policy | `./scripts/ci/check-phase2-policy` | PASSED |
+| Workflow policy | `./scripts/ci/check-workflow-policy`; `./scripts/ci/check-release-workflow` | PASSED |
+| Security ICM policy | `./scripts/ci/check-security-icm-policy` | PASSED |
+| Documentation | `./scripts/ci/check-doc-references` | PASSED — 238 Markdown files, 1054 references, 0 unresolved |
+| System Map | `./scripts/ci/check-system-map-processes` | PASSED — 2 source-grounded process cards |
 | Dependency policy | `cargo deny check` | PASSED (advisories, bans, licenses, sources) |
 | ICM workspace | `./scripts/ci/check-icm-workspace` | PASSED (9 stages, exact handoffs, no synthetic approval) |
 
@@ -90,9 +115,14 @@ before `08-verify`. This report claims no audit result, no approval, and no rele
 
 ## Remaining risks
 
-- R2, R3, R4/AUD-04, AUD-01 and AUD-05 remain open; the corresponding routes and worker paths stay
-  closed rather than being faked open.
+- R3 command-by-command matrix is refreshed at `5a128c4` but remains a source-inspection index, not
+  independent audit evidence. Organization activation is marked unreachable and its route is
+  explicitly closed; it must not be re-opened without a real `PROVISIONING` persistence path.
+- R4 registry consistency is proven locally; transition emission and relay acceptance still require
+  a Stage 06 source trace.
+- AUD-01 and AUD-05 remain open. The worker now runs the bounded relay and SNS FIFO publisher, but
+  the SQS consumer, durable inbox deduplication and restricted worker migration/release path are not
+  implemented. Relay completion must not be inferred from a compiling consumer module.
 - The full PostgreSQL and HTTP-level proof only exists once GitHub Actions runs against the exact
   head. A local green lint/test result is evidence only for the code paths it exercised.
-- `apps/worker` still refuses startup without an owner-approved consumer effect/queue contract, so
-  relay completion must not be inferred from a compiling consumer module.
+- Exact-head CI has not been run for `5a128c4`; the branch has not been pushed.
