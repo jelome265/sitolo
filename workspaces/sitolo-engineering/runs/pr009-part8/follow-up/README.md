@@ -11,6 +11,12 @@ date: "2026-10-25"
 
 This index groups supplemental cross-phase audit artifacts for PR #49. They are pinned to source snapshot a378beec2bc5097bb642825d2e8fcf4c967c105d; they do not describe later source commits unless a report explicitly says so.
 
+## Later implementation checkpoint — `e48b12a`
+
+The [remediation execution report](phase1-4-remediation-execution-2026-10-25.md) records two subsequent fixes: fail-closed PostgreSQL test target validation and collision-safe optional-field configuration fingerprints (format version 2). Rust, Integration, Policy and Security passed on exact candidate `e48b12a5995b4d79aca86a7443b014144d893164`. The original deep audit, plan and copy-paste guide remain pinned to `a378beec` as historical audit artifacts.
+
+The two fixes do not close the remaining production consumer, migration/release, complete mutation-evidence, Phase 3, organization lifecycle, testkit, CI governance, independent-review or human-review gates.
+
 ## New report-only artifacts
 
 1. [Phase 1–4 deep audit](phase1-4-deep-audit-2026-10-25.md) — document inventory, exact-head evidence, findings, real-vs-test-only distinctions, Clippy/unsafe and command-safety review, overall disposition.

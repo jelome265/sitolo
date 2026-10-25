@@ -1,15 +1,28 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** NOT READY FOR MERGE — Integration passes; Rust CI remains blocked by one PostgreSQL-backed RLS metadata test; independent Stage 06 re-audit is outstanding.  
-**PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)  
-**Branch:** `feat/phase4-pr009-audit-outbox`  
-**Latest completed CI candidate head:** `a5dffa4fe734cb82717a783f552d4f7489bfd4ff`  
-**Implementation fix:** `b095768f9903c86b399c13d788714ebd0294c2a2`  
-**Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)  
+**Status:** NOT READY FOR MERGE — the known RLS metadata failure is fixed; this branch still has unresolved Phase 1–4 release blockers and independent Stage 06 review is outstanding.
+**PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)
+**Branch:** `feat/phase4-pr009-audit-outbox`
+**Latest implementation candidate:** `e48b12a5995b4d79aca86a7443b014144d893164`
+**Latest exact-head workflows:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40174232907), [Integration](https://github.com/jelome265/sitolo/actions/runs/40174232901), [Policy](https://github.com/jelome265/sitolo/actions/runs/40174232875), and [Security](https://github.com/jelome265/sitolo/actions/runs/40174232895) all pass on `e48b12a5995b4d79aca86a7443b014144d893164`.
+**Latest remediation:** commits `289ae0c` (database target guards) and `e48b12a` (optional fingerprint encoding).
+**Cross-phase evidence:** [Phase 1–4 deep audit](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-deep-audit-2026-10-25.md), [remediation plan](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-remediation-plan-2026-10-25.md), [follow-up index](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/README.md).
+**Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
 **Date:** 2026-10-25
 
-## Exact-head CI evidence: PR head `a5dffa4`
+## Remaining release blockers
+
+- Production consumer/effect composition, approved resource identities, inbox transaction and acknowledgement-after-commit evidence remain unresolved.
+- The canonical production migration/release owner and immutable migration artifact remain unresolved.
+- The complete mandatory mutation matrix and Phase 3 lifecycle evidence are not demonstrated.
+- Organization activation remains intentionally closed pending an approved lifecycle decision.
+- `sitolo-testkit` remains an unused scaffold; lint/CI policy gaps and actual branch-protection requirements still need closure.
+- An independent Stage 06 audit and human review are still required. PR #49 remains open and unmerged.
+
+The detailed earlier records below are historical checkpoints; their run results and failure descriptions do not describe the latest implementation candidate.
+
+## Historical checkpoint: PR head `a5dffa4`
 
 | Workflow | Result | Run |
 |---|---|---|

@@ -1,7 +1,7 @@
 # Sitolo — Current Implementation Status
 
 **Status:** Current implementation-state pointer
-**Date:** 2026-09-26
+**Date:** 2026-10-25
 **Main baseline:** `623f7aed6105664d10d1a2802480fde8316ed5f8`
 
 ## Active product implementation
@@ -9,6 +9,12 @@
 The active Sitolo product-development stream is **Phase 4 Part 8 / PR-009: durable audit evidence + transactional outbox**.
 
 PR #49 is the active implementation PR for that work. It remains open and is not the same work as PR #52.
+
+### PR #49 latest implementation checkpoint
+
+The latest implementation candidate is `e48b12a5995b4d79aca86a7443b014144d893164` on `feat/phase4-pr009-audit-outbox`. Rust, Integration, Policy and Security workflows pass on that exact source SHA. The branch includes a fail-closed disposable-database target guard and complete secret-free optional-field fingerprint encoding (format version 2).
+
+PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/identity evidence, organization lifecycle disposition, testkit and CI policy reconciliation, independent Stage 06 review, and human review remain open. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) for current evidence and blockers.
 
 ## PR #52
 
