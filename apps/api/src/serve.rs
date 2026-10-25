@@ -100,13 +100,6 @@ const ROUTES: &[RouteSpec] = &[
     },
     RouteSpec {
         method: Method::Post,
-        path: "/v1/organizations/{organization_id}/activate",
-        access: Access::Permission("organization.lifecycle"),
-        body_limit: MAX_PROBE_BODY_BYTES,
-        timeout: REQUEST_TIMEOUT,
-    },
-    RouteSpec {
-        method: Method::Post,
         path: "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
         access: Access::Permission("branch.lifecycle"),
         body_limit: MAX_PROBE_BODY_BYTES,
@@ -127,17 +120,6 @@ const ROUTES: &[RouteSpec] = &[
         timeout: REQUEST_TIMEOUT,
     },
 ];
-
-/// Contract-declared protected routes whose authoritative command path is not
-/// reachable in the current domain flow.
-///
-/// `provision_organization` persists the organization in `ACTIVE` state (it
-/// calls `Organization::activate` before the insert), so no `PROVISIONING`
-/// organization exists for this route to transition. The route therefore fails
-/// closed with `503` through `closed_protected_route` instead of pretending to
-/// serve a dead transition. Listing it explicitly keeps the gap reviewable and
-/// makes an undeclared route a startup error rather than a silent catch-all.
-pub const CLOSED_PROTECTED_ROUTES: &[&str] = &["/v1/organizations/{organization_id}/activate"];
 
 /// Returns the reviewed inventory as `(method, path, permission)` rows.
 ///
@@ -162,7 +144,7 @@ pub fn declared_routes() -> Vec<(&'static str, &'static str, Option<&'static str
 }
 
 /// Reviewed route snapshot. Update only with an intentional route change and its tests.
-pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/activate access=perm(organization.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
+pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
 
 /// Errors returned while validating the static route inventory or serving HTTP.
 #[derive(Debug, Error)]
@@ -249,11 +231,6 @@ fn method_router(
             "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
             Access::Permission(_),
         ) => Ok(authenticated(spec, state, post(suspend_member_route))),
-        // Contract-declared but not reachable in the current domain flow; the
-        // explicit list keeps the closure reviewable. See CLOSED_PROTECTED_ROUTES.
-        (Method::Post, "/v1/organizations/{organization_id}/activate", Access::Permission(_)) => {
-            Ok(bounded(spec, post(closed_protected_route)))
-        }
         // Any other declared protected route must have an explicit arm above.
         // Falling through is a startup error, not a silent 503.
         _ => Err(ServeError::InvalidRouteInventory),
@@ -394,27 +371,6 @@ async fn authenticate_protected_request(
             request.extensions_mut().insert(security_context);
             next.run(request).await
         }
-        Err(error) => app_error_response(&error),
-    }
-}
-
-/// Fail-closed handler for a contract-declared route whose command path is not
-/// reachable in the current domain flow.
-///
-/// It authenticates inside the handler body so an unauthenticated caller still
-/// receives `401`, then returns `503` without mutating anything. Every route
-/// that reaches this handler is listed in [`CLOSED_PROTECTED_ROUTES`].
-async fn closed_protected_route(
-    State(state): State<Arc<AppState>>,
-    request: Request<Body>,
-) -> Response {
-    let authorization = header_text(request.headers(), header::AUTHORIZATION);
-    let session_selector = header_text(request.headers(), "session-id");
-    match state
-        .authenticate_request(authorization, session_selector)
-        .await
-    {
-        Ok(_security_context) => app_error_response(&AppError::DependencyUnavailable),
         Err(error) => app_error_response(&error),
     }
 }

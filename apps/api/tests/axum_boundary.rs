@@ -9,7 +9,7 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use sitolo_api_bin::bootstrap::StartupContext;
-use sitolo_api_bin::serve::{CLOSED_PROTECTED_ROUTES, app_router, declared_routes};
+use sitolo_api_bin::serve::{app_router, declared_routes};
 use sitolo_api_bin::state::AppState;
 use std::sync::Arc;
 
@@ -96,38 +96,34 @@ async fn every_declared_protected_route_rejects_missing_credentials()
         );
     }
     assert_eq!(
-        protected, 6,
+        protected, 5,
         "protected route count drifted from the reviewed inventory"
     );
     Ok(())
 }
 
-/// The closed-route gap is data, not a wildcard. If the set changes, this test
-/// and the justification in `CLOSED_PROTECTED_ROUTES` must change together.
-#[test]
-fn closed_protected_routes_are_declared_and_exactly_the_documented_gap() {
-    let protected: Vec<&str> = declared_routes()
-        .into_iter()
-        .filter_map(|(_, path, permission)| permission.map(|_| path))
-        .collect();
+/// Organization activation is not an HTTP operation: provisioning commits a
+/// complete active tenant atomically, while incomplete provisioning is not a
+/// visible tenant. The stale route must therefore remain absent.
+#[tokio::test]
+async fn organization_activation_route_is_not_exposed() -> Result<(), Box<dyn std::error::Error>> {
+    let app = app_router(test_app_state().await?).map_err(std::io::Error::other)?;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/organizations/org-route-coverage/activate")
+                .body(Body::empty())
+                .map_err(std::io::Error::other)?,
+        )
+        .await
+        .map_err(std::io::Error::other)?;
 
-    for closed in CLOSED_PROTECTED_ROUTES {
-        assert!(
-            protected.contains(closed),
-            "closed route {closed} is not declared as a protected route"
-        );
-    }
-
-    let wired = protected
-        .iter()
-        .copied()
-        .filter(|path| !CLOSED_PROTECTED_ROUTES.contains(path))
-        .count();
-    assert_eq!(wired, 5, "wired protected-route count drifted");
-    assert_eq!(CLOSED_PROTECTED_ROUTES.len(), 1, "closed-route gap changed");
-    assert_eq!(
-        CLOSED_PROTECTED_ROUTES.first().copied(),
-        Some("/v1/organizations/{organization_id}/activate"),
-        "the closed-route gap changed without updating its justification"
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        !declared_routes()
+            .iter()
+            .any(|(_, path, _)| { *path == "/v1/organizations/{organization_id}/activate" })
     );
+    Ok(())
 }
