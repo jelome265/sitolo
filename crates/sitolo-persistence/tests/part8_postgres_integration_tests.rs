@@ -116,6 +116,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
 
     let schema_id = Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_part8_{schema_id}");
+    common::validate_generated_schema_name(&schema_name).map_err(std::io::Error::other)?;
 
     // The schema must exist before a pool can set it as its search_path.
     let bootstrap = PgPoolOptions::new()

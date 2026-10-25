@@ -57,6 +57,21 @@ pub(super) fn validate_worker_target(
     Ok(worker)
 }
 
+/// Accepts only the schema naming format generated for one integration-test invocation.
+pub(super) fn validate_generated_schema_name(name: &str) -> Result<(), String> {
+    let suffix = name
+        .strip_prefix("test_part8_")
+        .ok_or_else(|| "generated schema name has an invalid prefix".to_owned())?;
+    if suffix.len() != 32
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("generated schema name must contain a 32-character lowercase UUID".to_owned());
+    }
+    Ok(())
+}
+
 fn parse_target(name: &str, raw: &str, expected_role: &str) -> Result<PgConnectOptions, String> {
     let options: PgConnectOptions = raw
         .parse()
@@ -147,5 +162,19 @@ mod tests {
         );
         assert!(result.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn generated_schema_name_rejects_sql_identifiers_outside_the_uuid_contract() {
+        assert!(
+            validate_generated_schema_name("test_part8_0123456789abcdef0123456789abcdef").is_ok()
+        );
+        assert!(
+            validate_generated_schema_name(
+                "test_part8_0123456789abcdef0123456789abcde\";DROP SCHEMA public;--"
+            )
+            .is_err()
+        );
+        assert!(validate_generated_schema_name("public").is_err());
     }
 }
