@@ -12,6 +12,12 @@ use sitolo_worker_bin::relay::{RelayPolicy, RelayWorker};
 use sitolo_worker_bin::sns::{SnsFifoPublisher, SnsRelayConfig};
 use tokio::sync::watch;
 
+// FW-TOK-01: the worker entry point is the single sanctioned runtime
+// construction site; library crates receive the runtime instead of building one.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-01: the binary entry point is the only place allowed to construct the multi-thread runtime."
+)]
 #[tokio::main(flavor = "multi_thread")]
 #[expect(
     clippy::print_stderr,

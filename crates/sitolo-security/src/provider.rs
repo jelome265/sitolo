@@ -138,6 +138,13 @@ fn default_env_name(class: SecretClass) -> &'static str {
 
 #[async_trait]
 impl SecretProvider for EnvSecretProvider {
+    // FW-CLP-02: the local-only provider is the single sanctioned environment
+    // read. It refuses to serve in production, where the managed secret store is
+    // the only provider, so this cannot become a hidden production config path.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "FW-CLP-02: the local-only secret adapter is the one sanctioned environment read and is rejected in production."
+    )]
     async fn get(&self, reference: &SecretRef) -> Result<SecretValue, SecretError> {
         if self.production {
             return Err(SecretError::LocalProviderForbidden);

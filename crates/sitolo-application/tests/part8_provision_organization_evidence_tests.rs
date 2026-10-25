@@ -39,6 +39,10 @@ struct TestContext {
     schema_name: String,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
+)]
 async fn setup() -> Result<TestContext, Box<dyn Error>> {
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
 
@@ -332,6 +336,10 @@ async fn mark_member_pending_commits_state_audit_and_outbox_together() -> Result
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited."
+)]
 async fn concurrent_mark_member_pending_emits_one_semantic_event() -> Result<(), Box<dyn Error>> {
     let ctx = setup().await?;
     let service = Arc::new(service_with_evidence(ctx.runtime_pool.clone()));
@@ -658,6 +666,10 @@ async fn provision_organization_retry_is_idempotent_and_divergence_conflicts()
 /// Concurrent identical requests converge on one complete provisioning
 /// bundle and one mandatory audit/outbox pair.
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited."
+)]
 async fn provision_organization_concurrent_same_payload_is_idempotent() -> Result<(), Box<dyn Error>>
 {
     let ctx = setup().await?;

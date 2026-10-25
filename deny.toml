@@ -19,5 +19,13 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "allow"
 
+# FW-SRD-03 / SEC-IN-03: `unbounded_depth` exposes
+# `Deserializer::disable_recursion_limit`, which removes the JSON nesting bound.
+# The Clippy path ban cannot express this because the method is unreachable
+# without the feature, so the feature itself is denied here.
+[[bans.features]]
+crate = "serde_json"
+deny = ["unbounded_depth"]
+
 [sources]
 allow-git = []

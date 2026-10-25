@@ -72,6 +72,10 @@ struct TestDb {
     schema: String,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
+)]
 async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
@@ -3000,6 +3004,10 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent()
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited."
+)]
 async fn concurrent_role_assignment_retries_emit_one_semantic_event()
 -> Result<(), Box<dyn std::error::Error>> {
     let db = test_db().await?;
@@ -3335,6 +3343,10 @@ async fn role_revocation_rolls_back_when_outbox_write_fails()
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited."
+)]
 async fn concurrent_role_revocations_emit_one_semantic_event()
 -> Result<(), Box<dyn std::error::Error>> {
     let db = test_db().await?;

@@ -459,6 +459,10 @@ struct ApiTenancyDb {
     schema: String,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
+)]
 async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;

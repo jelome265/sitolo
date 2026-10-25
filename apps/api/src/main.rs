@@ -12,11 +12,23 @@ use sitolo_api_bin::bootstrap::{StartupContext, StartupError};
 use sitolo_api_bin::serve::{ServeError, serve};
 use tokio::sync::oneshot;
 
+// FW-TOK-01: the binary entry point is the single sanctioned runtime
+// construction site; every library receives the runtime instead of building one.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-01: the binary entry point is the only place allowed to construct the multi-thread runtime."
+)]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), StartupError> {
     run().await
 }
 
+// FW-TOK-03 / BP-AS-04: the spawned task is owned. Its handle is awaited before
+// the process exits, so a serve failure is reported rather than detached.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03 / BP-AS-04: the serve task handle is awaited before exit, so the task is not fire-and-forget."
+)]
 async fn run() -> Result<(), StartupError> {
     let context = StartupContext::build().await?;
     // Structural readiness gate: no socket exists before this point.

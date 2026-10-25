@@ -109,6 +109,10 @@ impl<'r> FromRow<'r, PgRow> for RelationSecurityRow {
 /// `RUNTIME_DATABASE_URL` and `WORKER_DATABASE_URL` are both required. The
 /// worker identity is deliberately not allowed to fall back to the runtime
 /// identity: the tests must prove the narrow worker role, not the superuser.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
+)]
 async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>> {
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;

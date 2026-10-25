@@ -57,6 +57,10 @@ async fn probe_once(
 }
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03: the live serve task is owned by the test and awaited after the bounded probes."
+)]
 async fn development_boots_and_serves_bounded_probes() -> Result<(), Box<dyn std::error::Error>> {
     let dev = StartupContext::build_from_pairs_with_provider(
         Vec::<(String, String)>::new(),

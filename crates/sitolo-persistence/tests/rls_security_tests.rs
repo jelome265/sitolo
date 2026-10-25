@@ -269,6 +269,10 @@ struct TestContext {
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-TOK-03 / BP-AS-04: the task isolates an unwind for teardown and its handle is awaited immediately."
+)]
 async fn run_test_with_teardown<F, Fut>(test_fn: F) -> TestResult
 where
     F: FnOnce(Arc<TestContext>) -> Fut,
@@ -307,6 +311,10 @@ where
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
+)]
 async fn setup_test_context(
     schema_name_override: Option<&str>,
 ) -> Result<TestContext, Box<dyn std::error::Error + Send + Sync>> {
@@ -1453,6 +1461,10 @@ async fn test_concurrent_tenant_isolation_reads_and_writes() -> TestResult {
 // ============================================================================
 
 #[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-CLP-02: the integration-test harness reads the CI-provided admin DSN; production configuration is parsed at the binary boundary."
+)]
 async fn test_setup_failure_injection_cleans_up_schema() -> TestResult {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
