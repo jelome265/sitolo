@@ -2,9 +2,12 @@
 //!
 //! Every test here exercises the real durable `TenancyUnitOfWork` adapter
 //! against an isolated schema: authorization, tenant scope, state transitions,
-//! audit/outbox evidence, and rollback on evidence failure. The suites fail
-//! rather than skip when PostgreSQL is unavailable, so a green local unit run
-//! is never mistaken for database proof; CI supplies the three DSNs.
+//! audit/outbox evidence, and transaction rollback. Application-port failure
+//! tests exercise error handling; the PostgreSQL-trigger regression below
+//! separately proves rollback when actual audit and outbox inserts fail. The
+//! suites fail rather than skip when PostgreSQL is unavailable, so a green
+//! local unit run is never mistaken for database proof; CI supplies the three
+//! DSNs.
 
 use std::env;
 use std::sync::Arc;
@@ -327,6 +330,41 @@ fn failing_service(db: &TestDb, mode: EvidenceFailure) -> TenancyService {
         Vec::new(),
         Arc::new(FailingUnitOfWork::new(db.runtime.clone(), mode)),
     )
+}
+
+async fn install_postgres_evidence_failure(
+    db: &TestDb,
+    mode: EvidenceFailure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    raw_sql(
+        "DROP TRIGGER IF EXISTS sitolo_test_reject_audit_insert ON audit_events; \
+         DROP FUNCTION IF EXISTS sitolo_test_reject_audit_insert(); \
+         DROP TRIGGER IF EXISTS sitolo_test_reject_outbox_insert ON outbox_events; \
+         DROP FUNCTION IF EXISTS sitolo_test_reject_outbox_insert();",
+    )
+    .execute(&db.admin)
+    .await?;
+
+    let statement = match mode {
+        EvidenceFailure::Audit => {
+            "CREATE FUNCTION sitolo_test_reject_audit_insert() RETURNS trigger \
+             LANGUAGE plpgsql AS $sitolo_test$ BEGIN \
+             RAISE EXCEPTION 'test audit insert failure' USING ERRCODE = '23514'; \
+             END $sitolo_test$; \
+             CREATE TRIGGER sitolo_test_reject_audit_insert BEFORE INSERT ON audit_events \
+             FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_audit_insert();"
+        }
+        EvidenceFailure::Outbox => {
+            "CREATE FUNCTION sitolo_test_reject_outbox_insert() RETURNS trigger \
+             LANGUAGE plpgsql AS $sitolo_test$ BEGIN \
+             RAISE EXCEPTION 'test outbox insert failure' USING ERRCODE = '23514'; \
+             END $sitolo_test$; \
+             CREATE TRIGGER sitolo_test_reject_outbox_insert BEFORE INSERT ON outbox_events \
+             FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_outbox_insert();"
+        }
+    };
+    raw_sql(statement).execute(&db.admin).await?;
+    Ok(())
 }
 
 fn evidence_failure(mode: EvidenceFailure) -> TenancyError {
@@ -1474,6 +1512,71 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (0, 0, 0));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_audit_and_outbox_insert_errors_roll_back_branch_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = test_db().await?;
+    let org = OrganizationId::new("org-postgres-evidence-failure")?;
+    seed_organization(&db, org.as_str()).await?;
+    let actor = ActorRef {
+        subject_ref: "user-postgres-evidence-failure".to_owned(),
+        membership_ref: None,
+        device_ref: None,
+    };
+
+    install_postgres_evidence_failure(&db, EvidenceFailure::Audit).await?;
+    assert!(
+        service(&db)
+            .create_branch(
+                BranchId::new("branch-postgres-audit-failure")?,
+                org.clone(),
+                "Audit Failure",
+                actor.clone(),
+            )
+            .await
+            .is_err()
+    );
+    let after_audit_failure: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM branches WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(after_audit_failure, (0, 0, 0));
+
+    install_postgres_evidence_failure(&db, EvidenceFailure::Outbox).await?;
+    assert!(
+        service(&db)
+            .create_branch(
+                BranchId::new("branch-postgres-outbox-failure")?,
+                org.clone(),
+                "Outbox Failure",
+                actor,
+            )
+            .await
+            .is_err()
+    );
+    let after_outbox_failure: (i64, i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT (SELECT count(*) FROM branches WHERE organization_id = $1), \
+                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
+                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
+    )
+    .bind(org.as_str())
+    .fetch_one(&db.admin)
+    .await?;
+    assert_eq!(after_outbox_failure, (0, 0, 0));
+
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
