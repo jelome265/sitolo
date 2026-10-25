@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "23d8e14aa357dc213fb4e42a80c94c0c6e010445"
+candidate_head: "1743f3a198605e1e50a30776a3366d2e9e9a36f5"
 date: "2026-10-25"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `1743f3a`
+
+The fingerprint test module now exhaustively destructures every `AppConfig` field, so adding a configuration field causes compilation to require review of the fingerprint inventory. Focused config tests (28), strict package Clippy and formatting pass locally. Exact-head Rust [40193380363](https://github.com/jelome265/sitolo/actions/runs/40193380363), Integration [40193380330](https://github.com/jelome265/sitolo/actions/runs/40193380330), Security [40193380381](https://github.com/jelome265/sitolo/actions/runs/40193380381), and Policy [40193380574](https://github.com/jelome265/sitolo/actions/runs/40193380574) all pass on `1743f3a198605e1e50a30776a3366d2e9e9a36f5`; CodeQL [121169950121](https://github.com/jelome265/sitolo/runs/121169950121) passes. This strengthens only the test inventory; outstanding Phase 1–4, independent audit and human-review blockers remain.
 
 ## Current implementation checkpoint — `23d8e14`
 

@@ -3,7 +3,7 @@ artifact_type: remediation-execution-report
 status: partial-blocked
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "4858341fcd16459aad10494d8b75ddb684859861"
+source_head: "1743f3a198605e1e50a30776a3366d2e9e9a36f5"
 date: "2026-10-25"
 ---
 
@@ -132,6 +132,14 @@ Added an explicit validator for the generated `test_part8_<32 lowercase hex>` sc
 Extended `postgres_identity_mapping_and_session_authority_fail_closed` with real PostgreSQL coverage for a suspended user's external-identity lookup and active-looking session denial, plus invalidation of an existing session after the persisted user's `security_version` advances. This exercises the production `resolve_external_identity` and `accept_sitolo_session` database functions through `PgRequestIdentityAuthority`; it does not claim a distinct disabled state or complete session lifecycle.
 
 Local evidence: `cargo fmt --all -- --check`, strict Clippy for the affected persistence integration target, and `cargo test -p sitolo-persistence --test part8_postgres_integration_tests --no-run --locked` passed. The integration target was not executed locally. The approved disposable PostgreSQL Integration workflow executed and passed on exact source head `23d8e14aa357dc213fb4e42a80c94c0c6e010445`: Rust [40192070689](https://github.com/jelome265/sitolo/actions/runs/40192070689), Integration [40192070759](https://github.com/jelome265/sitolo/actions/runs/40192070759), Security [40192070695](https://github.com/jelome265/sitolo/actions/runs/40192070695), and Policy [40192070679](https://github.com/jelome265/sitolo/actions/runs/40192070679) all passed. No local PostgreSQL server was started.
+
+### R-09 extension — exhaustive fingerprint field inventory (commit `1743f3a`)
+
+The fingerprint tests now exhaustively destructure every `AppConfig` field. Adding a field to the configuration model therefore fails compilation until the inventory guard is updated, prompting review of both the canonical writer and the per-field fingerprint-change regression. This complements the existing tests for all current non-secret fields, optional `None`/`Some` distinction, reference changes and absence of raw secret values. Secret values remain outside `AppConfig` by contract; configuration stores their references only.
+
+Local evidence on `1743f3a198605e1e50a30776a3366d2e9e9a36f5`: `cargo fmt --all -- --check`, `cargo test -p sitolo-config --locked` (28 tests), `cargo clippy -p sitolo-config --all-targets --all-features --locked -- -D warnings`, and `git diff --check` passed.
+
+Exact-head GitHub Actions for `1743f3a198605e1e50a30776a3366d2e9e9a36f5`: Rust [40193380363](https://github.com/jelome265/sitolo/actions/runs/40193380363), Integration [40193380330](https://github.com/jelome265/sitolo/actions/runs/40193380330), Security [40193380381](https://github.com/jelome265/sitolo/actions/runs/40193380381), and Policy [40193380574](https://github.com/jelome265/sitolo/actions/runs/40193380574) all passed; CodeQL [121169950121](https://github.com/jelome265/sitolo/runs/121169950121) passed. The branch remains not ready to merge; the unresolved blockers listed below are unchanged.
 
 ## Remaining findings and blockers
 
