@@ -3,7 +3,7 @@ artifact_type: remediation-execution-report
 status: partial-blocked
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "e48b12a5995b4d79aca86a7443b014144d893164"
+source_head: "ef0e97b3cd9e239db42c16c876828eea5454f62d"
 date: "2026-10-25"
 ---
 
@@ -13,7 +13,7 @@ date: "2026-10-25"
 
 Partial implementation completed on the requested feature branch. PR #49 remains open and **not ready for merge or Phase 4 closure**. This report records the two bounded remediations implemented in this pass; it does not supersede the historical deep audit or claim that all Phase 1–4 requirements are complete.
 
-The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. The implementation commits are `289ae0c` and `e48b12a`; candidate source SHA is `e48b12a5995b4d79aca86a7443b014144d893164`.
+The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. The implementation commits are `289ae0c`, `e48b12a`, and `ef0e97b`; this report's source SHA is `ef0e97b3cd9e239db42c16c876828eea5454f62d`.
 
 ## Completed remediations
 
@@ -41,16 +41,16 @@ Local checks on source `e48b12a`:
 - Native `scripts/ci/check-phase2-policy.ps1` — PASS. An initial Git Bash invocation produced a Windows-path false positive; the repository's PowerShell checker passed.
 - Full local PostgreSQL tests were not run. The repository contract requires the approved disposable GitHub Actions PostgreSQL service, and no local server was started.
 
-Exact-head GitHub Actions observed for `e48b12a5995b4d79aca86a7443b014144d893164`:
+Exact-head GitHub Actions observed for `ef0e97b3cd9e239db42c16c876828eea5454f62d`:
 
 | Workflow | Result | Run |
 |---|---|---|
-| Rust | PASS | [40174232907](https://github.com/jelome265/sitolo/actions/runs/40174232907) |
-| Integration | PASS | [40174232901](https://github.com/jelome265/sitolo/actions/runs/40174232901) |
-| Policy | PASS | [40174232875](https://github.com/jelome265/sitolo/actions/runs/40174232875) |
-| Security | PASS, including CodeQL, advisories, dependency policy, secrets and offensive PostgreSQL regression | [40174232895](https://github.com/jelome265/sitolo/actions/runs/40174232895) |
+| Rust | PASS, including canonical verification and required PostgreSQL suites | [40176319651](https://github.com/jelome265/sitolo/actions/runs/40176319651) |
+| Integration | PASS, PostgreSQL application/contract tests | [40176319635](https://github.com/jelome265/sitolo/actions/runs/40176319635) |
+| Security | PASS, including CodeQL, advisories, dependency policy, secrets and offensive PostgreSQL regression | [40176319631](https://github.com/jelome265/sitolo/actions/runs/40176319631) |
+| Policy | PASS | [40176319642](https://github.com/jelome265/sitolo/actions/runs/40176319642) |
 
-These workflow results belong only to `e48b12a`; later documentation commits require their own exact-head status checks.
+These workflow results belong only to `ef0e97b`; a later documentation-only report commit requires its own exact-head status checks.
 
 ### R-08 — automated policy enforcement and scope reconciliation
 
@@ -58,7 +58,7 @@ Added `scripts/ci/check-rust-policy.py` to fail closed on workspace lint-policy 
 
 Reconciled `SCOPE-EXC-001`: it records only that the Integration workflow excludes direct `sitolo-persistence` package tests. Its old rationale that database semantics did not exist was obsolete. The Rust canonical verifier and Security workflow retain required PostgreSQL suites; the scope record is not a testing waiver. Branch-protection evidence remains unavailable through the current repository permissions and still requires an administrator.
 
-Local R-08 evidence: `python scripts/ci/check-rust-policy.py`, `cargo deny check`, and `cargo audit` — PASS. `scripts/ci/check-release-workflow` — PASS. The combined workflow-policy shell check needs `python3`, which is not available in this Windows Git Bash environment; its Rust policy subcheck passed when run directly with Python, and the workflow-policy check is enforced in Ubuntu CI. Exact-head workflow evidence is pending for this new patch.
+Local R-08 evidence: `python scripts/ci/check-rust-policy.py`, `cargo deny check`, and `cargo audit` — PASS. `scripts/ci/check-release-workflow` — PASS. The combined workflow-policy shell check could not find `python3` in this Windows Git Bash environment; its Rust policy subcheck passed when run directly with Python. The full workflow-policy check passed in Ubuntu CI.
 
 ## Remaining findings and blockers
 
