@@ -4,13 +4,13 @@ status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
 implementation_source: "4858341fcd16459aad10494d8b75ddb684859861"
-verification_head: "d53e05297963b5457d44006e236522c4a179d257"
+verification_head: "db4fcbaa69f12b96971d95d8bc6c2786c978858f"
 date: "2026-10-25"
 ---
 
 # Phase 1–4 requirements matrix — PR #49
 
-This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on the approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. The matrix is pinned to implementation source `4858341` with subsequent documentation-only commits through verification head `0f70426`.
+This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on the approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. The main implementation matrix remains pinned to implementation source `4858341`; the latest test-harness follow-up is code commit `db4fcba`, verified on that exact head. See [the verification follow-up](pr49-phase4-part8-verification-follow-up-2026-10-25.md) for the narrow schema-identifier guard and exact workflow evidence.
 
 | Requirement | Contract / source of truth | Implementation and executable evidence | Status | Remaining remediation |
 |---|---|---|---|---|

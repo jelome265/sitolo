@@ -16,6 +16,10 @@ The latest implementation source is `4858341fcd16459aad10494d8b75ddb684859861` o
 
 PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/Phase 3 identity evidence, administrator branch-protection evidence, independent Stage 06 review, and human review remain open. The organization activation route was removed from the active API surface because no persisted provisioning transition exists; shared testkit fixtures and automated lint/CI policy enforcement are implemented. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) and the [Phase 1–4 requirements matrix](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-requirements-matrix-2026-10-25.md).
 
+### Focused test-harness follow-up — 2026-10-25
+
+Code head `db4fcbaa69f12b96971d95d8bc6c2786c978858f` now validates the generated Part 8 test schema identifier before connecting or executing DDL. Its focused regression, strict Clippy and formatting checks pass. Rust [40180985925](https://github.com/jelome265/sitolo/actions/runs/40180985925), Integration [40180985800](https://github.com/jelome265/sitolo/actions/runs/40180985800), Security [40180985807](https://github.com/jelome265/sitolo/actions/runs/40180985807), and Policy [40180985960](https://github.com/jelome265/sitolo/actions/runs/40180985960) passed on that exact head. This closes only the generated identifier guard; the blockers above remain. See the [verification follow-up](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-follow-up-2026-10-25.md).
+
 ## PR #52
 
 PR #52 (`feat/agentic-workflow`) was the initial **engineering workflow/documentation architecture change**; the current mainline ICM conformance pass is tracked separately.

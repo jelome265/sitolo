@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "d53e05297963b5457d44006e236522c4a179d257"
+candidate_head: "db4fcbaa69f12b96971d95d8bc6c2786c978858f"
 date: "2026-10-25"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Latest implementation and verification checkpoint — `db4fcba`
+
+The latest focused implementation validates generated Part 8 schema identifiers before any network connection or DDL. Its parser-only regression, strict focused Clippy and formatting checks pass. All four required workflows passed on exact head `db4fcbaa69f12b96971d95d8bc6c2786c978858f`: Rust [40180985925](https://github.com/jelome265/sitolo/actions/runs/40180985925), Integration [40180985800](https://github.com/jelome265/sitolo/actions/runs/40180985800), Security [40180985807](https://github.com/jelome265/sitolo/actions/runs/40180985807), and Policy [40180985960](https://github.com/jelome265/sitolo/actions/runs/40180985960). See the [verification follow-up](pr49-phase4-part8-verification-follow-up-2026-10-25.md). This does not close the consumer, migration/release, complete mutation evidence, Phase 3, independent Stage 06 or human-review gates.
 
 ## Current implementation checkpoint — source `4858341`, verified head `d53e052`
 
