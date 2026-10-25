@@ -44,6 +44,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+sitolo-testkit = { path = "../../crates/sitolo-testkit" }
 sqlx-core.workspace = true
 sqlx-postgres.workspace = true
 tokio.workspace = true

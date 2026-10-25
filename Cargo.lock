@@ -1790,6 +1790,7 @@ dependencies = [
  "sitolo-observability",
  "sitolo-persistence",
  "sitolo-security",
+ "sitolo-testkit",
  "sqlx-core",
  "sqlx-postgres",
  "thiserror",

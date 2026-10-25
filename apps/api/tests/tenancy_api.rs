@@ -3,7 +3,6 @@
 //! branch-create route exercises the full authenticated authorization path.
 
 use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -22,9 +21,10 @@ use sitolo_auth::{
 use sitolo_persistence::{
     IdentityDatabase, IdentityStores, PgTenancyUnitOfWork, RequestIdentityAuthority,
 };
+use sitolo_testkit::postgres::{parse_disposable_targets, validate_generated_schema_name};
 use sqlx_core::query::query;
 use sqlx_core::raw_sql::raw_sql;
-use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx_postgres::{PgPool, PgPoolOptions};
 use tower::ServiceExt;
 
 struct StubSecretProvider;
@@ -464,12 +464,17 @@ struct ApiTenancyDb {
     reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
 )]
 async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
+    let schema = format!("test_api_tenancy_{}", uuid::Uuid::new_v4().simple());
+    validate_generated_schema_name(&schema).map_err(std::io::Error::other)?;
+    let disposable = env::var("SITOLO_TEST_DATABASE_DISPOSABLE").unwrap_or_default();
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
-    let schema = format!("test_api_tenancy_{}", uuid::Uuid::new_v4().simple());
+    let worker_url = env::var("WORKER_DATABASE_URL")?;
+    let targets = parse_disposable_targets(&disposable, &admin_url, &runtime_url, &worker_url)
+        .map_err(std::io::Error::other)?;
     let bootstrap = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&admin_url)
+        .connect_with(targets.admin.clone())
         .await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "CREATE SCHEMA \"{schema}\""
@@ -478,8 +483,7 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
     .await?;
     bootstrap.close().await;
 
-    let admin_options =
-        PgConnectOptions::from_str(&admin_url)?.options([("search_path", schema.as_str())]);
+    let admin_options = targets.admin.options([("search_path", schema.as_str())]);
     let admin = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(admin_options)
@@ -497,8 +501,7 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
     .execute(&admin)
     .await?;
 
-    let runtime_options =
-        PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema.as_str())]);
+    let runtime_options = targets.runtime.options([("search_path", schema.as_str())]);
     let runtime = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(runtime_options)

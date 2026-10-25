@@ -48,6 +48,7 @@ pub fn parse_disposable_targets(
 pub fn validate_generated_schema_name(name: &str) -> Result<(), String> {
     let suffix = [
         "test_schema_fail_inject_",
+        "test_api_tenancy_",
         "test_part8_app_",
         "test_membership_tx_",
         "test_schema_",
@@ -211,6 +212,10 @@ mod tests {
                 "test_schema_fail_inject_0123456789abcdef0123456789abcdef"
             )
             .is_ok()
+        );
+        assert!(
+            validate_generated_schema_name("test_api_tenancy_0123456789abcdef0123456789abcdef")
+                .is_ok()
         );
         assert!(
             validate_generated_schema_name("test_schema_0123456789abcdef0123456789abcdef").is_ok()
