@@ -233,7 +233,6 @@ impl TenancyService {
             "membership",
             membership_id.to_string(),
             serde_json::json!({
-                "organization_id": organization_id.as_str(),
                 "membership_id": membership_id.as_str(),
                 "from_state": expected_state,
                 "to_state": next_state,
