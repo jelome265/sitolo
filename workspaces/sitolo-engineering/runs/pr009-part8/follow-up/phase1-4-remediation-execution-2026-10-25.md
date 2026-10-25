@@ -3,7 +3,7 @@ artifact_type: remediation-execution-report
 status: partial-blocked
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "ef0e97b3cd9e239db42c16c876828eea5454f62d"
+source_head: "468186cad7a2ccb2abe8f3305e841ac3f81cd7bd"
 date: "2026-10-25"
 ---
 
@@ -11,9 +11,9 @@ date: "2026-10-25"
 
 ## Disposition
 
-Partial implementation completed on the requested feature branch. PR #49 remains open and **not ready for merge or Phase 4 closure**. This report records the two bounded remediations implemented in this pass; it does not supersede the historical deep audit or claim that all Phase 1–4 requirements are complete.
+Partial implementation completed on the requested feature branch. PR #49 remains open and **not ready for merge or Phase 4 closure**. This report records the bounded remediations implemented in this pass; it does not supersede the historical deep audit or claim that all Phase 1–4 requirements are complete.
 
-The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. The implementation commits are `289ae0c`, `e48b12a`, and `ef0e97b`; this report's source SHA is `ef0e97b3cd9e239db42c16c876828eea5454f62d`.
+The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. The implementation commits are `289ae0c`, `e48b12a`, `ef0e97b`, and `468186c`; this report is updated for the R-07 implementation at `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`.
 
 ## Completed remediations
 
@@ -26,10 +26,13 @@ Pure parser tests reject missing opt-in, remote host, mismatched database, unexp
 ### R-09 / F-09 — optional configuration fingerprint values
 
 The fingerprint previously encoded absent optional fields as the literal `<none>`, which could collide with an actual optional value of `<none>`. Optional values now use distinct `none` and length-prefixed `some` encodings. `FINGERPRINT_FORMAT_VERSION` is 2, making the canonical-format change explicit. Regression coverage includes all current effective `AppConfig` fields, OIDC fields, the worker secret reference, secret exclusion, and an absent-versus-present sentinel case.
+### R-07 / F-06 — shared tenancy test fixtures
+
+Implemented domain-validated identifier helpers and legal active organization, branch, and membership fixtures in `sitolo-testkit`. Tenancy domain and application service tests now consume these shared fixtures. The crate is a dev-only dependency, and the crate-boundary checker rejects normal dependency edges to it. PostgreSQL transaction, RLS, and audit/outbox behavior continue to use real PostgreSQL fixtures; this testkit does not simulate persistence.
 
 ## Evidence
 
-Local checks on source `e48b12a`:
+Local checks on source `e48b12a` (R-01/R-09):
 
 - `cargo fmt --all -- --check` — PASS.
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` — PASS.
@@ -50,7 +53,7 @@ Exact-head GitHub Actions observed for `ef0e97b3cd9e239db42c16c876828eea5454f62d
 | Security | PASS, including CodeQL, advisories, dependency policy, secrets and offensive PostgreSQL regression | [40176319631](https://github.com/jelome265/sitolo/actions/runs/40176319631) |
 | Policy | PASS | [40176319642](https://github.com/jelome265/sitolo/actions/runs/40176319642) |
 
-These workflow results belong only to `ef0e97b`; a later documentation-only report commit requires its own exact-head status checks.
+These workflow results belong only to `ef0e97b`; later commits require their own exact-head status checks.
 
 ### R-08 — automated policy enforcement and scope reconciliation
 
@@ -60,6 +63,24 @@ Reconciled `SCOPE-EXC-001`: it records only that the Integration workflow exclud
 
 Local R-08 evidence: `python scripts/ci/check-rust-policy.py`, `cargo deny check`, and `cargo audit` — PASS. `scripts/ci/check-release-workflow` — PASS. The combined workflow-policy shell check could not find `python3` in this Windows Git Bash environment; its Rust policy subcheck passed when run directly with Python. The full workflow-policy check passed in Ubuntu CI.
 
+
+R-07 local checks on `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`:
+
+- `cargo test -p sitolo-testkit --locked` — PASS, 2 fixture tests.
+- `cargo test -p sitolo-tenancy --locked` — PASS, 8 tests.
+- `cargo test -p sitolo-application --test tenancy_service --locked` — PASS, 11 tests.
+- `cargo fmt --all -- --check`, workspace Clippy/check, testkit docs, crate boundaries (17 packages), architecture, doc references (245 Markdown files / 1110 references), System Map process checks, and ICM workspace checks — PASS.
+- No local PostgreSQL was started; persistence behavior remains covered only by real PostgreSQL CI suites.
+- Exact-head GitHub Actions for `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`:
+
+| Workflow | Result | Run |
+|---|---|---|
+| Rust | PASS | [40177758892](https://github.com/jelome265/sitolo/actions/runs/40177758892) |
+| Integration | PASS, PostgreSQL application/contract tests | [40177758874](https://github.com/jelome265/sitolo/actions/runs/40177758874) |
+| Security | PASS, including CodeQL, advisories, dependency policy, secrets and offensive PostgreSQL regression | [40177758868](https://github.com/jelome265/sitolo/actions/runs/40177758868) |
+| Policy | PASS | [40177758949](https://github.com/jelome265/sitolo/actions/runs/40177758949) |
+
+These exact-head results apply to `468186c`; the subsequent report commit requires a fresh set of exact-head status checks.
 ## Remaining findings and blockers
 
 The following are still open from the cross-phase audit and remediation plan:
@@ -69,7 +90,7 @@ The following are still open from the cross-phase audit and remediation plan:
 - **F-04 / R-04, P0/P1:** the complete mandatory Phase 4 mutation matrix is not yet supported by source-traced, exact-head PostgreSQL success/denial/rollback/replay/concurrency evidence.
 - **F-03 / R-05, P1:** organization activation is fail-closed; a product/domain owner must approve persisted lifecycle semantics or explicitly defer/remove the route from the declared API contract.
 - **R-06:** Phase 3 production login/session/refresh/MFA/device lifecycle evidence remains incomplete against its full contract.
-- **F-06 / R-07:** `sitolo-testkit` remains an unused scaffold; no approved removal/deferment or shared fixture API was completed.
+- **F-06 / R-07:** shared validated tenancy fixtures are implemented and consumed by domain and application tests. The crate is dev-only and does not replace real PostgreSQL evidence.
 - **F-07 / F-08 / R-08:** automated lint/unsafe policy enforcement and the stale scope-exception reconciliation are implemented. Branch-protection evidence remains outstanding; settings require a repository administrator and prior API access returned 403.
 - **F-10:** the independent Stage 06 audit and human review must evaluate the final implementation head. This supplemental report is not independent approval.
 
