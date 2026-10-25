@@ -1934,6 +1934,7 @@ dependencies = [
  "sitolo-events",
  "sitolo-security",
  "sitolo-tenancy",
+ "sitolo-testkit",
  "sqlx-core",
  "sqlx-postgres",
  "thiserror",
@@ -1970,6 +1971,7 @@ name = "sitolo-testkit"
 version = "0.1.0"
 dependencies = [
  "sitolo-domain",
+ "sqlx-postgres",
 ]
 
 [[package]]

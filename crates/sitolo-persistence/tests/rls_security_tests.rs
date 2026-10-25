@@ -322,7 +322,12 @@ async fn setup_test_context(
         format!("test_schema_{schema_id}")
     };
 
+    common::validate_generated_schema_name(&schema_name).map_err(std::io::Error::other)?;
+
     let targets = common::targets_from_env().map_err(std::io::Error::other)?;
+    if targets.worker.get_username() != "app_worker" {
+        return Err(std::io::Error::other("worker target must authenticate as app_worker").into());
+    }
     let mut admin_opts: PgConnectOptions = targets.admin;
     let mut runtime_opts: PgConnectOptions = targets.runtime;
 
@@ -1461,6 +1466,7 @@ async fn test_setup_failure_injection_cleans_up_schema() -> TestResult {
     let schema_id = uuid::Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_schema_fail_inject_{schema_id}");
 
+    common::validate_generated_schema_name(&schema_name).map_err(std::io::Error::other)?;
     let targets = common::targets_from_env().map_err(std::io::Error::other)?;
     let admin_pool = PgPoolOptions::new()
         .max_connections(2)

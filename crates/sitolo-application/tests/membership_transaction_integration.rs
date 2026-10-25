@@ -7,7 +7,6 @@
 //! is never mistaken for database proof; CI supplies the three DSNs.
 
 use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -33,9 +32,10 @@ use sitolo_domain::tenancy::{MembershipId, OrganizationId};
 use sitolo_events::OutboxEvent;
 use sitolo_persistence::PgTenancyUnitOfWork;
 use sitolo_tenancy::ScopeError;
+use sitolo_testkit::postgres::{parse_disposable_targets, validate_generated_schema_name};
 use sqlx_core::query::query;
 use sqlx_core::raw_sql::raw_sql;
-use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx_postgres::{PgPool, PgPoolOptions};
 use tokio::sync::Barrier;
 use uuid::Uuid;
 
@@ -77,12 +77,17 @@ struct TestDb {
     reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
 )]
 async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
+    let schema = format!("test_membership_tx_{}", Uuid::new_v4().simple());
+    validate_generated_schema_name(&schema).map_err(std::io::Error::other)?;
+    let disposable = env::var("SITOLO_TEST_DATABASE_DISPOSABLE").unwrap_or_default();
     let admin_url = env::var("ADMIN_DATABASE_URL")?;
     let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
-    let schema = format!("test_membership_tx_{}", Uuid::new_v4().simple());
+    let worker_url = env::var("WORKER_DATABASE_URL")?;
+    let targets = parse_disposable_targets(&disposable, &admin_url, &runtime_url, &worker_url)
+        .map_err(std::io::Error::other)?;
     let bootstrap = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&admin_url)
+        .connect_with(targets.admin.clone())
         .await?;
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "CREATE SCHEMA \"{schema}\""
@@ -91,8 +96,7 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
     .await?;
     bootstrap.close().await;
 
-    let admin_options =
-        PgConnectOptions::from_str(&admin_url)?.options([("search_path", schema.as_str())]);
+    let admin_options = targets.admin.options([("search_path", schema.as_str())]);
     let admin = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(admin_options)
@@ -107,8 +111,7 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
         include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
     raw_sql(tenancy_schema).execute(&admin).await?;
 
-    let runtime_options =
-        PgConnectOptions::from_str(&runtime_url)?.options([("search_path", schema.as_str())]);
+    let runtime_options = targets.runtime.options([("search_path", schema.as_str())]);
     let runtime = PgPoolOptions::new()
         .max_connections(5)
         .connect_with(runtime_options)

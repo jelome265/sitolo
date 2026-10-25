@@ -4,6 +4,8 @@
 //! §5.14). Production crates MUST NOT depend on this crate.
 #![forbid(unsafe_code)]
 
+pub mod postgres;
+
 use sitolo_domain::tenancy::{
     Branch, BranchId, Membership, MembershipId, Organization, OrganizationId, TenancyError,
     TenantUserId,

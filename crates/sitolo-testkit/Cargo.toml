@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 sitolo-domain = { path = "../sitolo-domain" }
+sqlx-postgres.workspace = true
 
 [lints]
 workspace = true

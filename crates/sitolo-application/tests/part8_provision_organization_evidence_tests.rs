@@ -26,6 +26,7 @@ use sitolo_application::TenancyService;
 use sitolo_audit::ActorRef;
 use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenancyError, TenantUserId};
 use sitolo_persistence::postgres::verify_part8_provisioning_rls_metadata;
+use sitolo_testkit::postgres::{parse_disposable_targets, validate_generated_schema_name};
 use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::raw_sql::raw_sql;
@@ -44,9 +45,14 @@ struct TestContext {
     reason = "FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary."
 )]
 async fn setup() -> Result<TestContext, Box<dyn Error>> {
-    let admin_url = env::var("ADMIN_DATABASE_URL")?;
-
     let schema_name = format!("test_part8_app_{}", Uuid::new_v4().simple());
+    validate_generated_schema_name(&schema_name).map_err(std::io::Error::other)?;
+    let disposable = env::var("SITOLO_TEST_DATABASE_DISPOSABLE").unwrap_or_default();
+    let admin_url = env::var("ADMIN_DATABASE_URL")?;
+    let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
+    let worker_url = env::var("WORKER_DATABASE_URL")?;
+    let targets = parse_disposable_targets(&disposable, &admin_url, &runtime_url, &worker_url)
+        .map_err(std::io::Error::other)?;
 
     // Set `search_path` at connection-establishment time (not via a runtime
     // `SET` on the pool, which does not reliably survive across pooled
@@ -54,8 +60,8 @@ async fn setup() -> Result<TestContext, Box<dyn Error>> {
     // unqualified table names the production code uses ("audit_events",
     // "outbox_events") against our isolated test schema. Same approach as
     // crates/sitolo-persistence/tests/rls_security_tests.rs.
-    let admin_opts: PgConnectOptions = admin_url
-        .parse::<PgConnectOptions>()?
+    let admin_opts: PgConnectOptions = targets
+        .admin
         .options([("search_path", schema_name.as_str())]);
 
     let admin_pool = PgPoolOptions::new()
@@ -82,9 +88,8 @@ async fn setup() -> Result<TestContext, Box<dyn Error>> {
 
     verify_part8_provisioning_rls_metadata(&admin_pool, &schema_name).await?;
 
-    let runtime_url = env::var("RUNTIME_DATABASE_URL")?;
-    let runtime_opts: PgConnectOptions = runtime_url
-        .parse::<PgConnectOptions>()?
+    let runtime_opts: PgConnectOptions = targets
+        .runtime
         .options([("search_path", schema_name.as_str())]);
     let runtime_pool = PgPoolOptions::new()
         .max_connections(5)

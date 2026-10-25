@@ -14,7 +14,6 @@
 //!   Tests fail rather than skip when a variable is absent or an identity
 //!   differs.
 
-use std::env;
 use std::time::Duration;
 
 mod common;
@@ -38,7 +37,7 @@ use sqlx_core::query_as::query_as;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_core::row::Row;
-use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
+use sqlx_postgres::{PgPool, PgPoolOptions, PgRow};
 use uuid::Uuid;
 
 /// Test context with admin, runtime, and worker pools.
@@ -112,7 +111,7 @@ impl<'r> FromRow<'r, PgRow> for RelationSecurityRow {
 /// identity: the tests must prove the narrow worker role, not the superuser.
 async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>> {
     let targets = common::targets_from_env().map_err(std::io::Error::other)?;
-    let worker_target = worker_target_from_env(&targets).map_err(std::io::Error::other)?;
+    let worker_target = targets.worker.clone();
 
     let schema_id = Uuid::new_v4().simple().to_string();
     let schema_name = format!("test_part8_{schema_id}");
@@ -206,18 +205,6 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         worker_pool,
         schema_name,
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "The Part 8 integration-test boundary reads its required worker DSN before any connection or DDL; production configuration remains parsed at the binary boundary."
-)]
-fn worker_target_from_env(
-    targets: &common::TestDatabaseTargets,
-) -> Result<PgConnectOptions, String> {
-    let raw = env::var("WORKER_DATABASE_URL")
-        .map_err(|_error| "WORKER_DATABASE_URL is required".to_owned())?;
-    common::validate_worker_target(targets, &raw)
 }
 
 #[tokio::test]
