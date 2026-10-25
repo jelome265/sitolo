@@ -1760,10 +1760,20 @@ async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn 
         assert!(outbox.relrowsecurity, "outbox_events must enable RLS");
         assert!(outbox.relforcerowsecurity, "outbox_events must force RLS");
 
+        // Assert the Part 8 evidence-table policy inventory only. The consumer
+        // inbox (consumer_inbox_tenant_policy on consumer_inbox, targeting
+        // app_worker) is a separate consumer-side idempotency table owned by the
+        // restricted app_worker role under its own RLS contract
+        // (crates/sitolo-persistence/schema/consumer_inbox.sql; schema/README.md
+        // §29-33). It is not a Part 8 evidence table and is intentionally outside
+        // this inventory. The Part 8 evidence tables are audit_events and
+        // outbox_events, which carry exactly three policies targeting
+        // app_runtime and app_outbox_owner.
         let policies: Vec<(String, String, String, String)> = query_as(
             "SELECT tablename, policyname, array_to_string(roles, ',') AS roles, cmd
              FROM pg_policies
              WHERE schemaname = $1
+               AND tablename IN ('audit_events', 'outbox_events')
              ORDER BY tablename, policyname",
         )
         .bind(&ctx.schema_name)
