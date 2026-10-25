@@ -2,10 +2,10 @@
 //!
 //! Every test here exercises the real durable `TenancyUnitOfWork` adapter
 //! against an isolated schema: authorization, tenant scope, state transitions,
-//! audit/outbox evidence, and transaction rollback. Application-port failure
-//! tests exercise error handling; the PostgreSQL-trigger regression below
-//! separately proves rollback when actual audit and outbox inserts fail. The
-//! suites fail rather than skip when PostgreSQL is unavailable, so a green
+//! audit/outbox evidence, and transaction rollback. Evidence-failure cases use
+//! PostgreSQL triggers selected by runtime connection identity, so failures
+//! occur on actual audit/outbox inserts inside the authoritative transaction.
+//! The suites fail rather than skip when PostgreSQL is unavailable, so a green
 //! local unit run is never mistaken for database proof; CI supplies the three
 //! DSNs.
 
@@ -13,26 +13,17 @@ use std::env;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
-use sitolo_application::{
-    ExpiredInvitation, InvitationRecord, MembershipRecord, MembershipSelector,
-    RoleAssignmentOutcome, ScopeMaterial, TenancyService, TenancyTransaction, TenancyUnitOfWork,
-};
-use sitolo_audit::{ActorRef, IamAuditEvent};
+use sitolo_application::TenancyService;
+use sitolo_audit::ActorRef;
 use sitolo_auth::{
     Assurance, AuthenticatedPrincipal, SecurityContext, SecurityVersion, SessionClass, SessionId,
     SessionSecurityState, SessionState, UserId,
 };
-use sitolo_authz::{
-    ContactKind, Invitation, InvitationContact, InvitationError, Role, RoleAssignment,
-    RoleAssignmentState, Scope, ScopeGrant,
-};
+use sitolo_authz::{ContactKind, InvitationContact, Role, RoleAssignmentState, Scope};
 use sitolo_domain::tenancy::{
-    Branch, BranchId, InvitationId, Membership, ProvisionedOrganization, RoleAssignmentId,
-    ScopeGrantId, TenancyError,
+    BranchId, InvitationId, Membership, RoleAssignmentId, ScopeGrantId, TenancyError,
 };
 use sitolo_domain::tenancy::{MembershipId, OrganizationId};
-use sitolo_events::OutboxEvent;
 use sitolo_persistence::PgTenancyUnitOfWork;
 use sitolo_tenancy::ScopeError;
 use sitolo_testkit::postgres::{parse_disposable_targets, validate_generated_schema_name};
@@ -72,7 +63,68 @@ fn authenticated_context(user_id: &str) -> Result<SecurityContext, Box<dyn std::
 struct TestDb {
     admin: PgPool,
     runtime: PgPool,
+    audit_failure_runtime: PgPool,
+    outbox_failure_runtime: PgPool,
     schema: String,
+}
+
+async fn install_postgres_evidence_failure_triggers(
+    admin: &PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    raw_sql(
+        r"
+        CREATE FUNCTION sitolo_test_reject_audit_insert() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF current_setting('application_name', true) = 'sitolo_test_fail_audit' THEN
+                RAISE EXCEPTION 'test audit insert failure' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER sitolo_test_reject_audit_insert
+        BEFORE INSERT ON audit_events
+        FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_audit_insert();
+
+        CREATE FUNCTION sitolo_test_reject_outbox_insert() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF current_setting('application_name', true) = 'sitolo_test_fail_outbox' THEN
+                RAISE EXCEPTION 'test outbox insert failure' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER sitolo_test_reject_outbox_insert
+        BEFORE INSERT ON outbox_events
+        FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_outbox_insert();
+        ",
+    )
+    .execute(admin)
+    .await?;
+    Ok(())
+}
+
+async fn failure_runtime_pool(
+    target: &sqlx_postgres::PgConnectOptions,
+    schema: &str,
+    application_name: &str,
+) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect_with(target.clone().options([
+            ("search_path", schema),
+            ("application_name", application_name),
+        ]))
+        .await?;
+    let actual_application_name: String =
+        sqlx_core::query_scalar::query_scalar("SELECT current_setting('application_name')")
+            .fetch_one(&pool)
+            .await?;
+    if actual_application_name != application_name {
+        return Err("PostgreSQL evidence-failure session identity was not configured".into());
+    }
+    Ok(pool)
 }
 
 #[expect(
@@ -114,10 +166,15 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
         include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
     raw_sql(tenancy_schema).execute(&admin).await?;
 
-    let runtime_options = targets.runtime.options([("search_path", schema.as_str())]);
+    install_postgres_evidence_failure_triggers(&admin).await?;
+
+    let runtime_options = targets
+        .runtime
+        .clone()
+        .options([("search_path", schema.as_str())]);
     let runtime = PgPoolOptions::new()
         .max_connections(5)
-        .connect_with(runtime_options)
+        .connect_with(runtime_options.clone())
         .await?;
     let runtime_identity: String = sqlx_core::query_scalar::query_scalar("SELECT session_user")
         .fetch_one(&runtime)
@@ -125,9 +182,15 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
     if runtime_identity != "app_runtime" {
         return Err(format!("expected app_runtime, got {runtime_identity}").into());
     }
+    let audit_failure_runtime =
+        failure_runtime_pool(&targets.runtime, &schema, "sitolo_test_fail_audit").await?;
+    let outbox_failure_runtime =
+        failure_runtime_pool(&targets.runtime, &schema, "sitolo_test_fail_outbox").await?;
     Ok(TestDb {
         admin,
         runtime,
+        audit_failure_runtime,
+        outbox_failure_runtime,
         schema,
     })
 }
@@ -326,438 +389,11 @@ fn service(db: &TestDb) -> TenancyService {
 }
 
 fn failing_service(db: &TestDb, mode: EvidenceFailure) -> TenancyService {
-    TenancyService::new_postgres(
-        Vec::new(),
-        Arc::new(FailingUnitOfWork::new(db.runtime.clone(), mode)),
-    )
-}
-
-async fn install_postgres_evidence_failure(
-    db: &TestDb,
-    mode: EvidenceFailure,
-) -> Result<(), Box<dyn std::error::Error>> {
-    raw_sql(
-        "DROP TRIGGER IF EXISTS sitolo_test_reject_audit_insert ON audit_events; \
-         DROP FUNCTION IF EXISTS sitolo_test_reject_audit_insert(); \
-         DROP TRIGGER IF EXISTS sitolo_test_reject_outbox_insert ON outbox_events; \
-         DROP FUNCTION IF EXISTS sitolo_test_reject_outbox_insert();",
-    )
-    .execute(&db.admin)
-    .await?;
-
-    let statement = match mode {
-        EvidenceFailure::Audit => {
-            "CREATE FUNCTION sitolo_test_reject_audit_insert() RETURNS trigger \
-             LANGUAGE plpgsql AS $sitolo_test$ BEGIN \
-             RAISE EXCEPTION 'test audit insert failure' USING ERRCODE = '23514'; \
-             END $sitolo_test$; \
-             CREATE TRIGGER sitolo_test_reject_audit_insert BEFORE INSERT ON audit_events \
-             FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_audit_insert();"
-        }
-        EvidenceFailure::Outbox => {
-            "CREATE FUNCTION sitolo_test_reject_outbox_insert() RETURNS trigger \
-             LANGUAGE plpgsql AS $sitolo_test$ BEGIN \
-             RAISE EXCEPTION 'test outbox insert failure' USING ERRCODE = '23514'; \
-             END $sitolo_test$; \
-             CREATE TRIGGER sitolo_test_reject_outbox_insert BEFORE INSERT ON outbox_events \
-             FOR EACH ROW EXECUTE FUNCTION sitolo_test_reject_outbox_insert();"
-        }
+    let pool = match mode {
+        EvidenceFailure::Audit => db.audit_failure_runtime.clone(),
+        EvidenceFailure::Outbox => db.outbox_failure_runtime.clone(),
     };
-    raw_sql(statement).execute(&db.admin).await?;
-    Ok(())
-}
-
-fn evidence_failure(mode: EvidenceFailure) -> TenancyError {
-    TenancyError::EvidencePersistenceFailedAt {
-        stage: match mode {
-            EvidenceFailure::Audit => "injected_audit_failure",
-            EvidenceFailure::Outbox => "injected_outbox_failure",
-        },
-        sqlstate: None,
-    }
-}
-
-/// Delegating unit of work that injects a failure at the evidence write.
-///
-/// The durable service writes business state, audit, and outbox in one
-/// application-owned transaction. Wrapping the adapter lets the rollback
-/// matrix prove that an evidence failure aborts the surrounding transaction
-/// without teaching the production adapter a test-only failure mode.
-struct FailingUnitOfWork {
-    inner: PgTenancyUnitOfWork,
-    mode: EvidenceFailure,
-}
-
-impl FailingUnitOfWork {
-    fn new(pool: PgPool, mode: EvidenceFailure) -> Self {
-        Self {
-            inner: PgTenancyUnitOfWork::new(pool),
-            mode,
-        }
-    }
-}
-
-#[async_trait]
-impl TenancyUnitOfWork for FailingUnitOfWork {
-    async fn begin_mutation(
-        &self,
-        organization_id: &OrganizationId,
-    ) -> Result<Box<dyn TenancyTransaction>, TenancyError> {
-        Ok(Box::new(FailingTransaction {
-            inner: self.inner.begin_mutation(organization_id).await?,
-            mode: self.mode,
-        }))
-    }
-
-    async fn begin_authorized_mutation(
-        &self,
-        organization_id: &OrganizationId,
-    ) -> Result<Box<dyn TenancyTransaction>, ScopeError> {
-        Ok(Box::new(FailingTransaction {
-            inner: self
-                .inner
-                .begin_authorized_mutation(organization_id)
-                .await?,
-            mode: self.mode,
-        }))
-    }
-
-    async fn begin_scope(
-        &self,
-        organization_id: &OrganizationId,
-    ) -> Result<Box<dyn TenancyTransaction>, ScopeError> {
-        Ok(Box::new(FailingTransaction {
-            inner: self.inner.begin_scope(organization_id).await?,
-            mode: self.mode,
-        }))
-    }
-
-    async fn begin_invitation(&self) -> Result<Box<dyn TenancyTransaction>, InvitationError> {
-        Ok(Box::new(FailingTransaction {
-            inner: self.inner.begin_invitation().await?,
-            mode: self.mode,
-        }))
-    }
-
-    async fn record_evidence(
-        &self,
-        _audit: &IamAuditEvent,
-        _outbox: &OutboxEvent,
-    ) -> Result<(), TenancyError> {
-        Err(evidence_failure(self.mode))
-    }
-
-    async fn read_member_roles(
-        &self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Result<Vec<RoleAssignment>, ScopeError> {
-        self.inner
-            .read_member_roles(organization_id, membership_id)
-            .await
-    }
-
-    async fn read_member_grants(
-        &self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Result<Vec<ScopeGrant>, ScopeError> {
-        self.inner
-            .read_member_grants(organization_id, membership_id)
-            .await
-    }
-}
-
-struct FailingTransaction {
-    inner: Box<dyn TenancyTransaction>,
-    mode: EvidenceFailure,
-}
-
-#[async_trait]
-impl TenancyTransaction for FailingTransaction {
-    async fn set_tenant_context(
-        &mut self,
-        organization_id: &OrganizationId,
-    ) -> Result<(), ScopeError> {
-        self.inner.set_tenant_context(organization_id).await
-    }
-
-    async fn lock_organization(
-        &mut self,
-        organization_id: &OrganizationId,
-    ) -> Result<Option<String>, TenancyError> {
-        self.inner.lock_organization(organization_id).await
-    }
-
-    async fn organization_state(
-        &mut self,
-        organization_id: &OrganizationId,
-    ) -> Result<Option<String>, ScopeError> {
-        self.inner.organization_state(organization_id).await
-    }
-
-    async fn load_scope_material(
-        &mut self,
-        organization_id: &OrganizationId,
-        selector: MembershipSelector<'_>,
-        branch_id: Option<&BranchId>,
-    ) -> Result<ScopeMaterial, ScopeError> {
-        self.inner
-            .load_scope_material(organization_id, selector, branch_id)
-            .await
-    }
-
-    async fn membership_record(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Result<Option<MembershipRecord>, TenancyError> {
-        self.inner
-            .membership_record(organization_id, membership_id)
-            .await
-    }
-
-    async fn transition_membership(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        from: &str,
-        to: &str,
-    ) -> Result<Membership, TenancyError> {
-        self.inner
-            .transition_membership(organization_id, membership_id, from, to)
-            .await
-    }
-
-    async fn insert_membership(&mut self, membership: &Membership) -> Result<(), TenancyError> {
-        self.inner.insert_membership(membership).await
-    }
-
-    async fn role_assignment(
-        &mut self,
-        assignment_id: &RoleAssignmentId,
-    ) -> Result<Option<RoleAssignment>, TenancyError> {
-        self.inner.role_assignment(assignment_id).await
-    }
-
-    async fn insert_role_assignment(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        assignment_id: &RoleAssignmentId,
-        role: Role,
-    ) -> Result<RoleAssignmentOutcome, TenancyError> {
-        self.inner
-            .insert_role_assignment(organization_id, membership_id, assignment_id, role)
-            .await
-    }
-
-    async fn revoke_role_assignment(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        role: Role,
-    ) -> Result<RoleAssignment, TenancyError> {
-        self.inner
-            .revoke_role_assignment(organization_id, membership_id, role)
-            .await
-    }
-
-    async fn scope_grant(
-        &mut self,
-        grant_id: &ScopeGrantId,
-    ) -> Result<Option<ScopeGrant>, TenancyError> {
-        self.inner.scope_grant(grant_id).await
-    }
-
-    async fn insert_scope_grant(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        grant_id: &ScopeGrantId,
-        scope: &Scope,
-    ) -> Result<ScopeGrant, TenancyError> {
-        self.inner
-            .insert_scope_grant(organization_id, membership_id, grant_id, scope)
-            .await
-    }
-
-    async fn revoke_scope_grant(
-        &mut self,
-        organization_id: &OrganizationId,
-        grant_id: &ScopeGrantId,
-    ) -> Result<ScopeGrant, TenancyError> {
-        self.inner
-            .revoke_scope_grant(organization_id, grant_id)
-            .await
-    }
-
-    async fn insert_branch(&mut self, branch: &Branch) -> Result<(), TenancyError> {
-        self.inner.insert_branch(branch).await
-    }
-
-    async fn provision_organization(
-        &mut self,
-        provisioned: &ProvisionedOrganization,
-    ) -> Result<bool, TenancyError> {
-        self.inner.provision_organization(provisioned).await
-    }
-
-    async fn transition_organization(
-        &mut self,
-        from: &str,
-        to: &str,
-    ) -> Result<Option<(String, u64)>, TenancyError> {
-        self.inner.transition_organization(from, to).await
-    }
-
-    async fn transition_branch(
-        &mut self,
-        branch_id: &BranchId,
-        from: &str,
-        to: &str,
-    ) -> Result<Option<(String, u64)>, TenancyError> {
-        self.inner.transition_branch(branch_id, from, to).await
-    }
-
-    async fn resolve_invitation_organization(
-        &mut self,
-        token_hash: &[u8; 32],
-    ) -> Result<Option<OrganizationId>, InvitationError> {
-        self.inner.resolve_invitation_organization(token_hash).await
-    }
-
-    async fn lock_issued_invitation(
-        &mut self,
-        organization_id: &OrganizationId,
-        token_hash: &[u8; 32],
-    ) -> Result<Option<InvitationRecord>, InvitationError> {
-        self.inner
-            .lock_issued_invitation(organization_id, token_hash)
-            .await
-    }
-
-    async fn lock_invitation(
-        &mut self,
-        organization_id: &OrganizationId,
-        invitation_id: &InvitationId,
-    ) -> Result<Option<InvitationRecord>, InvitationError> {
-        self.inner
-            .lock_invitation(organization_id, invitation_id)
-            .await
-    }
-
-    async fn insert_invitation(&mut self, invitation: &Invitation) -> Result<(), TenancyError> {
-        self.inner.insert_invitation(invitation).await
-    }
-
-    async fn transition_invitation_membership(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        from: &str,
-        to: &str,
-    ) -> Result<u64, InvitationError> {
-        self.inner
-            .transition_invitation_membership(organization_id, membership_id, from, to)
-            .await
-    }
-
-    async fn insert_invitation_role_assignment(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        assignment_id: &RoleAssignmentId,
-        role: Role,
-    ) -> Result<RoleAssignment, InvitationError> {
-        self.inner
-            .insert_invitation_role_assignment(organization_id, membership_id, assignment_id, role)
-            .await
-    }
-
-    async fn insert_invitation_scope_grant(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-        grant_id: &ScopeGrantId,
-        scope: &Scope,
-    ) -> Result<ScopeGrant, InvitationError> {
-        self.inner
-            .insert_invitation_scope_grant(organization_id, membership_id, grant_id, scope)
-            .await
-    }
-
-    async fn accept_invitation(
-        &mut self,
-        organization_id: &OrganizationId,
-        invitation_id: &InvitationId,
-    ) -> Result<u64, InvitationError> {
-        self.inner
-            .accept_invitation(organization_id, invitation_id)
-            .await
-    }
-
-    async fn withdraw_invitation(
-        &mut self,
-        organization_id: &OrganizationId,
-        invitation_id: &InvitationId,
-    ) -> Result<u64, InvitationError> {
-        self.inner
-            .withdraw_invitation(organization_id, invitation_id)
-            .await
-    }
-
-    async fn expire_linked_membership(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Result<(), InvitationError> {
-        self.inner
-            .expire_linked_membership(organization_id, membership_id)
-            .await
-    }
-
-    async fn expired_invitation_batch(
-        &mut self,
-        organization_id: &OrganizationId,
-        limit: i64,
-    ) -> Result<Vec<ExpiredInvitation>, TenancyError> {
-        self.inner
-            .expired_invitation_batch(organization_id, limit)
-            .await
-    }
-
-    async fn expire_invitation(
-        &mut self,
-        organization_id: &OrganizationId,
-        invitation_id: &InvitationId,
-    ) -> Result<Option<u64>, TenancyError> {
-        self.inner
-            .expire_invitation(organization_id, invitation_id)
-            .await
-    }
-
-    async fn expire_invited_membership(
-        &mut self,
-        organization_id: &OrganizationId,
-        membership_id: &MembershipId,
-    ) -> Result<Option<u64>, TenancyError> {
-        self.inner
-            .expire_invited_membership(organization_id, membership_id)
-            .await
-    }
-
-    async fn record_evidence(
-        &mut self,
-        _audit: &IamAuditEvent,
-        _outbox: &OutboxEvent,
-    ) -> Result<(), TenancyError> {
-        Err(evidence_failure(self.mode))
-    }
-
-    async fn commit(self: Box<Self>) -> Result<(), TenancyError> {
-        self.inner.commit().await
-    }
+    TenancyService::new_postgres(Vec::new(), Arc::new(PgTenancyUnitOfWork::new(pool)))
 }
 
 #[tokio::test]
@@ -1512,71 +1148,6 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_audit_and_outbox_insert_errors_roll_back_branch_mutation()
--> Result<(), Box<dyn std::error::Error>> {
-    let db = test_db().await?;
-    let org = OrganizationId::new("org-postgres-evidence-failure")?;
-    seed_organization(&db, org.as_str()).await?;
-    let actor = ActorRef {
-        subject_ref: "user-postgres-evidence-failure".to_owned(),
-        membership_ref: None,
-        device_ref: None,
-    };
-
-    install_postgres_evidence_failure(&db, EvidenceFailure::Audit).await?;
-    assert!(
-        service(&db)
-            .create_branch(
-                BranchId::new("branch-postgres-audit-failure")?,
-                org.clone(),
-                "Audit Failure",
-                actor.clone(),
-            )
-            .await
-            .is_err()
-    );
-    let after_audit_failure: (i64, i64, i64) = sqlx_core::query_as::query_as(
-        "SELECT (SELECT count(*) FROM branches WHERE organization_id = $1), \
-                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
-                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
-    )
-    .bind(org.as_str())
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(after_audit_failure, (0, 0, 0));
-
-    install_postgres_evidence_failure(&db, EvidenceFailure::Outbox).await?;
-    assert!(
-        service(&db)
-            .create_branch(
-                BranchId::new("branch-postgres-outbox-failure")?,
-                org.clone(),
-                "Outbox Failure",
-                actor,
-            )
-            .await
-            .is_err()
-    );
-    let after_outbox_failure: (i64, i64, i64) = sqlx_core::query_as::query_as(
-        "SELECT (SELECT count(*) FROM branches WHERE organization_id = $1), \
-                (SELECT count(*) FROM audit_events WHERE organization_id = $1), \
-                (SELECT count(*) FROM outbox_events WHERE organization_id = $1)",
-    )
-    .bind(org.as_str())
-    .fetch_one(&db.admin)
-    .await?;
-    assert_eq!(after_outbox_failure, (0, 0, 0));
-
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
         "DROP SCHEMA \"{}\" CASCADE",
         db.schema
