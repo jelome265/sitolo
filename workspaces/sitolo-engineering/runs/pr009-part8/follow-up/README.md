@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "db4fcbaa69f12b96971d95d8bc6c2786c978858f"
+candidate_head: "6220b3b3165a01d831a3e48a83e5578c34c47525"
 date: "2026-10-25"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current exact-head checkpoint — `6220b3b`
+
+Current Rust [40190966400](https://github.com/jelome265/sitolo/actions/runs/40190966400), Integration [40190966351](https://github.com/jelome265/sitolo/actions/runs/40190966351), Security [40190966356](https://github.com/jelome265/sitolo/actions/runs/40190966356), and Policy [40190966349](https://github.com/jelome265/sitolo/actions/runs/40190966349) workflows all pass on exact head `6220b3b3165a01d831a3e48a83e5578c34c47525`. This includes the current System Map source correction and current ICM evidence pointers; it does not resolve the production consumer, migration/release, complete mutation, Phase 3, independent Stage 06 or human-review blockers. PR #49 remains open and review-required.
 
 ## Latest implementation and verification checkpoint — `d8032ef`
 

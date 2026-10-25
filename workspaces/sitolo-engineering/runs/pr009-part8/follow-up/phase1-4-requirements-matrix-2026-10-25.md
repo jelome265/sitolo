@@ -4,13 +4,13 @@ status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
 implementation_source: "d8032eff0422edb9447239ccc13f403f285c00db"
-verification_head: "d8032eff0422edb9447239ccc13f403f285c00db"
+verification_head: "6220b3b3165a01d831a3e48a83e5578c34c47525"
 date: "2026-10-25"
 ---
 
 # Phase 1–4 requirements matrix — PR #49
 
-This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on the approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. The main implementation matrix remains pinned to implementation source `4858341`; the latest test-harness follow-up is code commit `d8032ef`, verified on that exact head. See the [remediation execution record](phase1-4-remediation-execution-2026-10-25.md) for full shared-guard coverage and exact workflow evidence.
+This is a source and evidence index, not an independent audit or closure approval. Statuses follow the pasted mission's definitions. A green workflow does not upgrade requirements without source and test evidence. Database claims rely only on the approved disposable PostgreSQL CI jobs; no local PostgreSQL server was started. The shared PostgreSQL harness guard implementation is pinned to `d8032ef`; current exact-head Rust, Integration, Security and Policy workflows pass on documentation head `6220b3b3165a01d831a3e48a83e5578c34c47525`. Later commits reconcile API route and System Map evidence without changing the guarded harness implementation. See the [remediation execution record](phase1-4-remediation-execution-2026-10-25.md) for source evidence.
 
 | Requirement | Contract / source of truth | Implementation and executable evidence | Status | Remaining remediation |
 |---|---|---|---|---|
