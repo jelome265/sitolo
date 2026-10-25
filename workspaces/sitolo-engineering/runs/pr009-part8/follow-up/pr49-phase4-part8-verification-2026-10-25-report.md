@@ -16,6 +16,21 @@ security_relevant: yes
 **Verification window:** 2026-10-25
 **PR #49 merge state:** Left unmerged. This report records evidence only; it is not a merge approval and does not satisfy the independent Stage 06 re-audit.
 
+## Latest PR-head CI rerun — documentation head `a5dffa4`
+
+The following workflows completed against PR head `a5dffa4fe734cb82717a783f552d4f7489bfd4ff`. The implementation under test includes the payload fix `b095768`; the `a5dffa4` changes in this checkpoint are documentation-only.
+
+| Workflow | Result | Run | Finding |
+|---|---|---|---|
+| Policy | **PASS** | [40161977349](https://github.com/jelome265/sitolo/actions/runs/40161977349) | ICM and repository policy checks pass |
+| Security | **PASS** | [40161977235](https://github.com/jelome265/sitolo/actions/runs/40161977235) | Security workflow passes |
+| Integration | **PASS** | [40161977330](https://github.com/jelome265/sitolo/actions/runs/40161977330) | PostgreSQL integration is green; membership transaction tests 44/44 and provision/invitation evidence tests 18/18 |
+| Rust | **FAIL** | [40161977327](https://github.com/jelome265/sitolo/actions/runs/40161977327) | The only reported Rust failure is `test_part8_relation_ownership_and_rls_metadata`: four observed policies vs three expected |
+
+The RLS metadata failure is associated with `consumer_inbox_tenant_policy` on `consumer_inbox`, targeting `app_worker`. The policy was introduced earlier in `0cdd771`; neither the one-key lifecycle payload correction nor this documentation-only checkpoint changes its SQL or the assertion. This provenance does not itself settle the contract question: before merge, determine whether the test should scope its policy inventory to Part 8 evidence tables or the consumer-inbox policy violates the governing table/role contract. Do not relax the test or alter the policy without that contract-backed decision.
+
+These are the CI results for `a5dffa4`, not a claim that every workflow passed. The Integration gate is green; Rust remains red. The prior implementation-head evidence below is retained to preserve test-level provenance for fixes `3ee27a3` and `b095768`.
+
 ## 1. Exact-head GitHub Actions evidence (head `b095768`)
 
 | Workflow | Result | Run | Evidence and scope |
