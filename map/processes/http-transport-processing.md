@@ -2,7 +2,7 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@4858341fcd16459aad10494d8b75ddb684859861
+source_revision: feat/phase4-pr009-audit-outbox@3cd8a203722e60b08cc0ffc8fb16eaf1448bdf01
 source: apps/api/src/serve.rs; apps/api/src/state.rs; apps/api/src/bootstrap.rs
 source_citation: apps/api/src/serve.rs:68-162,198-296,317-380,382-430,432-594; apps/api/src/state.rs:23-53,55-130; apps/api/src/bootstrap.rs:169-198,345-428
 ---
@@ -46,7 +46,7 @@ Administrative database provisioning, migration execution, worker relay or consu
 
 ## Verification
 
-Source-verified against branch commit `4858341fcd16459aad10494d8b75ddb684859861`. Database-backed HTTP authorization and provisioning tests are executed only in the PostgreSQL-enabled GitHub Actions workflow; local compilation is not database evidence. All five declared protected routes are wired to authenticated handlers. Organization activation is not an HTTP endpoint: provisioning atomically creates an active organization with its owner membership and default branch, and incomplete provisioning is not exposed as a normal tenant. `apps/api/tests/axum_boundary.rs` proves every declared protected route rejects missing credentials and the removed activation path returns 404. The database-backed proof for the wired commands remains CI-only.
+Source-verified against branch commit `3cd8a203722e60b08cc0ffc8fb16eaf1448bdf01`. Database-backed HTTP authorization and provisioning tests are executed only in the PostgreSQL-enabled GitHub Actions workflow; local compilation is not database evidence. All five declared protected routes are wired to authenticated handlers. Organization activation is not an HTTP endpoint: provisioning atomically creates an active organization with its owner membership and default branch, and incomplete provisioning is not exposed as a normal tenant. `apps/api/tests/axum_boundary.rs` proves every declared protected route rejects missing credentials and the removed activation path returns 404. The database-backed proof for the wired commands remains CI-only.
 
 ## See
 

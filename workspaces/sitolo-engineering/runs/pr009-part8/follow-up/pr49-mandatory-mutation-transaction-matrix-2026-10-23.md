@@ -1,6 +1,6 @@
 # PR #49 mandatory mutation transaction matrix
 
-**Source basis:** `18dce7e59c945cedcccf793b2e69b354b9b86e4d` (2026-10-25). This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. Exact-head Rust, Integration, Security and Policy workflows pass on this source. No local PostgreSQL was started for this matrix.
+**Source basis:** `3cd8a203722e60b08cc0ffc8fb16eaf1448bdf01` (2026-10-25). This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. The disposable PostgreSQL testkit implementation and its real database consumers are unchanged from `18dce7e`, whose exact-head Rust, Integration, Security and Policy workflows pass. The organization activation route documentation and this route inventory were reconciled against the current source. No local PostgreSQL was started for this matrix.
 
 The transaction statements below describe the PostgreSQL path selected when the durable unit of work is configured. `TenancyService::new_postgres` requires a `TenancyEvidenceSink`, and the API bootstrap composes it with `PgTenancyUnitOfWork` (an application-owned port implemented by `sitolo-persistence`) over the `app_runtime` pool. Authorization, the business mutation, the audit row and the outbox row share one PostgreSQL transaction on every row marked as durable.
 
