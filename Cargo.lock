@@ -1817,6 +1817,7 @@ dependencies = [
  "sitolo-persistence",
  "sitolo-security",
  "sitolo-tenancy",
+ "sitolo-testkit",
  "sqlx-core",
  "sqlx-postgres",
  "thiserror",
@@ -1960,12 +1961,16 @@ version = "0.1.0"
 dependencies = [
  "sitolo-authz",
  "sitolo-domain",
+ "sitolo-testkit",
  "thiserror",
 ]
 
 [[package]]
 name = "sitolo-testkit"
 version = "0.1.0"
+dependencies = [
+ "sitolo-domain",
+]
 
 [[package]]
 name = "sitolo-worker-bin"

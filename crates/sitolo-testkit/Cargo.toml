@@ -11,5 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+sitolo-domain = { path = "../sitolo-domain" }
+
 [lints]
 workspace = true

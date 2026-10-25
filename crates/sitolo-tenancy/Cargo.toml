@@ -14,5 +14,9 @@ categories.workspace = true
 sitolo-authz = { path = "../sitolo-authz" }
 sitolo-domain = { path = "../sitolo-domain" }
 thiserror.workspace = true
+
+[dev-dependencies]
+sitolo-testkit = { path = "../sitolo-testkit" }
+
 [lints]
 workspace = true

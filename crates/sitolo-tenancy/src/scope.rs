@@ -255,34 +255,12 @@ pub fn resolve_effective_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sitolo_domain::tenancy::{
-        BranchId, MembershipId, MembershipState, OrganizationId, TenancyError, TenantUserId,
+    use sitolo_domain::tenancy::{BranchId, Membership, MembershipState};
+    use sitolo_testkit::{
+        active_branch as branch, active_membership as membership, active_organization as org,
+        tenant_user_id,
     };
     use std::error::Error;
-
-    fn org(id: &str) -> Result<Organization, TenancyError> {
-        let mut organization = Organization::provision(OrganizationId::new(id)?, "Merchant")?;
-        organization.activate()?;
-        Ok(organization)
-    }
-
-    fn branch(id: &str, org: &str) -> Result<Branch, TenancyError> {
-        let mut branch =
-            Branch::provision(BranchId::new(id)?, OrganizationId::new(org)?, "Branch")?;
-        branch.activate()?;
-        Ok(branch)
-    }
-
-    fn membership(id: &str, org: &str, user: &str) -> Result<Membership, TenancyError> {
-        let mut membership = Membership::invite(
-            MembershipId::new(id)?,
-            OrganizationId::new(org)?,
-            TenantUserId::new(user)?,
-        );
-        membership.mark_pending()?;
-        membership.activate()?;
-        Ok(membership)
-    }
 
     #[test]
     fn org_wide_scope_resolves_for_active_membership() -> Result<(), Box<dyn Error>> {
@@ -378,7 +356,7 @@ mod tests {
         let mut expired = Membership::invite(
             MembershipId::new("m9")?,
             OrganizationId::new("org-a")?,
-            TenantUserId::new("u9")?,
+            tenant_user_id("u9")?,
         );
         expired.mark_pending()?;
         expired.expire()?;

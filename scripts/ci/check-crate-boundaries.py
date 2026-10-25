@@ -92,6 +92,12 @@ def check() -> int:
     if not isinstance(rules, list):
         return fail_closed("`rules` must be an array of tables")
 
+    dev_only_dependencies = policy.get("dev_only_dependencies", [])
+    if not isinstance(dev_only_dependencies, list) or not all(
+        isinstance(name, str) and name for name in dev_only_dependencies
+    ):
+        return fail_closed("`dev_only_dependencies` must be a list of crate names")
+
     try:
         packages = workspace_packages()
     except (RuntimeError, json.JSONDecodeError) as error:
@@ -128,6 +134,12 @@ def check() -> int:
             continue
 
         dependencies = production_dependencies(package)
+        for dev_only_dependency in dev_only_dependencies:
+            if crate != dev_only_dependency and dev_only_dependency in dependencies:
+                violations.append(
+                    f"{crate}: '{dev_only_dependency}' is forbidden as a production "
+                    "dependency; use it only from dev-dependencies"
+                )
         for dependency in rule.get("forbidden_dependencies", []):
             if dependency in dependencies:
                 violations.append(

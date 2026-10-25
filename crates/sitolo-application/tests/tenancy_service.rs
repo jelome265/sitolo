@@ -15,19 +15,12 @@ use sitolo_auth::{AbuseClass, RateLimitRule};
 use sitolo_authz::{ContactKind, InvitationContact, InvitationError, Permission, Role, Scope};
 use sitolo_domain::tenancy::{
     BranchId, InvitationId, MembershipId, OrganizationId, ProvisionedOrganization,
-    RoleAssignmentId, ScopeGrantId, TenancyError, TenantUserId,
+    RoleAssignmentId, ScopeGrantId, TenancyError,
 };
 use sitolo_persistence::{PgTenancyUnitOfWork, TenancyDatabase};
 use sitolo_tenancy::ScopeError;
+use sitolo_testkit::{organization_id as org_id, tenant_user_id as user};
 use sqlx_postgres::PgPoolOptions;
-
-fn org_id(value: &str) -> Result<OrganizationId, Box<dyn std::error::Error>> {
-    Ok(OrganizationId::new(value)?)
-}
-
-fn user(value: &str) -> Result<TenantUserId, Box<dyn std::error::Error>> {
-    Ok(TenantUserId::new(value)?)
-}
 
 /// Test-only actor identity. No evidence sink is wired in these unit
 /// tests (`service()`/`strict_service()` never call `.with_evidence`),
