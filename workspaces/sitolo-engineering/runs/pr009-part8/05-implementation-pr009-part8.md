@@ -47,6 +47,10 @@ The unit/build checks do not by themselves prove RLS, role, SQL transaction, or 
 
 The requester directed continuation (“do what you have to to make it all work”) after saying the prior memo was not visible. This authorized implementation to proceed without manual file review; it is not a claim that the requester reviewed this diff. Do not merge the PR.
 
+## Current remediation increment — 2026-10-25
+
+Implementation source commits for this increment: `468186c` adds domain-validated shared tenancy fixtures consumed by tenancy and application tests; `4858341` removes the organization activation route that had no persisted `PROVISIONING` transition, updates the active API contract, and adds a 404 boundary regression. `map/objects/verification/test-infrastructure.md` and `map/processes/http-transport-processing.md` were updated only after source consumers and route behavior existed. No persistence fake or synthetic success path was added. The current exact-head workflow evidence and remaining blockers are recorded in the dated follow-up execution report and requirements matrix.
+
 ## Exact-head PostgreSQL follow-up — 2026-10-20
 
 Commit `1383233691ec2aa0b294ea0311d8143836ca0d19` fixes the organization assertion helper to query `organizations.id`. GitHub integration run 779 passed on this exact commit. All four `part8_provision_organization_evidence_tests` passed against PostgreSQL, including successful provisioning, audit-failure rollback, outbox-failure rollback, same-payload retry, and divergent-ID conflict. The separate persistence/RLS suite under the canonical verifier had not yet completed at that point; it later passed at `862775c`. These application tests do not prove its role/catalog/concurrency checks by themselves. The requester has no local PostgreSQL instance, which remains true.

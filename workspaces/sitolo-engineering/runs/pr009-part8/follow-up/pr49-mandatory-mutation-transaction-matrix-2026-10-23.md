@@ -1,6 +1,6 @@
 # PR #49 mandatory mutation transaction matrix
 
-**Source basis:** `5a128c4f95db61f7f6cf9fd885d22911b78553c1` (2026-10-25). This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. Database evidence must be checked against this exact head in CI; no local PostgreSQL was started for this matrix.
+**Source basis:** `4858341fcd16459aad10494d8b75ddb684859861` (2026-10-25). This is a source-inspection and test-index matrix, not a completion claim or Stage 06 audit. The current CI head includes documentation-only commits `31e35fb` and `0f70426`; database evidence is only reported from exact-head workflows. No local PostgreSQL was started for this matrix.
 
 The transaction statements below describe the PostgreSQL path selected when the durable unit of work is configured. `TenancyService::new_postgres` requires a `TenancyEvidenceSink`, and the API bootstrap composes it with `PgTenancyUnitOfWork` (an application-owned port implemented by `sitolo-persistence`) over the `app_runtime` pool. Authorization, the business mutation, the audit row and the outbox row share one PostgreSQL transaction on every row marked as durable.
 
@@ -15,7 +15,7 @@ Two actor sources remain distinguishable:
 |---|---|---|---|---|---|
 | Provision organization | Insert active organization, owner membership and default branch under new organization ID | HTTP route derives `owner_user_id` from the verified principal; application method still takes it as a parameter | `iam.organization.created` | One transaction; `provision_organization_emits_audit_and_outbox_on_success`, audit/outbox rollback, idempotent/divergent and concurrent same-payload tests | Durable path tested; exact-head CI pending |
 | Create branch | Insert branch under organization; persisted `BRANCH_CREATE` authority at organization scope | Authenticated wrapper `create_branch_for_authenticated_user`; live route | `iam.branch.created` | One transaction; `branch_creation_rolls_back_state_and_evidence_on_write_failures` | Durable path tested; exact-head CI pending |
-| Organization activate | `PROVISIONING → ACTIVE` | Application method takes `ActorRef`; no authenticated wrapper | `iam.organization.activated` | Transaction path and lifecycle rollback suite exist | **Not reachable.** Provisioning calls `Organization::activate()` before insert, so no persisted `PROVISIONING` organization exists. The HTTP route is explicitly closed (`CLOSED_PROTECTED_ROUTES`) and returns `503` after authentication. Do not implement a transition the domain cannot produce. |
+| Organization activate | `PROVISIONING → ACTIVE` | Application method takes `ActorRef`; no authenticated wrapper | `iam.organization.activated` | Transaction path and lifecycle rollback suite exist | **No active HTTP operation.** Provisioning calls `Organization::activate()` before insert, so no persisted `PROVISIONING` organization exists. The unavailable endpoint was removed from the route inventory and API contract examples; the boundary test asserts the path returns 404. Any future incomplete-provisioning API requires a separately approved workflow contract and persistence tests. |
 | Organization suspend | `ACTIVE → SUSPENDED` | `ActorRef` parameter; no live route | `iam.organization.suspended` | Same lifecycle transaction suite | Durable path tested; no request path |
 | Organization resume | `SUSPENDED → ACTIVE` | `ActorRef` parameter; no live route | `iam.organization.resumed` | Same lifecycle transaction suite | Durable path tested; no request path |
 | Organization begin close | `ACTIVE/SUSPENDED → CLOSING` | `ActorRef` parameter; no live route | `iam.organization.closing_started` | Same lifecycle transaction suite | Durable path tested; no request path |
@@ -68,10 +68,14 @@ The reviewed inventory declares six protected routes. Five are wired to authenti
 
 This proves registry consistency, not that every transition emits the event. Transition emission remains part of the Stage 06 source trace.
 
+## Current-head lifecycle disposition (2026-10-25)
+
+The API contract examples do not declare a separate organization activation endpoint. Phase 4 §7 requires organization, initial owner membership, policy profile and default branch/configuration to be created atomically and says an organization without a valid owner must not be visible as a normal tenant unless an explicit provisioning subsystem is designed. Current `provision_organization` persists the organization as `ACTIVE` in the same transaction as its owner membership and default branch. Accordingly, the dead activation HTTP route was removed rather than changed to unconditional success. This resolves the declared-route gap; it does not claim coverage of all domain lifecycle transitions in the mandatory matrix. The API boundary test passed locally on `4858341`; exact-head Rust, Integration, Security and Policy results for documentation head `0f70426` are still running at the time of this update.
+
 ## Required closure
 
 - Stage 06 must independently inspect this mapping against every public mutation branch, schema and payload validator. It must not use this matrix as proof without source/test verification.
-- Organization activation cannot be served until a real `PROVISIONING` persistence path exists. Either add that path with its own contract and tests, or remove the route from the inventory; do not re-open the closed handler.
+- Organization activation has been removed from the active HTTP surface. The domain lifecycle and other mandatory mutations still require the complete independent source and PostgreSQL matrix review.
 - Role/scope, invitation and most lifecycle commands still have no live request route. Adding one requires an owner-approved request contract and an authenticated wrapper.
 - Require the durable repository/evidence path in production composition; the API bootstrap currently does so, and the worker composition must be checked separately.
 - Preserve fault-injection, race and retry tests on the exact candidate SHA. Existing passing cases cover specific commands and do not prove production routing or absent cases.

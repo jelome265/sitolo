@@ -12,9 +12,9 @@ PR #49 is the active implementation PR for that work. It remains open and is not
 
 ### PR #49 latest implementation checkpoint
 
-The latest implementation candidate is `e48b12a5995b4d79aca86a7443b014144d893164` on `feat/phase4-pr009-audit-outbox`. Rust, Integration, Policy and Security workflows pass on that exact source SHA. The branch includes a fail-closed disposable-database target guard and complete secret-free optional-field fingerprint encoding (format version 2).
+The latest implementation source is `4858341fcd16459aad10494d8b75ddb684859861` on `feat/phase4-pr009-audit-outbox`. Rust, Integration, Policy and Security workflows pass on exact documentation head `0f70426ffc384b5f5ae69e3578b672a5777f0eda`, which includes that source. The branch includes fail-closed disposable-database target validation, versioned secret-free configuration fingerprint encoding, strict lint/CI policy enforcement, shared testkit tenancy fixtures, and removal of the unavailable organization activation route.
 
-PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/identity evidence, organization lifecycle disposition, testkit and CI policy reconciliation, independent Stage 06 review, and human review remain open. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) for current evidence and blockers.
+PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/Phase 3 identity evidence, administrator branch-protection evidence, independent Stage 06 review, and human review remain open. The organization activation route was removed from the active API surface because no persisted provisioning transition exists; shared testkit fixtures and automated lint/CI policy enforcement are implemented. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) and the [Phase 1–4 requirements matrix](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-requirements-matrix-2026-10-25.md).
 
 ## PR #52
 

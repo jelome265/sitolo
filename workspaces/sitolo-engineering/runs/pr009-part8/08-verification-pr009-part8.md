@@ -1,5 +1,23 @@
 # Stage 08 Verification — PR-009 Part 8
 
+## Current remediation verification addendum — 2026-10-25
+
+Implementation source: `4858341fcd16459aad10494d8b75ddb684859861`. Exact documentation head: `0f70426ffc384b5f5ae69e3578b672a5777f0eda` (contains the implementation source and System Map updates).
+
+| Verification | Result |
+|---|---|
+| `cargo test -p sitolo-testkit --locked` | PASS, 2 tests |
+| `cargo test -p sitolo-tenancy --locked` | PASS, 8 tests |
+| `cargo test -p sitolo-application --test tenancy_service --locked` | PASS, 11 tests |
+| `cargo test -p sitolo-api-bin --test axum_boundary --locked` | PASS, 3 tests including removed organization activation path 404 and protected route denial coverage |
+| `cargo fmt --all -- --check`; strict package Clippy; crate boundaries; architecture; doc references; System Map process check; ICM cold walk | PASS |
+| Rust workflow | PASS — [40178438974](https://github.com/jelome265/sitolo/actions/runs/40178438974) |
+| Integration workflow, including PostgreSQL application/contract tests | PASS — [40178438961](https://github.com/jelome265/sitolo/actions/runs/40178438961) |
+| Security workflow, including CodeQL and offensive PostgreSQL regression | PASS — [40178438971](https://github.com/jelome265/sitolo/actions/runs/40178438971) |
+| Policy workflow | PASS — [40178439059](https://github.com/jelome265/sitolo/actions/runs/40178439059) |
+
+The local checks do not replace the PostgreSQL CI suites; no local PostgreSQL was started. These are implementation and verification results, not independent Stage 06 approval. The next documentation commit must receive its own exact-head checks.
+
 **Date:** 2026-10-21  
 **Implementation head:** `862775c5412b4928df3dfac93580cf8b1863aae1`
 **Disposition:** Advisory remediation verified and exact-head CI green. PR #49 remains open and unmerged because worker relay delivery, authenticated API authority, and production runtime composition are unresolved.

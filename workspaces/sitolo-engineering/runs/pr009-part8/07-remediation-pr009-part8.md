@@ -1,5 +1,11 @@
 # Stage 07 Remediation — PR-009 Part 8
 
+## Current remediation addendum — 2026-10-25
+
+- R-07: replaced the empty testkit scaffold with reusable validated tenancy identifiers and active organization/branch/membership fixtures; tenancy-domain and application tests consume them; dependency edges are test-only and boundary-checked. Exact-head CI passed on `468186c`.
+- R-05: removed the organization activation route from the active API inventory because organization provisioning atomically persists an `ACTIVE` tenant with its owner and default branch and no persisted provisioning state exists. The API contract and System Map now describe the route disposition; the Axum boundary test verifies 404 and all five remaining protected routes have missing-credential coverage. Exact-head CI passed on documentation head `0f70426`.
+- No independent Stage 06 result or human review is claimed. Consumer business effect and production migration/release decisions remain unresolved; see the Phase 1–4 requirements matrix.
+
 **Input:** `06-audit-pr009-part8.md`
 **Decision:** Apply the safe correction available within this slice; retain unresolved findings and require re-audit.
 

@@ -3,7 +3,7 @@ artifact_type: remediation-execution-report
 status: partial-blocked
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "468186cad7a2ccb2abe8f3305e841ac3f81cd7bd"
+source_head: "4858341fcd16459aad10494d8b75ddb684859861"
 date: "2026-10-25"
 ---
 
@@ -13,7 +13,7 @@ date: "2026-10-25"
 
 Partial implementation completed on the requested feature branch. PR #49 remains open and **not ready for merge or Phase 4 closure**. This report records the bounded remediations implemented in this pass; it does not supersede the historical deep audit or claim that all Phase 1–4 requirements are complete.
 
-The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. The implementation commits are `289ae0c`, `e48b12a`, `ef0e97b`, and `468186c`; this report is updated for the R-07 implementation at `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`.
+The branch was at `a378beec2bc5097bb642825d2e8fcf4c967c105d` before the requested pull. `git pull --ff-only` advanced it to `6662076dcdb911e8ca0d783f8e3fc3ec089f1f28`. Implementation commits include `289ae0c`, `e48b12a`, `ef0e97b`, `468186c`, and lifecycle route disposition `4858341`.
 
 ## Completed remediations
 
@@ -29,6 +29,10 @@ The fingerprint previously encoded absent optional fields as the literal `<none>
 ### R-07 / F-06 — shared tenancy test fixtures
 
 Implemented domain-validated identifier helpers and legal active organization, branch, and membership fixtures in `sitolo-testkit`. Tenancy domain and application service tests now consume these shared fixtures. The crate is a dev-only dependency, and the crate-boundary checker rejects normal dependency edges to it. PostgreSQL transaction, RLS, and audit/outbox behavior continue to use real PostgreSQL fixtures; this testkit does not simulate persistence.
+
+### R-05 / F-03 — remove the unavailable organization activation endpoint
+
+The API contract examples do not declare a separate organization activation route. Phase 4 §7 requires organization, owner membership, policy profile and default branch/configuration to be created atomically and says an organization without a valid owner must not be visible as a normal tenant unless an explicit provisioning subsystem is designed. Current provisioning commits an `ACTIVE` organization with owner membership and default branch; there is no persisted `PROVISIONING` organization for the old route to activate. The route was removed from the active inventory and API surface, with the API contract documenting the atomic onboarding path. The Axum boundary test asserts the removed path returns 404 and the five active protected routes remain covered by missing-credential denial tests. This does not claim that other domain lifecycle transitions are fully covered.
 
 ## Evidence
 
@@ -81,6 +85,8 @@ R-07 local checks on `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`:
 | Policy | PASS | [40177758949](https://github.com/jelome265/sitolo/actions/runs/40177758949) |
 
 These exact-head results apply to `468186c`; the subsequent report commit requires a fresh set of exact-head status checks.
+
+Lifecycle implementation source `4858341` is included in exact documentation head `0f70426ffc384b5f5ae69e3578b672a5777f0eda`. Rust [40178438974](https://github.com/jelome265/sitolo/actions/runs/40178438974), Integration [40178438961](https://github.com/jelome265/sitolo/actions/runs/40178438961), Security [40178438971](https://github.com/jelome265/sitolo/actions/runs/40178438971), and Policy [40178439059](https://github.com/jelome265/sitolo/actions/runs/40178439059) all passed on that exact head. Later report-only commits still require their own exact-head checks.
 ## Remaining findings and blockers
 
 The following are still open from the cross-phase audit and remediation plan:
@@ -88,13 +94,12 @@ The following are still open from the cross-phase audit and remediation plan:
 - **F-01 / R-02, P0:** no approved concrete business effect, production consumer composition, queue/resource identities, inbox/effect transaction proof, acknowledgement-after-commit, retry/order/DLQ evidence, or approved AWS test environment. Do not wire a no-op or invent the business effect or AWS identifiers. Required action: domain owner and infrastructure/security reviewer approve the exact effect and deployment contract.
 - **F-02 / R-03, P0:** no accountable production migration owner or canonical immutable migration/release artifact. Required action: database/platform owner selects and approves the source, owner, role split, release and recovery contract.
 - **F-04 / R-04, P0/P1:** the complete mandatory Phase 4 mutation matrix is not yet supported by source-traced, exact-head PostgreSQL success/denial/rollback/replay/concurrency evidence.
-- **F-03 / R-05, P1:** organization activation is fail-closed; a product/domain owner must approve persisted lifecycle semantics or explicitly defer/remove the route from the declared API contract.
 - **R-06:** Phase 3 production login/session/refresh/MFA/device lifecycle evidence remains incomplete against its full contract.
 - **F-06 / R-07:** shared validated tenancy fixtures are implemented and consumed by domain and application tests. The crate is dev-only and does not replace real PostgreSQL evidence.
 - **F-07 / F-08 / R-08:** automated lint/unsafe policy enforcement and the stale scope-exception reconciliation are implemented. Branch-protection evidence remains outstanding; settings require a repository administrator and prior API access returned 403.
 - **F-10:** the independent Stage 06 audit and human review must evaluate the final implementation head. This supplemental report is not independent approval.
 
-No P0/P1 finding is waived by this work. PR #49 is not technically ready for independent closure review until the source-level blockers above have the required implementation/evidence; the final changes are ready for an independent audit of this bounded patch once its exact-head workflows finish.
+No P0/P1 finding is waived by this work. PR #49 is not ready to merge or close Phase 4. The bounded changes are ready for an independent review, with the remaining findings and unavailable branch-protection evidence clearly identified.
 
 ## Git and preservation
 

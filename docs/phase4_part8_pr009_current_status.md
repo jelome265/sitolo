@@ -1,11 +1,11 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** NOT READY FOR MERGE — the known RLS metadata failure is fixed; this branch still has unresolved Phase 1–4 release blockers and independent Stage 06 review is outstanding.
+**Status:** NOT READY FOR MERGE — current exact-head Rust, Integration, Security and Policy checks pass; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Latest implementation candidate:** `e48b12a5995b4d79aca86a7443b014144d893164`
-**Latest exact-head workflows:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40174232907), [Integration](https://github.com/jelome265/sitolo/actions/runs/40174232901), [Policy](https://github.com/jelome265/sitolo/actions/runs/40174232875), and [Security](https://github.com/jelome265/sitolo/actions/runs/40174232895) all pass on `e48b12a5995b4d79aca86a7443b014144d893164`.
-**Latest remediation:** commits `289ae0c` (database target guards) and `e48b12a` (optional fingerprint encoding).
+**Latest implementation source:** `4858341fcd16459aad10494d8b75ddb684859861` (shared testkit fixtures are in `468186c`; organization activation route disposition is in `4858341`).
+**Latest exact-head verification:** documentation head `0f70426ffc384b5f5ae69e3578b672a5777f0eda` includes that implementation source. [Rust](https://github.com/jelome265/sitolo/actions/runs/40178438974), [Integration](https://github.com/jelome265/sitolo/actions/runs/40178438961), [Security](https://github.com/jelome265/sitolo/actions/runs/40178438971), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40178439059) all pass on that exact SHA.
+**Recent remediation:** commits `289ae0c` (database target guards), `e48b12a` (optional fingerprint encoding), `ef0e97b` (lint/CI policy), `468186c` (shared testkit fixtures), and `4858341` (remove unavailable organization activation route).
 **Cross-phase evidence:** [Phase 1–4 deep audit](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-deep-audit-2026-10-25.md), [remediation plan](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-remediation-plan-2026-10-25.md), [follow-up index](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/README.md).
 **Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
@@ -16,8 +16,8 @@
 - Production consumer/effect composition, approved resource identities, inbox transaction and acknowledgement-after-commit evidence remain unresolved.
 - The canonical production migration/release owner and immutable migration artifact remain unresolved.
 - The complete mandatory mutation matrix and Phase 3 lifecycle evidence are not demonstrated.
-- Organization activation remains intentionally closed pending an approved lifecycle decision.
-- `sitolo-testkit` remains an unused scaffold; lint/CI policy gaps and actual branch-protection requirements still need closure.
+- The unavailable organization activation route was removed from the active route inventory and API surface. Organization creation atomically persists the active organization, owner and default branch; other lifecycle transitions remain part of the incomplete mutation matrix.
+- `sitolo-testkit` now supplies validated tenancy fixtures consumed by tenancy and application test targets and is enforced as dev-only. Automated lint/CI policy checks pass; actual branch-protection settings remain unverified because GitHub API access returned 403.
 - An independent Stage 06 audit and human review are still required. PR #49 remains open and unmerged.
 
 The detailed earlier records below are historical checkpoints; their run results and failure descriptions do not describe the latest implementation candidate.
