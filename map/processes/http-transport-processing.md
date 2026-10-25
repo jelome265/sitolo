@@ -2,9 +2,9 @@
 type: process
 status: verified
 universe: live
-source_revision: feat/phase4-pr009-audit-outbox@9aeed46280a1ce3921cd3284281e3c92276686aa
+source_revision: feat/phase4-pr009-audit-outbox@98d49304c8318f708e79019d79449fe33f0069d3
 source: apps/api/src/serve.rs; apps/api/src/state.rs; apps/api/src/bootstrap.rs
-source_citation: apps/api/src/serve.rs:68-200,279-427; apps/api/src/state.rs:53-133; apps/api/src/bootstrap.rs:128-275
+source_citation: apps/api/src/serve.rs:157-179,183-245,252-315,317-366,378-540; apps/api/src/state.rs:23-53,55-130; apps/api/src/bootstrap.rs:169-198,345-428
 ---
 
 # HTTP Transport Processing
@@ -15,12 +15,12 @@ Accepted TCP connection and the immutable runtime state assembled by process boo
 
 ## Movement
 
-1. Build the live Axum router only after the process bootstrap has constructed the runtime state; route registration is checked against the reviewed route inventory. (apps/api/src/main.rs; apps/api/src/serve.rs:143-200)
-2. Apply per-route and global body limits, request deadlines, a concurrency cap, and load shedding. (apps/api/src/serve.rs:143-216)
-3. Expose public liveness and readiness probes; production readiness is published only after managed credentials, the verified database runtime, OIDC provider, persistent identity authority, and durable tenancy service have been composed. (apps/api/src/serve.rs:279-297; apps/api/src/bootstrap.rs:128-275)
-4. Authenticate protected requests using bearer credentials and the `session-id` selector before JSON extraction. The organization-create body rejects caller-supplied authority fields and derives its owner from the verified principal; the PostgreSQL command writes organization, owner membership, branch, audit, and outbox together. (apps/api/src/serve.rs:299-393; crates/sitolo-application/src/tenancy.rs:1451-1558)
-5. For branch creation, resolve persisted membership, role permission, and scope under the organization mutation lock before committing the branch and its audit/outbox evidence. Other protected routes remain closed until their commands are composed. (apps/api/src/serve.rs:395-427; crates/sitolo-application/src/tenancy.rs:1708-1798)
-6. Drain Axum serving under the configured process deadline; process entry awaits and classifies the server result. (apps/api/src/serve.rs:218-243; apps/api/src/main.rs)
+1. Build the live Axum router only after the process bootstrap has constructed the runtime state; route registration is checked against the reviewed route inventory. (apps/api/src/main.rs; apps/api/src/serve.rs:157-179,272-315)
+2. Apply per-route and global body limits, request deadlines, a concurrency cap, and load shedding. (apps/api/src/serve.rs:168-178,218-245)
+3. Expose public liveness and readiness probes; production readiness is published only after managed credentials, the verified database runtime, OIDC provider, persistent identity authority, and durable tenancy service have been composed. (apps/api/src/serve.rs:317-335; apps/api/src/bootstrap.rs:169-198,354-428)
+4. Authenticate protected requests using bearer credentials and the `session-id` selector before JSON extraction. The organization-create body rejects caller-supplied authority fields and derives its owner from the verified principal; the PostgreSQL command writes organization, owner membership, branch, audit, and outbox together. (apps/api/src/serve.rs:337-354,378-431; crates/sitolo-application/src/tenancy.rs:1053-1162)
+5. For branch creation, branch activation, member suspension, and member revocation, resolve persisted membership, role permission, and scope under the organization mutation lock before committing the state change and its audit/outbox evidence. (apps/api/src/serve.rs:433-540; crates/sitolo-application/src/tenancy.rs:1240-1402,1568-1714)
+6. Drain Axum serving under the configured process deadline; process entry awaits and classifies the server result. (apps/api/src/serve.rs:247-270; apps/api/src/main.rs)
 
 ## Output
 
@@ -46,7 +46,7 @@ Administrative database provisioning, migration execution, worker relay or consu
 
 ## Verification
 
-Source-verified against candidate `a1d29ae692f6ff5c59e48ef7135f514ae979b222`. Database-backed HTTP authorization and provisioning tests are executed only in the PostgreSQL-enabled GitHub Actions workflow; local compilation is not database evidence. Other lifecycle mutation routes remain closed, so this card does not claim the complete R2 route matrix.
+Source-verified against branch commit `98d49304c8318f708e79019d79449fe33f0069d3`. Database-backed HTTP authorization and provisioning tests are executed only in the PostgreSQL-enabled GitHub Actions workflow; local compilation is not database evidence. The declared route inventory is fully wired to authenticated handlers, but the database-backed proof for those commands remains CI-only.
 
 ## See
 
