@@ -3,7 +3,7 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "7f42a5b674565940220321df452750b5b391da7c"
+candidate_head: "d53e05297963b5457d44006e236522c4a179d257"
 date: "2026-10-25"
 ---
 
@@ -11,9 +11,9 @@ date: "2026-10-25"
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
 
-## Current implementation checkpoint — source `4858341`, verified head `7f42a5b`
+## Current implementation checkpoint — source `4858341`, verified head `d53e052`
 
-The [remediation execution report](phase1-4-remediation-execution-2026-10-25.md) records the database target guards, fingerprint fix, lint/CI policy, shared testkit fixtures and removal of the unavailable organization activation endpoint. The [Phase 1–4 requirements matrix](phase1-4-requirements-matrix-2026-10-25.md) distinguishes implemented evidence from remaining owner and review blockers. Rust [40178969716](https://github.com/jelome265/sitolo/actions/runs/40178969716), Integration [40178969708](https://github.com/jelome265/sitolo/actions/runs/40178969708), Security [40178969701](https://github.com/jelome265/sitolo/actions/runs/40178969701) and Policy [40178969742](https://github.com/jelome265/sitolo/actions/runs/40178969742) passed on exact head `7f42a5b`.
+The [remediation execution report](phase1-4-remediation-execution-2026-10-25.md) records the database target guards, fingerprint fix, lint/CI policy, shared testkit fixtures and removal of the unavailable organization activation endpoint. The [Phase 1–4 requirements matrix](phase1-4-requirements-matrix-2026-10-25.md) distinguishes implemented evidence from remaining owner and review blockers. Rust [40179488202](https://github.com/jelome265/sitolo/actions/runs/40179488202), Integration [40179488191](https://github.com/jelome265/sitolo/actions/runs/40179488191), Security [40179488204](https://github.com/jelome265/sitolo/actions/runs/40179488204) and Policy [40179488198](https://github.com/jelome265/sitolo/actions/runs/40179488198) passed on exact head `d53e052`.
 
 ## Later implementation checkpoint — `e48b12a`
 

@@ -16,16 +16,16 @@ Implementation source: `4858341fcd16459aad10494d8b75ddb684859861`. Exact documen
 | Security workflow, including CodeQL and offensive PostgreSQL regression | PASS — [40178438971](https://github.com/jelome265/sitolo/actions/runs/40178438971) |
 | Policy workflow | PASS — [40178439059](https://github.com/jelome265/sitolo/actions/runs/40178439059) |
 
-The local checks do not replace the PostgreSQL CI suites; no local PostgreSQL was started. These are implementation and verification results, not independent Stage 06 approval. The exact `7f42a5b` documentation head passed all four workflows; any later commit must receive its own exact-head checks.
+The local checks do not replace the PostgreSQL CI suites; no local PostgreSQL was started. These are implementation and verification results, not independent Stage 06 approval. Exact documentation head `d53e052` passed all four workflows; any later commit must receive its own exact-head checks.
 
-Exact documentation head `7f42a5b674565940220321df452750b5b391da7c`:
+Exact documentation head `d53e05297963b5457d44006e236522c4a179d257`:
 
 | Workflow | Result | Run |
 |---|---|---|
-| Rust | PASS | [40178969716](https://github.com/jelome265/sitolo/actions/runs/40178969716) |
-| Integration | PASS, PostgreSQL application/contract tests | [40178969708](https://github.com/jelome265/sitolo/actions/runs/40178969708) |
-| Security | PASS, including CodeQL and offensive regression | [40178969701](https://github.com/jelome265/sitolo/actions/runs/40178969701) |
-| Policy | PASS | [40178969742](https://github.com/jelome265/sitolo/actions/runs/40178969742) |
+| Rust | PASS | [40179488202](https://github.com/jelome265/sitolo/actions/runs/40179488202) |
+| Integration | PASS, PostgreSQL application/contract tests | [40179488191](https://github.com/jelome265/sitolo/actions/runs/40179488191) |
+| Security | PASS, including CodeQL and offensive regression | [40179488204](https://github.com/jelome265/sitolo/actions/runs/40179488204) |
+| Policy | PASS | [40179488198](https://github.com/jelome265/sitolo/actions/runs/40179488198) |
 
 **Date:** 2026-10-21  
 **Implementation head:** `862775c5412b4928df3dfac93580cf8b1863aae1`

@@ -4,7 +4,7 @@ status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
 implementation_source: "4858341fcd16459aad10494d8b75ddb684859861"
-verification_head: "7f42a5b674565940220321df452750b5b391da7c"
+verification_head: "d53e05297963b5457d44006e236522c4a179d257"
 date: "2026-10-25"
 ---
 
@@ -29,7 +29,7 @@ This is a source and evidence index, not an independent audit or closure approva
 ## Evidence and limits
 
 - R-07 testkit exact-head CI at `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`: Rust [40177758892](https://github.com/jelome265/sitolo/actions/runs/40177758892), Integration [40177758874](https://github.com/jelome265/sitolo/actions/runs/40177758874), Security [40177758868](https://github.com/jelome265/sitolo/actions/runs/40177758868), Policy [40177758949](https://github.com/jelome265/sitolo/actions/runs/40177758949), all pass.
-- The lifecycle boundary test and local checks passed on implementation commit `4858341`. Rust [40178969716](https://github.com/jelome265/sitolo/actions/runs/40178969716), Integration [40178969708](https://github.com/jelome265/sitolo/actions/runs/40178969708), Security [40178969701](https://github.com/jelome265/sitolo/actions/runs/40178969701), and Policy [40178969742](https://github.com/jelome265/sitolo/actions/runs/40178969742) all passed on exact documentation head `7f42a5b674565940220321df452750b5b391da7c`.
+- The lifecycle boundary test and local checks passed on implementation commit `4858341`. Rust [40179488202](https://github.com/jelome265/sitolo/actions/runs/40179488202), Integration [40179488191](https://github.com/jelome265/sitolo/actions/runs/40179488191), Security [40179488204](https://github.com/jelome265/sitolo/actions/runs/40179488204), and Policy [40179488198](https://github.com/jelome265/sitolo/actions/runs/40179488198) all passed on exact documentation head `d53e05297963b5457d44006e236522c4a179d257`.
 - The historical mutation matrix remains a source/test index; a passing test count alone does not establish every acceptance condition.
 - Independent Stage 06 and human review are required to close PR #49. Current branch-protection settings remain unverified because the repository API returned 403.
 

@@ -87,6 +87,8 @@ R-07 local checks on `468186cad7a2ccb2abe8f3305e841ac3f81cd7bd`:
 These exact-head results apply to `468186c`; the subsequent report commit requires a fresh set of exact-head status checks.
 
 Lifecycle implementation source `4858341` is included in exact documentation head `0f70426ffc384b5f5ae69e3578b672a5777f0eda`. Rust [40178438974](https://github.com/jelome265/sitolo/actions/runs/40178438974), Integration [40178438961](https://github.com/jelome265/sitolo/actions/runs/40178438961), Security [40178438971](https://github.com/jelome265/sitolo/actions/runs/40178438971), and Policy [40178439059](https://github.com/jelome265/sitolo/actions/runs/40178439059) all passed on that exact head. Later report-only commits still require their own exact-head checks.
+
+The Phase 3 and current-status report additions are included in exact documentation head `d53e05297963b5457d44006e236522c4a179d257`. Rust [40179488202](https://github.com/jelome265/sitolo/actions/runs/40179488202), Integration [40179488191](https://github.com/jelome265/sitolo/actions/runs/40179488191), Security [40179488204](https://github.com/jelome265/sitolo/actions/runs/40179488204), and Policy [40179488198](https://github.com/jelome265/sitolo/actions/runs/40179488198) all passed on that exact head. Later report-only commits require fresh exact-head checks.
 ## Remaining findings and blockers
 
 The following are still open from the cross-phase audit and remediation plan:

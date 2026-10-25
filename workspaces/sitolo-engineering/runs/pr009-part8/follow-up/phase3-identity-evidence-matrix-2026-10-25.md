@@ -3,7 +3,7 @@ artifact_type: phase3-identity-evidence-matrix
 status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "7f42a5b674565940220321df452750b5b391da7c"
+source_head: "d53e05297963b5457d44006e236522c4a179d257"
 date: "2026-10-25"
 ---
 
