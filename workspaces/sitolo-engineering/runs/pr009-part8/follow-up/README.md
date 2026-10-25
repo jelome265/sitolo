@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "1743f3a198605e1e50a30776a3366d2e9e9a36f5"
+candidate_head: "15147ef45126917ad4184ca1326282db6631078a"
 date: "2026-10-25"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `15147ef`
+
+Replaced the PostgreSQL integration suite's fake evidence-failure unit-of-work wrappers with the real `PgTenancyUnitOfWork` plus disposable-schema triggers that reject actual audit or outbox inserts. The existing rollback cases assert state and evidence rollback. Local formatting, strict focused Clippy and integration-target compilation pass. Exact-head Rust [40195430303](https://github.com/jelome265/sitolo/actions/runs/40195430303), Integration [40195430299](https://github.com/jelome265/sitolo/actions/runs/40195430299), Security [40195430302](https://github.com/jelome265/sitolo/actions/runs/40195430302), and Policy [40195430306](https://github.com/jelome265/sitolo/actions/runs/40195430306) all pass; CodeQL [121176342832](https://github.com/jelome265/sitolo/runs/121176342832) passes. This closes only the database-trigger failure-injection gap; the full mutation matrix remains partial, and PR #49 remains open and review-required.
 
 ## Current implementation checkpoint — `1743f3a`
 

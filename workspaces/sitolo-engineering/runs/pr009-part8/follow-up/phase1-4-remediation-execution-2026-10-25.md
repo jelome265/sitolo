@@ -3,7 +3,7 @@ artifact_type: remediation-execution-report
 status: partial-blocked
 run_slug: "pr009-part8"
 security_relevant: yes
-source_head: "1743f3a198605e1e50a30776a3366d2e9e9a36f5"
+source_head: "15147ef45126917ad4184ca1326282db6631078a"
 date: "2026-10-25"
 ---
 
@@ -140,6 +140,14 @@ The fingerprint tests now exhaustively destructure every `AppConfig` field. Addi
 Local evidence on `1743f3a198605e1e50a30776a3366d2e9e9a36f5`: `cargo fmt --all -- --check`, `cargo test -p sitolo-config --locked` (28 tests), `cargo clippy -p sitolo-config --all-targets --all-features --locked -- -D warnings`, and `git diff --check` passed.
 
 Exact-head GitHub Actions for `1743f3a198605e1e50a30776a3366d2e9e9a36f5`: Rust [40193380363](https://github.com/jelome265/sitolo/actions/runs/40193380363), Integration [40193380330](https://github.com/jelome265/sitolo/actions/runs/40193380330), Security [40193380381](https://github.com/jelome265/sitolo/actions/runs/40193380381), and Policy [40193380574](https://github.com/jelome265/sitolo/actions/runs/40193380574) all passed; CodeQL [121169950121](https://github.com/jelome265/sitolo/runs/121169950121) passed. The branch remains not ready to merge; the unresolved blockers listed below are unchanged.
+
+### R-04 extension — real PostgreSQL evidence-write failure injection (commit `15147ef`)
+
+Removed `FailingUnitOfWork` and `FailingTransaction` from the PostgreSQL application integration suite. All existing evidence-failure cases now compose the production `PgTenancyUnitOfWork` with the real `app_runtime` role. Per-test isolated schemas define audit and outbox `BEFORE INSERT` triggers. Dedicated runtime pools identify audit-failure and outbox-failure cases through their PostgreSQL `application_name`; trigger exceptions occur inside the actual transaction. The existing cases assert that business state and any earlier evidence writes are absent after failure. This strengthens rollback proof for the covered mutations but does not complete the entire mutation matrix or independently verify route, authorization, replay and concurrency requirements.
+
+Local evidence on `15147ef45126917ad4184ca1326282db6631078a`: `cargo fmt --all -- --check`, `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked`, `cargo clippy -p sitolo-application --test membership_transaction_integration --all-features --locked -- -D warnings`, and `git diff --check` passed. The PostgreSQL integration target was not run locally.
+
+Exact-head GitHub Actions for `15147ef45126917ad4184ca1326282db6631078a`: Rust [40195430303](https://github.com/jelome265/sitolo/actions/runs/40195430303), Integration [40195430299](https://github.com/jelome265/sitolo/actions/runs/40195430299), Security [40195430302](https://github.com/jelome265/sitolo/actions/runs/40195430302), and Policy [40195430306](https://github.com/jelome265/sitolo/actions/runs/40195430306) all passed; CodeQL [121176342832](https://github.com/jelome265/sitolo/runs/121176342832) passed. Integration executed these tests in the approved disposable PostgreSQL service.
 
 ## Remaining findings and blockers
 
