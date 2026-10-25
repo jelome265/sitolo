@@ -3,7 +3,6 @@
 use sqlx_postgres::PgConnectOptions;
 
 /// Parsed, allowlisted targets for disposable PostgreSQL integration tests.
-#[derive(Debug)]
 pub struct DisposableTargets {
     /// Privileged test-only schema bootstrap target.
     pub admin: PgConnectOptions,
@@ -11,6 +10,17 @@ pub struct DisposableTargets {
     pub runtime: PgConnectOptions,
     /// Background worker target.
     pub worker: PgConnectOptions,
+}
+
+impl std::fmt::Debug for DisposableTargets {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DisposableTargets")
+            .field("admin", &"<validated disposable target>")
+            .field("runtime", &"<validated disposable target>")
+            .field("worker", &"<validated disposable target>")
+            .finish()
+    }
 }
 
 /// Validate all three DSNs before opening a connection or executing DDL.
@@ -195,6 +205,22 @@ mod tests {
         assert!(parse_disposable_targets("true", "", RUNTIME, WORKER).is_err());
         assert!(parse_disposable_targets("true", ADMIN, "", WORKER).is_err());
         assert!(parse_disposable_targets("true", ADMIN, RUNTIME, "").is_err());
+    }
+
+    #[test]
+    fn debug_output_redacts_database_passwords() -> Result<(), Box<dyn std::error::Error>> {
+        let targets = parse_disposable_targets(
+            "true",
+            "postgres://postgres:admin-secret@127.0.0.1:5432/sitolo_test",
+            "postgres://app_runtime:runtime-secret@127.0.0.1:5432/sitolo_test",
+            "postgres://app_worker:worker-secret@127.0.0.1:5432/sitolo_test",
+        )
+        .map_err(std::io::Error::other)?;
+        let debug = format!("{targets:?}");
+        assert!(!debug.contains("admin-secret"));
+        assert!(!debug.contains("runtime-secret"));
+        assert!(!debug.contains("worker-secret"));
+        Ok(())
     }
 
     #[test]
