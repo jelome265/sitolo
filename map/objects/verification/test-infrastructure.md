@@ -4,7 +4,7 @@ status: implemented
 universe: source
 cluster: verification
 source_revision: feat/phase4-pr009-audit-outbox@d8032eff0422edb9447239ccc13f403f285c00db
-source: crates/sitolo-testkit/src/lib.rs; crates/sitolo-testkit/src/postgres.rs; apps/api/tests/tenancy_api.rs; crates/sitolo-application/tests/part8_provision_organization_evidence_tests.rs; crates/sitolo-application/tests/membership_transaction_integration.rs; crates/sitolo-persistence/tests/common/mod.rs
+source: crates/sitolo-testkit/src/lib.rs
 source_citation: crates/sitolo-testkit/src/lib.rs:13,55-90; crates/sitolo-testkit/src/postgres.rs:31-109; apps/api/tests/tenancy_api.rs:466-526; crates/sitolo-application/tests/part8_provision_organization_evidence_tests.rs:47-100; crates/sitolo-application/tests/membership_transaction_integration.rs:79-125; crates/sitolo-persistence/tests/common/mod.rs:18-56
 ---
 # Test Infrastructure
