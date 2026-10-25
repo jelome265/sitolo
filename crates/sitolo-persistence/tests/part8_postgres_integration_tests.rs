@@ -2089,6 +2089,24 @@ async fn test_consumer_inbox_rolls_back_and_deduplicates_identical_events()
             payload,
         };
 
+        // A sequence gap represents an earlier event that is still pending or
+        // was quarantined. The consumer must leave this message uncommitted so
+        // the aggregate cannot overtake that earlier event.
+        let later_record = ConsumerInboxRecord {
+            event_id: "evt-inbox-2",
+            aggregate_sequence: 2,
+            ..record
+        };
+        let mut out_of_order = ctx.worker_pool.begin().await?;
+        let out_of_order_result = inbox
+            .begin_processing(&mut out_of_order, later_record)
+            .await;
+        assert!(
+            out_of_order_result.is_err(),
+            "a later aggregate sequence must wait for its predecessor"
+        );
+        out_of_order.rollback().await?;
+
         let mut rolled_back = ctx.worker_pool.begin().await?;
         assert!(inbox.begin_processing(&mut rolled_back, record).await?);
         rolled_back.rollback().await?;
@@ -2104,6 +2122,10 @@ async fn test_consumer_inbox_rolls_back_and_deduplicates_identical_events()
         let mut first_delivery = ctx.worker_pool.begin().await?;
         assert!(inbox.begin_processing(&mut first_delivery, record).await?);
         first_delivery.commit().await?;
+
+        let mut now_in_order = ctx.worker_pool.begin().await?;
+        assert!(inbox.begin_processing(&mut now_in_order, later_record).await?);
+        now_in_order.commit().await?;
 
         let mut duplicate = ctx.worker_pool.begin().await?;
         assert!(!inbox.begin_processing(&mut duplicate, record).await?);
