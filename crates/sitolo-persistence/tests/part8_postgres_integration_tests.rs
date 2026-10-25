@@ -212,49 +212,15 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     let ctx = setup_test_context().await?;
     let result = async {
-        let now = chrono::Utc::now();
-        query("INSERT INTO identity_users (id, security_version, suspended) VALUES ($1, 1, FALSE), ($2, 1, FALSE)")
-            .bind("user-auth-1")
-            .bind("user-auth-2")
-            .execute(&ctx.admin_pool)
-            .await?;
-        query("INSERT INTO external_identities (issuer, subject, user_id) VALUES ($1, $2, $3)")
-            .bind("https://issuer.example/tenant")
-            .bind("subject-auth-1")
-            .bind("user-auth-1")
-            .execute(&ctx.admin_pool)
-            .await?;
-        query(
-            "INSERT INTO identity_sessions (
-                 id, user_id, session_class, state, created_at, authenticated_at,
-                 last_seen_at, idle_expires_at, absolute_expires_at, idle_timeout_seconds,
-                 assurance, authentication_method, security_version
-             ) VALUES (
-                 $1, $2, 'merchant', 'active', $3, $3, $3,
-                 $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
-                 'a1', 'oidc', 1
-             ), (
-                 $4, $5, 'merchant', 'active', $3, $3, $3,
-                 $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
-                 'a1', 'oidc', 1
-             )",
-        )
-        .bind("session-auth-1")
-        .bind("user-auth-1")
-        .bind(now)
-        .bind("session-auth-2")
-        .bind("user-auth-2")
-        .execute(&ctx.admin_pool)
-        .await?;
+        seed_identity_authority_fixtures(&ctx).await?;
 
-        let authority = PgRequestIdentityAuthority::new(
-            ctx.runtime_pool.clone(),
-            ctx.schema_name.clone(),
-        )?;
+        let authority =
+            PgRequestIdentityAuthority::new(ctx.runtime_pool.clone(), ctx.schema_name.clone())?;
         let direct_read = query("SELECT id FROM identity_users")
             .fetch_all(&ctx.runtime_pool)
             .await
-            .err().ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
+            .err()
+            .ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
         assert_eq!(sqlstate(&direct_read)?, "42501");
 
         let worker_mapping_call = query(sqlx_core::sql_str::AssertSqlSafe(format!(
@@ -265,7 +231,8 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
         .bind("subject-auth-1")
         .fetch_optional(&ctx.worker_pool)
         .await
-        .err().ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
+        .err()
+        .ok_or_else(|| std::io::Error::other("expected a database permission error"))?;
         assert_eq!(sqlstate(&worker_mapping_call)?, "42501");
 
         let mapped = authority
@@ -276,6 +243,10 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
             .resolve_external_identity("https://issuer.example/tenant", "unknown")
             .await?;
         assert_eq!(unknown, None);
+        let suspended_identity = authority
+            .resolve_external_identity("https://issuer.example/tenant", "subject-auth-suspended")
+            .await?;
+        assert_eq!(suspended_identity, None);
 
         let accepted = authority
             .accept_session_for_user(
@@ -285,7 +256,9 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
             )
             .await?;
         assert_eq!(accepted.session.user_id, UserId::new("user-auth-1")?);
-        assert!(accepted.session.last_seen_at >= std::time::SystemTime::now() - Duration::from_secs(10));
+        assert!(
+            accepted.session.last_seen_at >= std::time::SystemTime::now() - Duration::from_secs(10)
+        );
 
         let cross_user = authority
             .accept_session_for_user(
@@ -294,12 +267,93 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
                 std::time::SystemTime::now(),
             )
             .await;
-        assert!(matches!(cross_user, Err(sitolo_auth::AuthError::AuthenticationFailed)));
+        assert!(matches!(
+            cross_user,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+
+        let suspended_session = authority
+            .accept_session_for_user(
+                &SessionId::new("session-auth-suspended")?,
+                &UserId::new("user-auth-suspended")?,
+                std::time::SystemTime::now(),
+            )
+            .await;
+        assert!(matches!(
+            suspended_session,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+
+        query("UPDATE identity_users SET security_version = 2 WHERE id = $1")
+            .bind("user-auth-2")
+            .execute(&ctx.admin_pool)
+            .await?;
+        let invalidated_session = authority
+            .accept_session_for_user(
+                &SessionId::new("session-auth-2")?,
+                &UserId::new("user-auth-2")?,
+                std::time::SystemTime::now(),
+            )
+            .await;
+        assert!(matches!(
+            invalidated_session,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
     teardown_test_context(&ctx).await?;
     result?;
+    Ok(())
+}
+
+async fn seed_identity_authority_fixtures(
+    ctx: &TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let now = chrono::Utc::now();
+    query("INSERT INTO identity_users (id, security_version, suspended) VALUES ($1, 1, FALSE), ($2, 1, FALSE), ($3, 1, TRUE)")
+        .bind("user-auth-1")
+        .bind("user-auth-2")
+        .bind("user-auth-suspended")
+        .execute(&ctx.admin_pool)
+        .await?;
+    query("INSERT INTO external_identities (issuer, subject, user_id) VALUES ($1, $2, $3), ($4, $5, $6)")
+        .bind("https://issuer.example/tenant")
+        .bind("subject-auth-1")
+        .bind("user-auth-1")
+        .bind("https://issuer.example/tenant")
+        .bind("subject-auth-suspended")
+        .bind("user-auth-suspended")
+        .execute(&ctx.admin_pool)
+        .await?;
+    query(
+        "INSERT INTO identity_sessions (
+             id, user_id, session_class, state, created_at, authenticated_at,
+             last_seen_at, idle_expires_at, absolute_expires_at, idle_timeout_seconds,
+             assurance, authentication_method, security_version
+         ) VALUES (
+             $1, $2, 'merchant', 'active', $3, $3, $3,
+             $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
+             'a1', 'oidc', 1
+         ), (
+             $4, $5, 'merchant', 'active', $3, $3, $3,
+             $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
+             'a1', 'oidc', 1
+         ), (
+             $6, $7, 'merchant', 'active', $3, $3, $3,
+             $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
+             'a1', 'oidc', 1
+         )",
+    )
+    .bind("session-auth-1")
+    .bind("user-auth-1")
+    .bind(now)
+    .bind("session-auth-2")
+    .bind("user-auth-2")
+    .bind("session-auth-suspended")
+    .bind("user-auth-suspended")
+    .execute(&ctx.admin_pool)
+    .await?;
     Ok(())
 }
 
