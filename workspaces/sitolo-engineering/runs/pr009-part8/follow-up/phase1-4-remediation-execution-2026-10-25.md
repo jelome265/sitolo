@@ -76,6 +76,23 @@ Exact-head GitHub Actions for `18dce7e59c945cedcccf793b2e69b354b9b86e4d`:
 
 This closes the shared test-target guard gap only. It does not resolve the concrete production consumer/effect, canonical migration/release owner and artifact, full mutation evidence, Phase 3 requirements, independent Stage 06 review or human/branch-protection requirements. PR #49 remains open and not ready for merge or Phase 4 closure.
 
+### R-01 completion extension — API tenancy harness and redacted diagnostics (commit `d8032ef`)
+
+A repository-wide connection scan after the shared-guard change found one remaining real PostgreSQL integration harness at `apps/api/tests/tenancy_api.rs`. It previously opened an admin connection and created a schema before validating its DSNs. The API target now uses the shared testkit, validates all three admin/runtime/worker DSNs and its generated schema before its first connection, and is a dev-only testkit consumer. `DisposableTargets` has a custom `Debug` implementation that does not format connection options or passwords. Parser regressions cover the API schema prefix and verify password redaction.
+
+Local evidence on `d8032eff0422edb9447239ccc13f403f285c00db`: testkit tests **8 passed**; the API tenancy integration target compiled but was not executed locally; focused strict Clippy, formatting, Rust policy and crate-boundary checks passed. No local PostgreSQL server was started.
+
+Exact-head GitHub Actions on `d8032eff0422edb9447239ccc13f403f285c00db`:
+
+| Workflow | Result | Run |
+|---|---|---|
+| Rust, canonical verification and PostgreSQL suites | PASS | [40190324443](https://github.com/jelome265/sitolo/actions/runs/40190324443) |
+| Integration, PostgreSQL application/contract tests | PASS | [40190324475](https://github.com/jelome265/sitolo/actions/runs/40190324475) |
+| Security, including CodeQL and offensive regression | PASS | [40190324472](https://github.com/jelome265/sitolo/actions/runs/40190324472) |
+| Policy | PASS | [40190324477](https://github.com/jelome265/sitolo/actions/runs/40190324477) |
+
+This establishes the target-safety acceptance gate across the current repository PostgreSQL integration harnesses. It does not establish production consumer delivery, migration/release ownership, complete Phase 4 mutation evidence, Phase 3 completion, independent Stage 06 review or human approval.
+
 ### R-08 — automated policy enforcement and scope reconciliation
 
 Added `scripts/ci/check-rust-policy.py` to fail closed on workspace lint-policy drift, package lint overrides, Rust lint suppressions without reasons, unsafe production Rust, compiler lint-bypass flags, and removal/filtering of required workspace, Part 8, or RLS test commands. The canonical Unix and PowerShell verifiers run this check and require the database suites. The Policy workflow runs it directly. CI now installs exact pinned `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2 versions through one version-checking installer.
