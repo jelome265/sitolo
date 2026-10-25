@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::AppConfig;
 
 /// Changes only through an explicit fingerprint compatibility decision.
-pub const FINGERPRINT_FORMAT_VERSION: u8 = 1;
+pub const FINGERPRINT_FORMAT_VERSION: u8 = 2;
 
 /// Canonical, length-prefixed, non-secret effective configuration.
 ///
@@ -70,25 +70,17 @@ fn write_database_identity(output: &mut String, config: &AppConfig) {
 
 /// OIDC identity settings.
 fn write_identity(output: &mut String, config: &AppConfig) {
-    line(
-        output,
-        "oidc_issuer",
-        config.oidc_issuer.as_deref().unwrap_or("<none>"),
-    );
-    line(
-        output,
-        "oidc_client_id",
-        config.oidc_client_id.as_deref().unwrap_or("<none>"),
-    );
-    line(
+    optional_line(output, "oidc_issuer", config.oidc_issuer.as_deref());
+    optional_line(output, "oidc_client_id", config.oidc_client_id.as_deref());
+    optional_line(
         output,
         "oidc_token_endpoint",
-        config.oidc_token_endpoint.as_deref().unwrap_or("<none>"),
+        config.oidc_token_endpoint.as_deref(),
     );
-    line(
+    optional_line(
         output,
         "oidc_redirect_uri",
-        config.oidc_redirect_uri.as_deref().unwrap_or("<none>"),
+        config.oidc_redirect_uri.as_deref(),
     );
 }
 
@@ -99,13 +91,14 @@ fn write_secrets_and_pool(output: &mut String, config: &AppConfig) {
         "db_password_ref",
         &config.db_password_ref.to_string(),
     );
-    line(
+    optional_line(
         output,
         "worker_db_password_ref",
-        &config
+        config
             .worker_db_password_ref
             .as_ref()
-            .map_or("<none>".to_string(), ToString::to_string),
+            .map(ToString::to_string)
+            .as_deref(),
     );
     line(output, "db_pool_min", &config.db_pool_min.to_string());
     line(output, "db_pool_max", &config.db_pool_max.to_string());
@@ -118,11 +111,7 @@ fn write_secrets_and_pool(output: &mut String, config: &AppConfig) {
 
 /// Telemetry endpoint, limits, sampling, and logging posture.
 fn write_telemetry(output: &mut String, config: &AppConfig) {
-    line(
-        output,
-        "otel_endpoint",
-        config.otel_endpoint.as_deref().unwrap_or("<none>"),
-    );
+    optional_line(output, "otel_endpoint", config.otel_endpoint.as_deref());
     line(
         output,
         "otel_export_timeout_ms",
@@ -144,15 +133,15 @@ fn write_telemetry(output: &mut String, config: &AppConfig) {
 
 /// Event relay destination and the managed-secret provider region.
 fn write_relay(output: &mut String, config: &AppConfig) {
-    line(
+    optional_line(
         output,
         "relay_aws_region",
-        config.relay_aws_region.as_deref().unwrap_or("<none>"),
+        config.relay_aws_region.as_deref(),
     );
-    line(
+    optional_line(
         output,
         "relay_sns_topic_arn",
-        config.relay_sns_topic_arn.as_deref().unwrap_or("<none>"),
+        config.relay_sns_topic_arn.as_deref(),
     );
     line(
         output,
@@ -169,10 +158,10 @@ fn write_relay(output: &mut String, config: &AppConfig) {
         "relay_backoff_max_ms",
         &config.relay_backoff_max_ms.to_string(),
     );
-    line(
+    optional_line(
         output,
         "secrets_aws_region",
-        config.secrets_aws_region.as_deref().unwrap_or("<none>"),
+        config.secrets_aws_region.as_deref(),
     );
 }
 
@@ -184,6 +173,21 @@ fn line(output: &mut String, key: &str, value: &str) {
     output.push(':');
     output.push_str(value);
     output.push('\n');
+}
+
+/// Appends an optional value with a distinct presence marker.
+fn optional_line(output: &mut String, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        output.push_str(key);
+        output.push_str("=some:");
+        output.push_str(&value.len().to_string());
+        output.push(':');
+        output.push_str(value);
+        output.push('\n');
+    } else {
+        output.push_str(key);
+        output.push_str("=none\n");
+    }
 }
 
 /// Lowercase hexadecimal encoding of `bytes`.
@@ -263,7 +267,23 @@ mod tests {
         changed!(db_name, "other".into());
         changed!(db_schema, "tenant_data".into());
         changed!(db_user, "other_user".into());
+        changed!(oidc_issuer, Some("https://identity.example/issuer".into()));
         changed!(oidc_client_id, Some("other-client".into()));
+        changed!(
+            oidc_token_endpoint,
+            Some("https://identity.example/token".into())
+        );
+        changed!(
+            oidc_redirect_uri,
+            Some("https://sitolo.example/callback".into())
+        );
+        changed!(
+            worker_db_password_ref,
+            Some(
+                SecretRef::new(SecretClass::Database, "worker/rotated")
+                    .map_err(std::io::Error::other)?
+            )
+        );
         changed!(db_pool_min, 6);
         changed!(db_pool_max, 21);
         changed!(db_acquire_timeout_ms, 3_000);
@@ -283,6 +303,21 @@ mod tests {
         changed!(relay_max_attempts, 9);
         changed!(relay_backoff_max_ms, 3_000_000);
         changed!(secrets_aws_region, Some("af-south-1".into()));
+        Ok(())
+    }
+
+    #[test]
+    fn optional_fields_distinguish_absent_from_present_sentinel_values()
+    -> Result<(), Box<dyn Error>> {
+        let mut absent = base()?;
+        absent.oidc_client_id = None;
+        let mut present = absent.clone();
+        present.oidc_client_id = Some("<none>".into());
+        assert_ne!(
+            canonical_non_secret_config(&absent),
+            canonical_non_secret_config(&present)
+        );
+        assert_ne!(config_fingerprint(&absent), config_fingerprint(&present));
         Ok(())
     }
 
