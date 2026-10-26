@@ -1,61 +1,9 @@
--- Phase 4 Part 8 Audit and Outbox Schema
---
--- Security model:
---   * `app_runtime` (LOGIN) may INSERT audit/outbox rows inside the request
---     transaction and may advance aggregate sequences. RLS constrains inserts
---     to the transaction tenant context. The runtime pool authenticates as
---     this role directly; `SET ROLE` is not the authority mechanism.
---   * `app_worker` (LOGIN) has EXECUTE on five narrow state-transition
---     functions and no direct table write privilege. The fixture grants no
---     direct SELECT on `outbox_events`, so one worker replica cannot read
---     another replica's claim token.
---   * `app_outbox_owner` (NOLOGIN, NOBYPASSRLS) owns the tables, functions,
---     and metrics view. Every SECURITY DEFINER function fixes `search_path`
---     to `pg_catalog` plus this schema and has an explicit owner policy.
---   * PUBLIC receives no table, sequence, or function privilege.
---
--- The harness replaces `__SCHEMA__` with a quoted, per-test schema name.
-
--- ============================================================================
--- ROLES
--- ============================================================================
-
--- Roles are cluster-global, so parallel test schemas can race on creation.
--- Serialize creation across test processes; duplicate_object alone cannot
--- catch a concurrent unique-index violation from pg_authid.
-DO $$
-BEGIN
-    PERFORM pg_advisory_xact_lock(hashtext('sitolo.part8.role-bootstrap'), 8);
-    BEGIN
-        CREATE ROLE app_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-    EXCEPTION WHEN duplicate_object THEN
-        NULL;
-    END;
-    BEGIN
-        CREATE ROLE app_worker LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-    EXCEPTION WHEN duplicate_object THEN
-        NULL;
-    END;
-    BEGIN
-        CREATE ROLE app_outbox_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-    EXCEPTION WHEN duplicate_object THEN
-        NULL;
-    END;
-END
-$$;
-
--- The fixture asserts the security attributes even when the roles already
--- exist. This requires the migration/admin role to own the roles or be a
--- superuser; a failure here is intentional, because a BYPASSRLS worker would
--- invalidate every RLS test.
-ALTER ROLE app_runtime LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE app_worker LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE app_outbox_owner NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+-- Version 0002: Phase 4 Part 8 audit, outbox, and aggregate sequence schema.
+-- Roles must be provisioned and catalog-validated by the database administration
+-- process before applying this migration. Run with this schema as search_path.
 
 GRANT USAGE ON SCHEMA __SCHEMA__ TO app_runtime, app_worker, app_outbox_owner;
 GRANT CREATE ON SCHEMA __SCHEMA__ TO app_outbox_owner;
-
--- ============================================================================
 -- AUDIT EVENTS TABLE
 -- ============================================================================
 

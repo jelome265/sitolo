@@ -156,14 +156,23 @@ async fn test_db() -> Result<TestDb, Box<dyn std::error::Error>> {
         .max_connections(5)
         .connect_with(admin_options)
         .await?;
-    let audit_schema =
-        include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
-            .replace("__SCHEMA__", &format!("\"{schema}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_schema.as_str()))
-        .execute(&admin)
-        .await?;
-    let tenancy_schema =
-        include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
+    raw_sql(include_str!(
+        "../../sitolo-persistence/tests/fixtures/role_bootstrap.sql"
+    ))
+    .execute(&admin)
+    .await?;
+    let audit_outbox_schema = include_str!(
+        "../../sitolo-persistence/schema/migrations/0002_phase4_part8_audit_outbox.sql"
+    )
+    .replace("__SCHEMA__", &format!("\"{schema}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(
+        audit_outbox_schema.as_str(),
+    ))
+    .execute(&admin)
+    .await?;
+    let tenancy_schema = include_str!(
+        "../../sitolo-persistence/schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"
+    );
     raw_sql(tenancy_schema).execute(&admin).await?;
 
     install_postgres_evidence_failure_triggers(&admin).await?;

@@ -405,7 +405,7 @@ impl PgAuthorityPools {
 }
 
 /// Verifies the **Part 8** provisioning DDL
-/// (`schema/phase4_part8_tenancy_provisioning.sql`) against the schema it
+/// (`schema/migrations/0003_phase4_part8_tenancy_provisioning.sql`) against the schema it
 /// actually creates.
 ///
 /// The contract differs from the Part 7 fixture by design: the runtime role may

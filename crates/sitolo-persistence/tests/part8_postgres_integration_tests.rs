@@ -137,21 +137,32 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .connect_with(admin_opts)
         .await?;
 
-    // Apply the complete Part 8 schema. The fixture creates the roles before
-    // the runtime and worker pools authenticate as them.
-    let schema_sql = include_str!("fixtures/part8_audit_outbox_schema.sql")
-        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
+    // Test-only role setup is separate from the versioned production schema
+    // migrations. Apply the same ordered SQL bundle used for release.
+    raw_sql(include_str!("fixtures/role_bootstrap.sql"))
         .execute(&admin_pool)
         .await?;
-    raw_sql(include_str!("../schema/consumer_inbox.sql"))
-        .execute(&admin_pool)
-        .await?;
-    let identity_sql = include_str!("../schema/phase3_identity_authority.sql")
+
+    let identity_sql = include_str!("../schema/migrations/0001_phase3_identity_authority.sql")
         .replace("__SCHEMA__", &format!("\"{schema_name}\""));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
         .execute(&admin_pool)
         .await?;
+    let audit_outbox_sql = include_str!("../schema/migrations/0002_phase4_part8_audit_outbox.sql")
+        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_outbox_sql.as_str()))
+        .execute(&admin_pool)
+        .await?;
+    raw_sql(include_str!(
+        "../schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"
+    ))
+    .execute(&admin_pool)
+    .await?;
+    raw_sql(include_str!(
+        "../schema/migrations/0004_worker_consumer_inbox.sql"
+    ))
+    .execute(&admin_pool)
+    .await?;
 
     let runtime_opts = targets
         .runtime
@@ -1946,7 +1957,8 @@ async fn test_part8_relation_ownership_and_rls_metadata() -> Result<(), Box<dyn 
         // inbox (consumer_inbox_tenant_policy on consumer_inbox, targeting
         // app_worker) is a separate consumer-side idempotency table owned by the
         // restricted app_worker role under its own RLS contract
-        // (crates/sitolo-persistence/schema/consumer_inbox.sql; schema/README.md
+        // (crates/sitolo-persistence/schema/migrations/0004_worker_consumer_inbox.sql;
+        // schema/README.md
         // §29-33). It is not a Part 8 evidence table and is intentionally outside
         // this inventory. Part 8 audit/outbox evidence and sequence metadata
         // carry four policies targeting app_runtime and app_outbox_owner.

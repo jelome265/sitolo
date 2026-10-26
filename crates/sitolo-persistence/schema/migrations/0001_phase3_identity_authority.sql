@@ -1,19 +1,9 @@
 -- Phase 3 request identity authority.
--- Apply as the restricted migration identity after app_runtime exists.
+-- Roles and credentials are provisioned by the platform migration process.
+-- Apply with this schema as search_path after app_runtime and
+-- app_identity_owner have been provisioned and catalog-validated.
 -- This schema stores immutable external identity links and Sitolo session
 -- state. Token claims never create/link users or grant tenant authority.
-
-DO $$
-BEGIN
-    PERFORM pg_catalog.pg_advisory_xact_lock(
-        pg_catalog.hashtext('sitolo.identity.role-bootstrap'), 8
-    );
-    CREATE ROLE app_identity_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-EXCEPTION WHEN duplicate_object THEN
-    NULL;
-END
-$$;
-
 DO $$
 BEGIN
     IF NOT EXISTS (

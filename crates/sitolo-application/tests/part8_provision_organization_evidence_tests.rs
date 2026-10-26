@@ -75,15 +75,22 @@ async fn setup() -> Result<TestContext, Box<dyn Error>> {
     .execute(&admin_pool)
     .await?;
 
-    let schema_sql =
-        include_str!("../../sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql")
-            .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(schema_sql.as_str()))
+    raw_sql(include_str!(
+        "../../sitolo-persistence/tests/fixtures/role_bootstrap.sql"
+    ))
+    .execute(&admin_pool)
+    .await?;
+
+    let audit_outbox_sql = include_str!(
+        "../../sitolo-persistence/schema/migrations/0002_phase4_part8_audit_outbox.sql"
+    )
+    .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_outbox_sql.as_str()))
         .execute(&admin_pool)
         .await?;
-
-    let tenancy_sql =
-        include_str!("../../sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql");
+    let tenancy_sql = include_str!(
+        "../../sitolo-persistence/schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"
+    );
     raw_sql(tenancy_sql).execute(&admin_pool).await?;
 
     verify_part8_provisioning_rls_metadata(&admin_pool, &schema_name).await?;

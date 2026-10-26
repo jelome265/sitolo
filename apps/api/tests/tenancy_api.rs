@@ -488,15 +488,20 @@ async fn api_tenancy_db() -> Result<ApiTenancyDb, Box<dyn std::error::Error>> {
         .max_connections(5)
         .connect_with(admin_options)
         .await?;
+    raw_sql(include_str!(
+        "../../../crates/sitolo-persistence/tests/fixtures/role_bootstrap.sql"
+    ))
+    .execute(&admin)
+    .await?;
     let audit_schema = include_str!(
-        "../../../crates/sitolo-persistence/tests/fixtures/part8_audit_outbox_schema.sql"
+        "../../../crates/sitolo-persistence/schema/migrations/0002_phase4_part8_audit_outbox.sql"
     )
     .replace("__SCHEMA__", &format!("\"{schema}\""));
     raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_schema.as_str()))
         .execute(&admin)
         .await?;
     raw_sql(include_str!(
-        "../../../crates/sitolo-persistence/schema/phase4_part8_tenancy_provisioning.sql"
+        "../../../crates/sitolo-persistence/schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"
     ))
     .execute(&admin)
     .await?;
