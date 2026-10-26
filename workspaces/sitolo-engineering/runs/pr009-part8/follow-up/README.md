@@ -3,7 +3,7 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "c387047306dfa580395eccc8cdb6de23a1a8b3a6"
+candidate_head: "2b5e05fde370ecaca971290a5f014aee165c8402"
 date: "2026-10-26"
 ---
 
@@ -15,6 +15,16 @@ This index retains the historical cross-phase audit artifacts and points to the 
 > is superseded. Contract review found it persisted expiry state without the
 > required audit event. Its CI results do not verify the corrected candidate;
 > see the [audit correction](phase3-session-expiry-audit-remediation-2026-10-26.md).
+
+## Current implementation checkpoint — authenticated logout (`382de95`)
+
+`POST /v1/auth/logout` now revokes only the authenticated current session and
+records `auth.session.revoked` atomically through migration 0006. The API
+protected-route regression was updated to include logout in commit `2b5e05f`.
+The implementation commit's CI caught that stale route-count assertion and
+stale System Map source pins; both are corrected locally. Exact-head CI for the
+updated branch is pending. The session lifecycle remains partial; see the
+[Phase 3 evidence matrix](phase3-identity-evidence-matrix-2026-10-25.md).
 
 ## Corrected implementation checkpoint — `b7de7eb` (verified at `c387047`)
 

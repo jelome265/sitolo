@@ -114,6 +114,12 @@ Local checks passed: `cargo fmt --all`, `cargo check --workspace --all-targets -
 
 AUD-04 is implemented but remains partial pending Stage 06 re-audit. AUD-03 remains open pending confirmation that every mandatory IAM mutation has same-transaction state/audit/outbox coverage and server-derived actor/tenant authority. Protected live HTTP writes remain fail-closed. PR #49 remains open and unmerged.
 
+## Current implementation increment — authenticated session logout, 2026-10-26
+
+Implementation commit `382de95eeb8f9f0622d022f304feb7dd7a5db802` adds the authenticated `POST /v1/auth/logout` route and migration 0006. The session identifier and user are derived from the verified security context. The PostgreSQL function revokes only the matching active session and inserts `auth.session.revoked` in the same transaction; runtime startup and readiness require that function. Focused API coverage verifies logout revokes the current session and subsequent protected requests fail. PostgreSQL tests cover wrong-user no-write, concurrent/replayed idempotency and audit-failure rollback.
+
+Exact-head CI on `382de95` exposed two test/evidence defects: the API protected-route count still expected five after the route inventory grew to six, and the System Map process cards still pinned pre-logout source commits. The route count is corrected in `2b5e05fde370ecaca971290a5f014aee165c8402`; the focused route-boundary regression passes locally. The System Map and follow-up evidence now pin the logout implementation commit and state that PostgreSQL verification is pending. Fresh exact-head CI is required; no local PostgreSQL was started. This increment does not complete Phase 3, the nine-workstream remediation, Stage 06 audit or human review.
+
 ## PostgreSQL rollback coverage addendum — `96ca56b08804211895106612fb5b393e2d66e686`
 
 Added failure-injection tests for direct branch creation, direct member invitation, and scope-grant revocation. Each test runs against the PostgreSQL workflow, injects both audit and outbox failures, and checks database state/evidence rollback. The exact-head CI result is recorded in `follow-up/remediation-report.md`; all nine checks passed, with no local PostgreSQL execution.
