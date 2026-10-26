@@ -44,7 +44,7 @@ Administrative database provisioning, migrations, worker database identity, or b
 
 ## Verification
 
-Source-verified against branch commit `b7de7eb0bee7209b8526aa0017b2416efeea53fd`. API startup composes this pool only after resolving the secret, probing the configured Cognito issuer, and validating production/staging configuration. The new identity-audit owner and privilege checks require exact-source PostgreSQL-enabled GitHub Actions; those checks are pending for the current documentation update.
+Source-verified against implementation commit `b7de7eb0bee7209b8526aa0017b2416efeea53fd`. API startup composes this pool only after resolving the secret, probing the configured Cognito issuer, and validating production/staging configuration. PostgreSQL-enabled exact-head checks passed at documentation head `c387047306dfa580395eccc8cdb6de23a1a8b3a6`: Rust [40301735355](https://github.com/jelome265/sitolo/actions/runs/40301735355), Integration [40301735469](https://github.com/jelome265/sitolo/actions/runs/40301735469), Security [40301735345](https://github.com/jelome265/sitolo/actions/runs/40301735345), Policy [40301735372](https://github.com/jelome265/sitolo/actions/runs/40301735372), and CodeQL [121503273264](https://github.com/jelome265/sitolo/runs/121503273264). These results verify that head; any later source or documentation commit needs fresh exact-head checks.
 
 ## See
 

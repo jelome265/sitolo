@@ -158,6 +158,14 @@ does not verify the corrected candidate. The current correction adds a
 restricted identity audit table, writes the audit event atomically with expiry,
 checks ownership and runtime privileges at startup/readiness, and adds
 PostgreSQL evidence for audit failure rollback, replay cardinality and
-wrong-user no-write behavior. The corrected source is awaiting exact-head
-PostgreSQL CI; see
+wrong-user no-write behavior. Corrected implementation
+`b7de7eb0bee7209b8526aa0017b2416efeea53fd` passed PostgreSQL-enabled
+exact-head CI at documentation head `c387047306dfa580395eccc8cdb6de23a1a8b3a6`.
+Rust [40301735355](https://github.com/jelome265/sitolo/actions/runs/40301735355)
+executed both expiry regressions, including audit rollback; Integration
+[40301735469](https://github.com/jelome265/sitolo/actions/runs/40301735469),
+Security [40301735345](https://github.com/jelome265/sitolo/actions/runs/40301735345),
+Policy [40301735372](https://github.com/jelome265/sitolo/actions/runs/40301735372),
+and CodeQL [121503273264](https://github.com/jelome265/sitolo/runs/121503273264)
+also passed on that head. See
 `follow-up/phase3-session-expiry-audit-remediation-2026-10-26.md`.

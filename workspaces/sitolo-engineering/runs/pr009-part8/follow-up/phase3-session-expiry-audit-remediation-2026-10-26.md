@@ -1,9 +1,11 @@
 ---
 artifact_type: remediation-extension
-status: implementation-correction-awaiting-exact-head-verification
+status: implemented-partial
 run_slug: "pr009-part8"
 security_relevant: yes
 source_before: "0385aadd2697b9900e77eecd47ab0f71f886c66a"
+implementation_source: "b7de7eb0bee7209b8526aa0017b2416efeea53fd"
+verification_head: "c387047306dfa580395eccc8cdb6de23a1a8b3a6"
 date: "2026-10-26"
 ---
 
@@ -36,11 +38,25 @@ candidate.
 
 ## Verification status
 
-The corrected PostgreSQL integration target compiles locally. Formatting,
-locked persistence all-target check, strict persistence Clippy, migration
-inventory, documentation references and diff checks pass. The new SQL behavior
-has not yet run against PostgreSQL on this corrected source candidate; do not
-reuse the `0385aadd` workflow results as proof. Exact-head CI is required.
+Local formatting, locked persistence all-target check, strict persistence
+Clippy, PostgreSQL integration-target compilation, migration inventory,
+documentation references and diff checks pass. The corrected SQL behavior ran
+against the approved disposable PostgreSQL service. All exact-head checks
+passed on documentation head `c387047306dfa580395eccc8cdb6de23a1a8b3a6`, which
+contains implementation source `b7de7eb0bee7209b8526aa0017b2416efeea53fd`:
+
+- Rust canonical verifier, including both session-expiry PostgreSQL tests:
+  [40301735355](https://github.com/jelome265/sitolo/actions/runs/40301735355).
+- PostgreSQL application/contract integration:
+  [40301735469](https://github.com/jelome265/sitolo/actions/runs/40301735469).
+- Security: [40301735345](https://github.com/jelome265/sitolo/actions/runs/40301735345).
+- Policy: [40301735372](https://github.com/jelome265/sitolo/actions/runs/40301735372).
+- CodeQL: [121503273264](https://github.com/jelome265/sitolo/runs/121503273264).
+
+The Rust verifier log confirms
+`postgres_identity_mapping_and_session_authority_fail_closed` and
+`postgres_session_expiry_rolls_back_when_audit_insert_fails` passed. The policy
+job confirms the System Map source revision is current.
 
 The full Phase 3 lifecycle remains partial, and no independent Stage 06 audit
 or human review is claimed.

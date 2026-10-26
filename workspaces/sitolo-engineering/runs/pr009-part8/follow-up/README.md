@@ -3,7 +3,7 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "0385aadd2697b9900e77eecd47ab0f71f886c66a"
+candidate_head: "c387047306dfa580395eccc8cdb6de23a1a8b3a6"
 date: "2026-10-26"
 ---
 
@@ -16,21 +16,23 @@ This index retains the historical cross-phase audit artifacts and points to the 
 > required audit event. Its CI results do not verify the corrected candidate;
 > see the [audit correction](phase3-session-expiry-audit-remediation-2026-10-26.md).
 
-## Current implementation checkpoint — `0385aadd`
+## Corrected implementation checkpoint — `b7de7eb` (verified at `c387047`)
 
 Migration `0005_identity_session_expiry_state.sql` now persists idle and
 absolute session expiry as terminal states when the matching user presents an
-expired active session. A real PostgreSQL regression verifies denial, the
-persisted terminal state, and no mutation from a wrong user selector. The
-canonical Rust verifier [40298701887](https://github.com/jelome265/sitolo/actions/runs/40298701887),
-PostgreSQL Integration [40298701841](https://github.com/jelome265/sitolo/actions/runs/40298701841),
-Security [40298701912](https://github.com/jelome265/sitolo/actions/runs/40298701912),
-Policy [40298701810](https://github.com/jelome265/sitolo/actions/runs/40298701810),
-and CodeQL [121493288342](https://github.com/jelome265/sitolo/runs/121493288342)
-passed on exact source `0385aadd2697b9900e77eecd47ab0f71f886c66a`. Phase 3 remains
-partial; durable session creation, logout/revocation, refresh, MFA, recovery,
-device lifecycle and independent Stage 06 review remain outstanding. Details:
-[session expiry remediation](phase3-session-expiry-remediation-2026-10-26.md).
+expired active session, and commits one `auth.session.expired` event atomically
+with that transition. PostgreSQL regressions cover denial, persisted state,
+wrong-user no-write, replay cardinality and audit failure rollback. Exact-head
+Rust [40301735355](https://github.com/jelome265/sitolo/actions/runs/40301735355),
+Integration [40301735469](https://github.com/jelome265/sitolo/actions/runs/40301735469),
+Security [40301735345](https://github.com/jelome265/sitolo/actions/runs/40301735345),
+Policy [40301735372](https://github.com/jelome265/sitolo/actions/runs/40301735372),
+and CodeQL [121503273264](https://github.com/jelome265/sitolo/runs/121503273264)
+passed on documentation head `c387047306dfa580395eccc8cdb6de23a1a8b3a6`,
+which contains implementation source `b7de7eb0bee7209b8526aa0017b2416efeea53fd`.
+Phase 3 remains partial; durable session creation, logout/revocation, refresh,
+MFA, recovery, device lifecycle and independent Stage 06 review remain outstanding.
+Details: [corrected session expiry remediation](phase3-session-expiry-audit-remediation-2026-10-26.md).
 
 ## Current implementation checkpoint — `31d89a9`
 
