@@ -10,6 +10,8 @@ The latest verified implementation source SHA is `76154ffd639ff6467729f3e4ab508f
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
+The default-branch ruleset was inspected on 2026-10-26. It requires one approval but no CI status checks, and a repository-role actor can always bypass it. See [branch ruleset evidence](branch-ruleset-evidence-2026-10-26.md); do not represent settings as merge protection for the required workflows until an administrator updates and re-verifies the ruleset.
+
 ## 1. Read the current state correctly
 
 The repository owner approved the three choices on 2026-10-22. The [decision index](decisions/README.md) records the approval scope. Decision selection is no longer blocked; implementation, integration proof, cloud account provisioning, readiness safeguards and human PR review remain.

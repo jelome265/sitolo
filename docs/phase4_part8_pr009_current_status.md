@@ -19,7 +19,7 @@ The historical checkpoint details below are retained for provenance. They do not
 - The canonical production migration/release owner and immutable migration artifact remain unresolved.
 - The complete mandatory mutation matrix and Phase 3 lifecycle evidence are not demonstrated.
 - The unavailable organization activation route was removed from the active route inventory and API surface. Organization creation atomically persists the active organization, owner and default branch; other lifecycle transitions remain part of the incomplete mutation matrix.
-- `sitolo-testkit` now supplies validated tenancy fixtures consumed by tenancy and application test targets and is enforced as dev-only. Automated lint/CI policy checks pass; actual branch-protection settings remain unverified because GitHub API access returned 403.
+- `sitolo-testkit` now supplies validated tenancy fixtures consumed by tenancy and application test targets and is enforced as dev-only. Automated lint/CI policy checks pass. Read-only inspection found the active default-branch ruleset has one required PR approval but no required status checks and an always-bypass repository role; administrator configuration remains required. See the [ruleset evidence](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/branch-ruleset-evidence-2026-10-26.md).
 - An independent Stage 06 audit and human review are still required. PR #49 remains open and unmerged.
 
 The detailed earlier records below are historical checkpoints; their run results and failure descriptions do not describe the latest implementation candidate.

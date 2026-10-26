@@ -15,6 +15,10 @@ This index retains the historical cross-phase audit artifacts and points to the 
 
 The Rust lint policy now inventories all 45 existing distinct reasoned `#[expect]` path/attribute pairs and rejects direct or conditional `#[allow]` and `#[warn]` downgrades. Six regression tests cover allowed, missing, stale, changed, and lint-lowering cases. Rust [40290717776](https://github.com/jelome265/sitolo/actions/runs/40290717776), Integration [40290717827](https://github.com/jelome265/sitolo/actions/runs/40290717827), Security [40290718200](https://github.com/jelome265/sitolo/actions/runs/40290718200), and Policy [40290717731](https://github.com/jelome265/sitolo/actions/runs/40290717731) passed on exact head `76154ffd639ff6467729f3e4ab508f554a72f919`. See the [lint downgrade extension](phase1-4-remediation-extension-76154ff.md). Other Phase 1–4 and review blockers remain.
 
+## Repository settings snapshot — 2026-10-26
+
+GitHub API inspection found active ruleset `22459107` for the default branch: it requires one PR approval but no required status checks, and a repository-role actor can always bypass it. See the [ruleset evidence](branch-ruleset-evidence-2026-10-26.md); administrator configuration remains required.
+
 ## Current implementation checkpoint — `9d6ba1c`
 
 Rust lint exceptions now require an exact path-and-attribute inventory record, including the lint and inline reason. The 45 existing distinct `#[expect]` records are inventoried; policy CI regression tests reject missing, changed and stale entries. Rust [40289598902](https://github.com/jelome265/sitolo/actions/runs/40289598902), Integration [40289598918](https://github.com/jelome265/sitolo/actions/runs/40289598918), Security [40289599101](https://github.com/jelome265/sitolo/actions/runs/40289599101), and Policy [40289598905](https://github.com/jelome265/sitolo/actions/runs/40289598905) passed on exact head `9d6ba1c58601691fce4195b76ec700ad207d2cdb`. See the [remediation extension](phase1-4-remediation-extension-9d6ba1c.md). Other Phase 1–4 and independent-review blockers remain.
