@@ -1,15 +1,15 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** NOT READY FOR MERGE — current exact-head Rust, Integration, Security and Policy checks pass; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
+**Status:** NOT READY FOR MERGE — exact-head Rust, Integration, Security and Policy checks pass on `9d6ba1c`; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Latest implementation source:** `15147ef45126917ad4184ca1326282db6631078a` replaces fake evidence-failure wrappers in the PostgreSQL application transaction suite with the production unit of work and database triggers that fail real audit/outbox inserts.
-**Latest exact-head verification:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40195430303), [Integration](https://github.com/jelome265/sitolo/actions/runs/40195430299), [Security](https://github.com/jelome265/sitolo/actions/runs/40195430302), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40195430306) pass on exact SHA `15147ef45126917ad4184ca1326282db6631078a`; [CodeQL](https://github.com/jelome265/sitolo/runs/121176342832) also passes.
+**Latest implementation source:** `9d6ba1c58601691fce4195b76ec700ad207d2cdb` adds the reasoned, path-specific Rust `#[expect]` exception inventory and CI regression tests.
+**Latest exact-head verification:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40289598902), [Integration](https://github.com/jelome265/sitolo/actions/runs/40289598918), [Security](https://github.com/jelome265/sitolo/actions/runs/40289599101), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40289598905) pass on exact SHA `9d6ba1c58601691fce4195b76ec700ad207d2cdb`.
 **Recent remediation:** commits `289ae0c`, `e48b12a`, `ef0e97b`, `468186c`, `4858341`, `db4fcba`, `a4cb381`, `18dce7e`, `d4b48d7`, `3cd8a20`, `f432da2`, `d332ead`, `d8032ef`, `eea9486`, `6220b3b`, `3385041`, `23d8e14`, `1743f3a`, and `15147ef` cover database target/schema guards, optional fingerprint encoding and inventory, lint/CI policy, shared testkit fixtures, organization activation route disposition, route evidence, PostgreSQL harness guard reuse, credential redaction, identity-denial evidence, and real database failure injection for audit/outbox rollback.
 **Cross-phase evidence:** [Phase 1–4 deep audit](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-deep-audit-2026-10-25.md), [remediation plan](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-remediation-plan-2026-10-25.md), [follow-up index](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/README.md).
 **Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
-**Date:** 2026-10-25
+**Date:** 2026-10-26
 
 The historical checkpoint details below are retained for provenance. They do not supersede the exact-head source and CI evidence above.
 

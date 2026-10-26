@@ -1,7 +1,7 @@
 # Sitolo — Current Implementation Status
 
 **Status:** Current implementation-state pointer
-**Date:** 2026-10-25
+**Date:** 2026-10-26
 **Main baseline:** `623f7aed6105664d10d1a2802480fde8316ed5f8`
 
 ## Active product implementation
@@ -12,7 +12,7 @@ PR #49 is the active implementation PR for that work. It remains open and is not
 
 ### PR #49 latest implementation checkpoint
 
-The latest implementation source is `d8032eff0422edb9447239ccc13f403f285c00db` on `feat/phase4-pr009-audit-outbox`. Rust [40190324443](https://github.com/jelome265/sitolo/actions/runs/40190324443), Integration [40190324475](https://github.com/jelome265/sitolo/actions/runs/40190324475), Security [40190324472](https://github.com/jelome265/sitolo/actions/runs/40190324472), and Policy [40190324477](https://github.com/jelome265/sitolo/actions/runs/40190324477) all pass on that exact SHA. The branch includes fail-closed disposable-database target validation shared by the API tenancy, application, Part 8 and RLS PostgreSQL harnesses; redacted test-target debug output; versioned secret-free configuration fingerprint encoding; strict lint/CI policy enforcement; shared testkit tenancy and database-target helpers; and removal of the unavailable organization activation route.
+The latest implementation source is `9d6ba1c58601691fce4195b76ec700ad207d2cdb` on `feat/phase4-pr009-audit-outbox`. Rust [40289598902](https://github.com/jelome265/sitolo/actions/runs/40289598902), Integration [40289598918](https://github.com/jelome265/sitolo/actions/runs/40289598918), Security [40289599101](https://github.com/jelome265/sitolo/actions/runs/40289599101), and Policy [40289598905](https://github.com/jelome265/sitolo/actions/runs/40289598905) all pass on that exact SHA. The branch includes fail-closed disposable-database target validation, fingerprint coverage, shared testkit fixtures, organization activation route disposition, PostgreSQL transaction/identity evidence, worker ordering and SQS lease renewal, and strict lint/CI controls. The latest policy change makes every reasoned source `#[expect]` lint exception match an exact path-and-attribute inventory record and adds CI regression tests.
 
 PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/Phase 3 identity evidence, administrator branch-protection evidence, independent Stage 06 review, and human review remain open. The organization activation route was removed from the active API surface because no persisted provisioning transition exists; shared testkit fixtures and automated lint/CI policy enforcement are implemented. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) and the [Phase 1–4 requirements matrix](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-requirements-matrix-2026-10-25.md).
 

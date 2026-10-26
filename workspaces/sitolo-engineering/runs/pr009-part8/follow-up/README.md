@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "216eb369cd01e107c14b8e654ce6f56ff305416b"
+candidate_head: "9d6ba1c58601691fce4195b76ec700ad207d2cdb"
 date: "2026-10-26"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `9d6ba1c`
+
+Rust lint exceptions now require an exact path-and-attribute inventory record, including the lint and inline reason. The 45 existing distinct `#[expect]` records are inventoried; policy CI regression tests reject missing, changed and stale entries. Rust [40289598902](https://github.com/jelome265/sitolo/actions/runs/40289598902), Integration [40289598918](https://github.com/jelome265/sitolo/actions/runs/40289598918), Security [40289599101](https://github.com/jelome265/sitolo/actions/runs/40289599101), and Policy [40289598905](https://github.com/jelome265/sitolo/actions/runs/40289598905) passed on exact head `9d6ba1c58601691fce4195b76ec700ad207d2cdb`. See the [remediation extension](phase1-4-remediation-extension-9d6ba1c.md). Other Phase 1–4 and independent-review blockers remain.
 
 ## Current implementation checkpoint — `216eb36`
 

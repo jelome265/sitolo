@@ -6,7 +6,7 @@
 
 ### Current verification snapshot — 2026-10-26
 
-The latest verified implementation source SHA is `216eb369cd01e107c14b8e654ce6f56ff305416b`. Rust [40287439503](https://github.com/jelome265/sitolo/actions/runs/40287439503), Integration [40287439518](https://github.com/jelome265/sitolo/actions/runs/40287439518), Security [40287439599](https://github.com/jelome265/sitolo/actions/runs/40287439599), and Policy [40287439504](https://github.com/jelome265/sitolo/actions/runs/40287439504) all passed for that exact head. The worker renews SQS visibility, receives one FIFO message per worker at a time, and validates each event's FIFO group ID. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and not ready to merge.
+The latest verified implementation source SHA is `9d6ba1c58601691fce4195b76ec700ad207d2cdb`. Rust [40289598902](https://github.com/jelome265/sitolo/actions/runs/40289598902), Integration [40289598918](https://github.com/jelome265/sitolo/actions/runs/40289598918), Security [40289599101](https://github.com/jelome265/sitolo/actions/runs/40289599101), and Policy [40289598905](https://github.com/jelome265/sitolo/actions/runs/40289598905) all passed for that exact head. The latest CI change inventories all existing reasoned `#[expect]` lint exceptions by path and exact attribute. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and not ready to merge.
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
