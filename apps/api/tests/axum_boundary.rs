@@ -96,7 +96,7 @@ async fn every_declared_protected_route_rejects_missing_credentials()
         );
     }
     assert_eq!(
-        protected, 5,
+        protected, 6,
         "protected route count drifted from the reviewed inventory"
     );
     Ok(())
