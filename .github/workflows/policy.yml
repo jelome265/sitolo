@@ -19,6 +19,8 @@ on:
       - "scripts/ci/check-doc-references"
       - "scripts/ci/check-release-workflow"
       - "scripts/ci/check-rust-policy.py"
+      - "scripts/ci/test_rust_policy.py"
+      - "scripts/ci/rust-lint-exceptions.json"
       - "scripts/ci/policy-tool-versions.toml"
       - "scripts/ci/install-policy-tools.py"
       - "scripts/ci/check-workflow-policy"
@@ -40,6 +42,8 @@ jobs:
         run: ./scripts/ci/check-workflow-policy
       - name: Rust lint and test policy check
         run: python3 ./scripts/ci/check-rust-policy.py
+      - name: Rust lint exception inventory regression tests
+        run: python3 -m unittest discover -s scripts/ci -p "test_*.py"
       - name: ICM workspace policy check
         run: bash ./scripts/ci/check-icm-workspace
       - name: ICM PowerShell parity check

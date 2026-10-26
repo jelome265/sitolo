@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tomllib
@@ -57,8 +58,40 @@ def _lint_level(value: object) -> str | None:
     return None
 
 
+def _canonical_expect_attribute(attribute: str) -> str:
+    """Normalize layout so exception inventory entries do not depend on wrapping."""
+    return " ".join(attribute.split())
+
+
+def _expect_inventory_errors(
+    observed: set[tuple[str, str]], inventory_data: object, inventory_path: str
+) -> list[str]:
+    errors: list[str] = []
+    inventoried: set[tuple[str, str]] = set()
+    if not isinstance(inventory_data, list):
+        return [f"{inventory_path}: inventory must be a JSON array"]
+
+    for index, entry in enumerate(inventory_data):
+        if not isinstance(entry, dict) or set(entry) != {"path", "attribute"}:
+            errors.append(f"{inventory_path}: entry {index} must contain only path and attribute")
+            continue
+        path = entry["path"]
+        attribute = entry["attribute"]
+        if not isinstance(path, str) or not isinstance(attribute, str):
+            errors.append(f"{inventory_path}: entry {index} path and attribute must be strings")
+            continue
+        inventoried.add((path, _canonical_expect_attribute(attribute)))
+
+    for path, attribute in sorted(observed - inventoried):
+        errors.append(f"{path}: #[expect] is missing a path-specific entry in {inventory_path}: {attribute}")
+    for path, attribute in sorted(inventoried - observed):
+        errors.append(f"{inventory_path}: stale #[expect] inventory entry for {path}: {attribute}")
+    return errors
+
+
 def check_repository(root: Path) -> list[str]:
     errors: list[str] = []
+    observed_expectations: set[tuple[str, str]] = set()
     root_manifest_path = root / "Cargo.toml"
     root_manifest = tomllib.loads(root_manifest_path.read_text(encoding="utf-8"))
     workspace = root_manifest.get("workspace", {})
@@ -106,11 +139,29 @@ def check_repository(root: Path) -> list[str]:
             for match in EXPECT_ATTRIBUTE.finditer(source):
                 end = _attribute_end(source, match.start())
                 attribute = source[match.start():end]
+                observed_expectations.add(
+                    (relative.as_posix(), _canonical_expect_attribute(attribute))
+                )
                 if not re.search(r"\breason\s*=\s*\"[^\"]+\"", attribute):
                     line = source.count("\n", 0, match.start()) + 1
                     errors.append(f"{relative}:{line}: every #[expect] must include a non-empty reason")
             if "tests" not in source_path.parts and "test" not in source_path.parts and UNSAFE_ITEM.search(source):
                 errors.append(f"{relative}: unsafe Rust in production source requires explicit approved policy and review")
+
+    exception_inventory_path = root / "scripts" / "ci" / "rust-lint-exceptions.json"
+    try:
+        inventory_data = json.loads(exception_inventory_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        errors.append(f"{exception_inventory_path.relative_to(root)}: cannot read exception inventory: {error}")
+        inventory_data = []
+
+    errors.extend(
+        _expect_inventory_errors(
+            observed_expectations,
+            inventory_data,
+            exception_inventory_path.relative_to(root).as_posix(),
+        )
+    )
 
     cargo_config_paths = sorted((root / ".cargo").glob("**/*")) if (root / ".cargo").exists() else []
     policy_paths = [
@@ -167,6 +218,10 @@ def check_repository(root: Path) -> list[str]:
         workflow_text = workflow_path.read_text(encoding="utf-8")
         if required not in workflow_text:
             errors.append(f".github/workflows/{workflow_name}: required gate invocation is missing: {required}")
+
+    policy_workflow = (root / ".github" / "workflows" / "policy.yml").read_text(encoding="utf-8")
+    if 'python3 -m unittest discover -s scripts/ci -p "test_*.py"' not in policy_workflow:
+        errors.append(".github/workflows/policy.yml: Rust policy regression tests must run in CI")
 
     integration_workflow = (root / ".github" / "workflows" / "integration.yml").read_text(encoding="utf-8")
     if "--exclude sitolo-persistence" not in integration_workflow:
