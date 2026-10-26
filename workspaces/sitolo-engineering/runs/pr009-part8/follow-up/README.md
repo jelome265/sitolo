@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "15147ef45126917ad4184ca1326282db6631078a"
-date: "2026-10-25"
+candidate_head: "216eb369cd01e107c14b8e654ce6f56ff305416b"
+date: "2026-10-26"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `216eb36`
+
+The worker now renews SQS message visibility during processing, receives one FIFO message at a time per worker, and rejects a message-group ID that does not match the event's organization/aggregate. The targeted worker tests (19), strict Clippy, workspace Clippy and workspace check pass locally. Exact-head Rust [40287439503](https://github.com/jelome265/sitolo/actions/runs/40287439503), Integration [40287439518](https://github.com/jelome265/sitolo/actions/runs/40287439518), Security [40287439599](https://github.com/jelome265/sitolo/actions/runs/40287439599), and Policy [40287439504](https://github.com/jelome265/sitolo/actions/runs/40287439504) passed on `216eb369cd01e107c14b8e654ce6f56ff305416b`. See the [consumer visibility remediation extension](phase1-4-remediation-extension-216eb36.md). These checks do not prove live AWS behavior or production consumer composition. PR #49 remains open, unmerged and review-required.
 
 ## Current implementation checkpoint — `15147ef`
 

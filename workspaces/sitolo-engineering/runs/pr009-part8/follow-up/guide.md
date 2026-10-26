@@ -4,9 +4,9 @@
 **Current PR:** [#49](https://github.com/jelome265/sitolo/pull/49) — open, unmerged, review required.  
 **Packet:** [Audit](audit.md) · [Remediation plan](remediation-plan.md) · [Mutation transaction matrix](pr49-mandatory-mutation-transaction-matrix-2026-10-23.md) · [Stage 09 delivery record](../09-delivery-pr009-part8.md).
 
-### Current verification snapshot — 2026-10-23
+### Current verification snapshot — 2026-10-26
 
-The latest verified implementation source SHA is `fae7c4c6973cd55e6a4f95bb8c394301f11aa6d9`. All current checks passed for that exact SHA: [PostgreSQL integration](https://github.com/jelome265/sitolo/actions/runs/39901150740), [toolchain and verification](https://github.com/jelome265/sitolo/actions/runs/39901150869), [policy](https://github.com/jelome265/sitolo/actions/runs/39901150859), [security, dependency policy, advisories, secrets, offensive regression and CodeQL](https://github.com/jelome265/sitolo/actions/runs/39901150895), and [standalone CodeQL](https://github.com/jelome265/sitolo/runs/120244212443). This continuation-guide/remediation-report refresh changes no implementation source. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and `BLOCKED` from merge.
+The latest verified implementation source SHA is `216eb369cd01e107c14b8e654ce6f56ff305416b`. Rust [40287439503](https://github.com/jelome265/sitolo/actions/runs/40287439503), Integration [40287439518](https://github.com/jelome265/sitolo/actions/runs/40287439518), Security [40287439599](https://github.com/jelome265/sitolo/actions/runs/40287439599), and Policy [40287439504](https://github.com/jelome265/sitolo/actions/runs/40287439504) all passed for that exact head. The worker renews SQS visibility, receives one FIFO message per worker at a time, and validates each event's FIFO group ID. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and not ready to merge.
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
@@ -16,7 +16,7 @@ The repository owner approved the three choices on 2026-10-22. The [decision ind
 
 The `e49de425b74c0095fee0737612ae40dbc50c770a` audit and `d863bd2be3eec72fedb9f48709caf1a07a11f2f6` delivery tip below are historical snapshots, not current source evidence. Older passing checks and release dispatches do not transfer to the current head.
 
-Treat those as scoped test evidence. The latest implementation source is `a8903d3d2aa799b50b1eeba66fc4036deed10339`; all checks, including PostgreSQL integration, passed for that exact SHA (see the top of `remediation-report.md`). The live API authenticates linked identities and owned sessions, but does not yet authorize tenant permissions or invoke protected commands. The mutation transaction matrix identifies tested PostgreSQL paths and production composition gaps. The SNS FIFO publisher and strict typed relay settings exist, but no worker production wiring or consumer inbox/effects have been composed, so no real event delivery is proven. The worker executable remains fail-closed. Production API bootstrap fails closed because no managed production secret provider or PostgreSQL pool composition is implemented.
+Treat older results as scoped test evidence. The live API authenticates linked identities and owned sessions, but does not yet authorize tenant permissions or invoke protected commands. The mutation transaction matrix identifies tested PostgreSQL paths and production composition gaps. The SNS publisher, SQS consumer transport, transactional consumer processor and strict relay settings exist; the executable still composes only the relay, with no owner-approved production business effect or queue configuration. No live event delivery is proven. Production API bootstrap fails closed because no managed production secret provider or PostgreSQL pool composition is implemented.
 
 ### Implemented and evidenced (scoped)
 
@@ -30,6 +30,7 @@ Treat those as scoped test evidence. The latest implementation source is `a8903d
 - PostgreSQL-backed `member_roles`, `member_grants` and `member_permissions` reads, plus an explicit `TenancyService::new_postgres` constructor. The API runtime still does not compose this constructor with authenticated tenant authorization and protected commands; reference constructors remain for tests/reference use.
 - Bounded transport-neutral worker orchestration for claims, stale-lease recovery, event/version guards, retry, and quarantine.
 - Concrete SNS FIFO publisher using ECS task-role credentials and strict, typed region/topic/batch/retry settings. It is not wired into the production worker executable; no SNS/SQS delivery or consumer effect is proven.
+- SQS FIFO consumer transport validates explicit queue URLs, transfers poison messages to its configured quarantine FIFO queue before source deletion, and renews the visibility lease while a single message is processed. The consumer verifies the SNS group ID against the event aggregate. Exact-head CI and local tests cover the code paths, but no deployed queue/redrive/IAM or live AWS evidence exists; see the [216eb36 extension](phase1-4-remediation-extension-216eb36.md).
 - Strict split between typed `SITOLO__` configuration and development secret values under `SITOLO_SECRET__`; example files are documentation for process-environment injection, not a dotenv loader.
 - Release workflow PostgreSQL services/DSNs and its documented successful branch-dispatch test.
 
