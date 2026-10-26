@@ -3,13 +3,17 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "9d6ba1c58601691fce4195b76ec700ad207d2cdb"
+candidate_head: "76154ffd639ff6467729f3e4ab508f554a72f919"
 date: "2026-10-26"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `76154ff`
+
+The Rust lint policy now inventories all 45 existing distinct reasoned `#[expect]` path/attribute pairs and rejects direct or conditional `#[allow]` and `#[warn]` downgrades. Six regression tests cover allowed, missing, stale, changed, and lint-lowering cases. Rust [40290717776](https://github.com/jelome265/sitolo/actions/runs/40290717776), Integration [40290717827](https://github.com/jelome265/sitolo/actions/runs/40290717827), Security [40290718200](https://github.com/jelome265/sitolo/actions/runs/40290718200), and Policy [40290717731](https://github.com/jelome265/sitolo/actions/runs/40290717731) passed on exact head `76154ffd639ff6467729f3e4ab508f554a72f919`. See the [lint downgrade extension](phase1-4-remediation-extension-76154ff.md). Other Phase 1–4 and review blockers remain.
 
 ## Current implementation checkpoint — `9d6ba1c`
 

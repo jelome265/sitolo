@@ -6,7 +6,7 @@
 
 ### Current verification snapshot — 2026-10-26
 
-The latest verified implementation source SHA is `9d6ba1c58601691fce4195b76ec700ad207d2cdb`. Rust [40289598902](https://github.com/jelome265/sitolo/actions/runs/40289598902), Integration [40289598918](https://github.com/jelome265/sitolo/actions/runs/40289598918), Security [40289599101](https://github.com/jelome265/sitolo/actions/runs/40289599101), and Policy [40289598905](https://github.com/jelome265/sitolo/actions/runs/40289598905) all passed for that exact head. The latest CI change inventories all existing reasoned `#[expect]` lint exceptions by path and exact attribute. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and not ready to merge.
+The latest verified implementation source SHA is `76154ffd639ff6467729f3e4ab508f554a72f919`. Rust [40290717776](https://github.com/jelome265/sitolo/actions/runs/40290717776), Integration [40290717827](https://github.com/jelome265/sitolo/actions/runs/40290717827), Security [40290718200](https://github.com/jelome265/sitolo/actions/runs/40290718200), and Policy [40290717731](https://github.com/jelome265/sitolo/actions/runs/40290717731) all passed for that exact head. The policy inventories all existing reasoned `#[expect]` exceptions by path and exact attribute and rejects direct or conditional `#[allow]` and `#[warn]` downgrades. PR #49 remains `OPEN`, `REVIEW_REQUIRED`, and not ready to merge.
 
 These checks establish only their exercised paths. They do not constitute the required independent Stage 06 audit, human review, live AWS delivery proof, or closure of the remaining AUD-01 through AUD-05 requirements.
 
