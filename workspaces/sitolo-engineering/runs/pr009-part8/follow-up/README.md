@@ -3,7 +3,7 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "2b5e05fde370ecaca971290a5f014aee165c8402"
+candidate_head: "5b4563bdd5107008f44a30e9f3516f967f81a492"
 date: "2026-10-26"
 ---
 
@@ -21,9 +21,9 @@ This index retains the historical cross-phase audit artifacts and points to the 
 `POST /v1/auth/logout` now revokes only the authenticated current session and
 records `auth.session.revoked` atomically through migration 0006. The API
 protected-route regression was updated to include logout in commit `2b5e05f`.
-The implementation commit's CI caught that stale route-count assertion and
-stale System Map source pins; both are corrected locally. Exact-head CI for the
-updated branch is pending. The session lifecycle remains partial; see the
+Exact-head Rust, Integration, Security, Policy and CodeQL checks passed on
+`5b4563b`; the PostgreSQL suite includes owner-binding, replay/concurrency and
+audit-failure rollback regressions. The session lifecycle remains partial; see the
 [Phase 3 evidence matrix](phase3-identity-evidence-matrix-2026-10-25.md).
 
 ## Corrected implementation checkpoint — `b7de7eb` (verified at `c387047`)

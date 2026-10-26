@@ -44,7 +44,7 @@ Administrative database provisioning, migrations, worker database identity, or b
 
 ## Verification
 
-Source-verified against implementation commit `382de95eeb8f9f0622d022f304feb7dd7a5db802`. API startup composes this pool only after resolving the secret, probing the configured Cognito issuer, and validating production/staging configuration. The runtime pool and readiness probe now require the owner-bound `revoke_sitolo_session` function. Exact-head PostgreSQL catalog and failure-injection checks are pending for the implementation commit; no local PostgreSQL was started.
+Source-verified against implementation commit `382de95eeb8f9f0622d022f304feb7dd7a5db802`. API startup composes this pool only after resolving the secret, probing the configured Cognito issuer, and validating production/staging configuration. The runtime pool and readiness probe now require the owner-bound `revoke_sitolo_session` function. PostgreSQL catalog, owner-binding, replay and audit-failure rollback checks passed in exact-head Integration run [40309475680](https://github.com/jelome265/sitolo/actions/runs/40309475680) on `5b4563bdd5107008f44a30e9f3516f967f81a492`; no local PostgreSQL was started.
 
 ## See
 
