@@ -3,8 +3,8 @@
 //! The business effect is intentionally a port: owner approval is required
 //! before a concrete effect or queue configuration can be supplied.
 
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,8 +20,12 @@ use sqlx_postgres::{PgPool, Postgres};
 use thiserror::Error;
 use tokio::sync::watch;
 
+use crate::sns::aggregate_group_id;
+
 const INITIAL_CONSUMER_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_CONSUMER_BACKOFF: Duration = Duration::from_secs(30);
+const CONSUMER_VISIBILITY_HEARTBEAT: Duration = Duration::from_secs(30);
+const CONSUMER_VISIBILITY_LEASE_SECONDS: u32 = 60;
 
 const MAX_EVENT_ID: usize = 128;
 const MAX_AGGREGATE_PART: usize = 128;
@@ -239,6 +243,13 @@ pub trait ConsumerTransport: Send + Sync {
     /// Acknowledges a source message after its durable effect/inbox commit.
     async fn acknowledge(&self, receipt_handle: &str) -> Result<(), ConsumerTransportError>;
 
+    /// Extends the source message lease while its transaction is processing.
+    async fn extend_visibility(
+        &self,
+        receipt_handle: &str,
+        visibility_timeout: Duration,
+    ) -> Result<(), ConsumerTransportError>;
+
     /// Routes a permanently rejected message to the configured quarantine boundary.
     /// Implementations must ensure the quarantine operation is durable before
     /// removing the source message. No queue identity is selected here.
@@ -360,12 +371,35 @@ impl ConsumerProcessor {
     /// [`ConsumerProcessError::EffectRetryable`] and leaves the message
     /// unacknowledged for redelivery.
     pub async fn process(&self, message: &ReceivedMessage) -> Result<(), ConsumerProcessError> {
+        let processing = Box::pin(self.process_without_lease(message));
+        self.maintain_visibility(message, processing).await
+    }
+
+    async fn process_without_lease(
+        &self,
+        message: &ReceivedMessage,
+    ) -> Result<(), ConsumerProcessError> {
         let Ok(event) = ConsumerEvent::parse(&message.body) else {
             self.transport
                 .quarantine(message, &self.invalid_event_class)
                 .await?;
             return Ok(());
         };
+        let expected_group_id = aggregate_group_id(
+            event.organization_id().as_str(),
+            event.aggregate_type(),
+            event.aggregate_id(),
+        );
+        match message.message_group_id.as_deref() {
+            Some(actual) if actual == expected_group_id => {}
+            Some(_) => {
+                self.transport
+                    .quarantine(message, &self.invalid_event_class)
+                    .await?;
+                return Ok(());
+            }
+            None => return Err(ConsumerTransportError.into()),
+        }
 
         let mut tx = self.pool.begin().await?;
         let payload = invalid(serde_json::to_vec(event.payload()))?;
@@ -403,6 +437,24 @@ impl ConsumerProcessor {
         Ok(())
     }
 
+    async fn maintain_visibility<F>(
+        &self,
+        message: &ReceivedMessage,
+        processing: F,
+    ) -> Result<(), ConsumerProcessError>
+    where
+        F: Future<Output = Result<(), ConsumerProcessError>>,
+    {
+        maintain_visibility_lease(
+            self.transport.as_ref(),
+            &message.receipt_handle,
+            CONSUMER_VISIBILITY_HEARTBEAT,
+            Duration::from_secs(u64::from(CONSUMER_VISIBILITY_LEASE_SECONDS)),
+            processing,
+        )
+        .await
+    }
+
     /// Processes a received batch serially and stops on the first retryable
     /// failure. This preserves the ordering returned for FIFO message groups;
     /// callers must not process overlapping batches concurrently per queue.
@@ -415,7 +467,7 @@ impl ConsumerProcessor {
         messages: &[ReceivedMessage],
     ) -> Result<(), ConsumerProcessError> {
         for message in messages {
-            self.process(message).await?;
+            Box::pin(self.process(message)).await?;
         }
         Ok(())
     }
@@ -442,7 +494,7 @@ impl ConsumerProcessor {
                 Ok(messages) if messages.is_empty() => {
                     backoff = INITIAL_CONSUMER_BACKOFF;
                 }
-                Ok(messages) => match self.process_batch(&messages).await {
+                Ok(messages) => match Box::pin(self.process_batch(&messages)).await {
                     Ok(()) => backoff = INITIAL_CONSUMER_BACKOFF,
                     Err(error) => {
                         tracing::warn!(error_class = %error, "consumer batch left unacknowledged");
@@ -459,6 +511,32 @@ impl ConsumerProcessor {
                     }
                     backoff = backoff.saturating_mul(2).min(MAX_CONSUMER_BACKOFF);
                 }
+            }
+        }
+    }
+}
+
+async fn maintain_visibility_lease<F>(
+    transport: &dyn ConsumerTransport,
+    receipt_handle: &str,
+    heartbeat: Duration,
+    lease: Duration,
+    processing: F,
+) -> Result<(), ConsumerProcessError>
+where
+    F: Future<Output = Result<(), ConsumerProcessError>>,
+{
+    let mut interval = tokio::time::interval(heartbeat);
+    // The first tick is immediate; start renewing only after one heartbeat.
+    interval.tick().await;
+    tokio::pin!(processing);
+    loop {
+        tokio::select! {
+            result = &mut processing => return result,
+            _ = interval.tick() => {
+                transport
+                    .extend_visibility(receipt_handle, lease)
+                    .await?;
             }
         }
     }
@@ -526,6 +604,7 @@ mod tests {
     struct RecordingTransport {
         acknowledged: Arc<AtomicUsize>,
         quarantined: Arc<AtomicUsize>,
+        visibility_extensions: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -536,6 +615,15 @@ mod tests {
 
         async fn acknowledge(&self, _receipt_handle: &str) -> Result<(), ConsumerTransportError> {
             self.acknowledged.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn extend_visibility(
+            &self,
+            _receipt_handle: &str,
+            _visibility_timeout: Duration,
+        ) -> Result<(), ConsumerTransportError> {
+            self.visibility_extensions.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
@@ -684,6 +772,69 @@ mod tests {
 
         assert_eq!(quarantined.load(Ordering::SeqCst), 1);
         assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_fifo_group_is_rejected_before_database_access()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pool =
+            PgPoolOptions::new().connect_lazy("postgres://app_worker:unused@127.0.0.1/sitolo")?;
+        let transport = Arc::new(RecordingTransport::default());
+        let acknowledged = Arc::clone(&transport.acknowledged);
+        let quarantined = Arc::clone(&transport.quarantined);
+        let transport_port: Arc<dyn ConsumerTransport> = transport;
+        let processor = ConsumerProcessor::new(
+            pool,
+            "iam-projection".to_owned(),
+            Arc::new(TestInbox),
+            Arc::new(TestEffect),
+            transport_port,
+            OutboxErrorClass::new("invalid_event")?,
+        )?;
+
+        let mismatched_group = ReceivedMessage {
+            message_id: "source-id".to_owned(),
+            body: valid_body().to_string(),
+            receipt_handle: "opaque-receipt".to_owned(),
+            message_group_id: Some("wrong-group".to_owned()),
+        };
+        processor.process(&mismatched_group).await?;
+
+        let missing_group = ReceivedMessage {
+            message_id: "source-id-2".to_owned(),
+            body: valid_body().to_string(),
+            receipt_handle: "opaque-receipt-2".to_owned(),
+            message_group_id: None,
+        };
+        assert!(matches!(
+            processor.process(&missing_group).await,
+            Err(ConsumerProcessError::Transport(_))
+        ));
+
+        assert_eq!(quarantined.load(Ordering::SeqCst), 1);
+        assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn processing_renews_visibility_until_the_operation_finishes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let transport = RecordingTransport::default();
+        let extensions = Arc::clone(&transport.visibility_extensions);
+        let processing = async {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            Ok(())
+        };
+        maintain_visibility_lease(
+            &transport,
+            "opaque-receipt",
+            Duration::from_millis(2),
+            Duration::from_secs(4),
+            processing,
+        )
+        .await?;
+        assert!(extensions.load(Ordering::SeqCst) >= 2);
         Ok(())
     }
 }

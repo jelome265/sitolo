@@ -20,6 +20,7 @@ use crate::consumer::{ConsumerTransport, ConsumerTransportError, ReceivedMessage
 use sitolo_events::OutboxErrorClass;
 
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const VISIBILITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SQS_BODY_BYTES: usize = 1_048_576;
 
 /// Explicit SQS FIFO endpoints and bounded SDK call timeout.
@@ -129,7 +130,10 @@ impl SqsFifoConsumerTransport {
                 self.client
                     .receive_message()
                     .queue_url(&self.config.queue_url)
-                    .max_number_of_messages(10)
+                    // One outstanding message per worker keeps every received
+                    // FIFO receipt under the processor's renewable visibility
+                    // lease while it applies the transaction serially.
+                    .max_number_of_messages(1)
                     .wait_time_seconds(20)
                     .visibility_timeout(60)
                     .message_system_attribute_names(MessageSystemAttributeName::MessageGroupId)
@@ -188,6 +192,33 @@ impl ConsumerTransport for SqsFifoConsumerTransport {
                     .delete_message()
                     .queue_url(&self.config.queue_url)
                     .receipt_handle(receipt_handle)
+                    .send(),
+            )
+            .await,
+        )?;
+        Ok(())
+    }
+
+    async fn extend_visibility(
+        &self,
+        receipt_handle: &str,
+        visibility_timeout: Duration,
+    ) -> Result<(), ConsumerTransportError> {
+        let seconds = i32::try_from(visibility_timeout.as_secs())
+            .ok()
+            .filter(|seconds| (1..=43_200).contains(seconds))
+            .ok_or(ConsumerTransportError)?;
+        if receipt_handle.is_empty() || receipt_handle.len() > 1024 {
+            return Err(ConsumerTransportError);
+        }
+        transport_error(
+            tokio::time::timeout(
+                self.config.request_timeout.min(VISIBILITY_REQUEST_TIMEOUT),
+                self.client
+                    .change_message_visibility()
+                    .queue_url(&self.config.queue_url)
+                    .receipt_handle(receipt_handle)
+                    .visibility_timeout(seconds)
                     .send(),
             )
             .await,

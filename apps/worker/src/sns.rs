@@ -394,7 +394,11 @@ fn valid_sns_deduplication_id(value: &str) -> bool {
         })
 }
 
-fn aggregate_group_id(organization_id: &str, aggregate_type: &str, aggregate_id: &str) -> String {
+pub(crate) fn aggregate_group_id(
+    organization_id: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(organization_id.as_bytes());
     hasher.update([0]);
