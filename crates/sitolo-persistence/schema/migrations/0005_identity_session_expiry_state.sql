@@ -1,5 +1,20 @@
 -- Persist terminal session-expiry states when an expired session is presented.
 -- Kept as an additive migration so released migration 0001 remains immutable.
+CREATE TABLE __SCHEMA__.identity_auth_events (
+    event_id TEXT PRIMARY KEY,
+    event_name TEXT NOT NULL CHECK (event_name = 'auth.session.expired'),
+    occurred_at TIMESTAMPTZ NOT NULL,
+    subject_ref TEXT NOT NULL,
+    session_ref TEXT NOT NULL,
+    result TEXT NOT NULL CHECK (result = 'SUCCESS'),
+    reason_class TEXT NOT NULL CHECK (reason_class IN ('idle_expired', 'absolute_expired')),
+    security_version BIGINT NOT NULL CHECK (security_version > 0),
+    CONSTRAINT uq_identity_auth_event_session UNIQUE (session_ref, event_name)
+);
+
+ALTER TABLE __SCHEMA__.identity_auth_events OWNER TO app_identity_owner;
+REVOKE ALL ON __SCHEMA__.identity_auth_events FROM PUBLIC, app_runtime;
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.accept_sitolo_session(
     p_session_id TEXT,
     p_expected_user_id TEXT,
@@ -32,6 +47,7 @@ DECLARE
     v_user_version BIGINT;
     v_device_state TEXT;
     v_device_version BIGINT;
+    v_expiry_reason TEXT;
 BEGIN
     -- Expiry is a terminal state transition, but only for the matching,
     -- current user/session pair. A stale session cannot revoke a newer or
@@ -48,7 +64,20 @@ BEGIN
        AND u.suspended = FALSE
        AND s.state = 'active'
        AND s.security_version = u.security_version
-       AND (s.idle_expires_at <= p_now OR s.absolute_expires_at <= p_now);
+       AND (s.idle_expires_at <= p_now OR s.absolute_expires_at <= p_now)
+    RETURNING s.* INTO v_session;
+
+    IF FOUND THEN
+        v_expiry_reason := v_session.state;
+        INSERT INTO __SCHEMA__.identity_auth_events (
+            event_id, event_name, occurred_at, subject_ref, session_ref,
+            result, reason_class, security_version
+        ) VALUES (
+            v_session.id,
+            'auth.session.expired', p_now, v_session.user_id, v_session.id,
+            'SUCCESS', v_expiry_reason, v_session.security_version
+        );
+    END IF;
 
     SELECT s.*
       INTO v_session

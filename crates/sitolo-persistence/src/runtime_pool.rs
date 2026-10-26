@@ -198,6 +198,20 @@ impl PgRuntimePool {
                AND to_regclass(format('%I.%I', $1, 'external_identities')) IS NOT NULL \
                AND to_regclass(format('%I.%I', $1, 'identity_devices')) IS NOT NULL \
                AND to_regclass(format('%I.%I', $1, 'identity_sessions')) IS NOT NULL \
+               AND to_regclass(format('%I.%I', $1, 'identity_auth_events')) IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM pg_class AS c \
+                   JOIN pg_namespace AS n ON n.oid = c.relnamespace \
+                   JOIN pg_roles AS r ON r.oid = c.relowner \
+                   WHERE n.nspname = $1 AND c.relname = 'identity_auth_events' \
+                     AND r.rolname = 'app_identity_owner') \
+               AND NOT has_table_privilege(current_user, \
+                   to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'SELECT') \
+               AND NOT has_table_privilege(current_user, \
+                   to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'INSERT') \
+               AND NOT has_table_privilege(current_user, \
+                   to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'UPDATE') \
+               AND NOT has_table_privilege(current_user, \
+                   to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'DELETE') \
                AND to_regclass(format('%I.%I', $1, 'organizations')) IS NOT NULL \
                AND to_regclass(format('%I.%I', $1, 'organization_memberships')) IS NOT NULL \
                AND to_regclass(format('%I.%I', $1, 'branches')) IS NOT NULL \
@@ -254,6 +268,20 @@ impl PgRuntimePool {
                    AND to_regclass(format('%I.%I', $1, 'external_identities')) IS NOT NULL \
                    AND to_regclass(format('%I.%I', $1, 'identity_devices')) IS NOT NULL \
                    AND to_regclass(format('%I.%I', $1, 'identity_sessions')) IS NOT NULL \
+                   AND to_regclass(format('%I.%I', $1, 'identity_auth_events')) IS NOT NULL \
+                   AND EXISTS (SELECT 1 FROM pg_class AS c \
+                       JOIN pg_namespace AS n ON n.oid = c.relnamespace \
+                       JOIN pg_roles AS r ON r.oid = c.relowner \
+                       WHERE n.nspname = $1 AND c.relname = 'identity_auth_events' \
+                         AND r.rolname = 'app_identity_owner') \
+                   AND NOT has_table_privilege(current_user, \
+                       to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'SELECT') \
+                   AND NOT has_table_privilege(current_user, \
+                       to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'INSERT') \
+                   AND NOT has_table_privilege(current_user, \
+                       to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'UPDATE') \
+                   AND NOT has_table_privilege(current_user, \
+                       to_regclass(format('%I.%I', $1, 'identity_auth_events')), 'DELETE') \
                    AND to_regclass(format('%I.%I', $1, 'organizations')) IS NOT NULL \
                    AND to_regclass(format('%I.%I', $1, 'organization_memberships')) IS NOT NULL \
                    AND to_regclass(format('%I.%I', $1, 'branches')) IS NOT NULL \

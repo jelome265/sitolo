@@ -148,3 +148,16 @@ and CodeQL [121493288342](https://github.com/jelome265/sitolo/runs/121493288342)
 all passed on that exact source. See
 `follow-up/phase3-session-expiry-remediation-2026-10-26.md`. This does not close
 the broader Phase 3 lifecycle or independent Stage 06 review.
+
+### Audit-driven correction — session expiry evidence
+
+Source `0385aadd` passed its listed workflows, but subsequent contract review
+found that its session expiry state transition lacked the required durable
+`auth.session.expired` audit record (Phase 3 §§1, 37, 52). That source's CI
+does not verify the corrected candidate. The current correction adds a
+restricted identity audit table, writes the audit event atomically with expiry,
+checks ownership and runtime privileges at startup/readiness, and adds
+PostgreSQL evidence for audit failure rollback, replay cardinality and
+wrong-user no-write behavior. The corrected source is awaiting exact-head
+PostgreSQL CI; see
+`follow-up/phase3-session-expiry-audit-remediation-2026-10-26.md`.

@@ -328,6 +328,63 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
     Ok(())
 }
 
+#[tokio::test]
+async fn postgres_session_expiry_rolls_back_when_audit_insert_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        seed_identity_authority_fixtures(&ctx).await?;
+        let reject_audit_sql = format!(
+            "CREATE FUNCTION \"{}\".reject_identity_auth_event() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN \
+             RAISE EXCEPTION 'forced identity audit failure' USING ERRCODE = 'P0001'; \
+             RETURN NEW; END $$; \
+             CREATE TRIGGER reject_identity_auth_event BEFORE INSERT ON \"{}\".identity_auth_events \
+             FOR EACH ROW EXECUTE FUNCTION \"{}\".reject_identity_auth_event()",
+            ctx.schema_name, ctx.schema_name, ctx.schema_name
+        );
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(reject_audit_sql.as_str()))
+            .execute(&ctx.admin_pool)
+            .await?;
+
+        let authority =
+            PgRequestIdentityAuthority::new(ctx.runtime_pool.clone(), ctx.schema_name.clone())?;
+        let future_now = std::time::SystemTime::now()
+            .checked_add(Duration::from_secs(30))
+            .ok_or_else(|| std::io::Error::other("future test time overflow"))?;
+        let result = authority
+            .accept_session_for_user(
+                &SessionId::new("session-auth-idle-expired")?,
+                &UserId::new("user-auth-1")?,
+                future_now,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(sitolo_auth::AuthError::IdentityAuthorityUnavailable)
+        ));
+
+        let state: String = query_scalar(
+            "SELECT state FROM identity_sessions WHERE id = 'session-auth-idle-expired'",
+        )
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(state, "active");
+        let audit_count: i64 = query_scalar(
+            "SELECT count(*) FROM identity_auth_events \
+             WHERE session_ref = 'session-auth-idle-expired'",
+        )
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(audit_count, 0);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
 async fn assert_expired_sessions(
     authority: &PgRequestIdentityAuthority,
     ctx: &TestContext,
@@ -356,6 +413,12 @@ async fn assert_expired_sessions(
                 .fetch_one(&ctx.admin_pool)
                 .await?;
         assert_eq!(state_after_wrong_user, "active");
+        let audit_count_after_wrong_user: i64 =
+            query_scalar("SELECT count(*) FROM identity_auth_events WHERE session_ref = $1")
+                .bind(session_id)
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(audit_count_after_wrong_user, 0);
 
         let rejected = authority
             .accept_session_for_user(
@@ -374,6 +437,40 @@ async fn assert_expired_sessions(
                 .fetch_one(&ctx.admin_pool)
                 .await?;
         assert_eq!(persisted_state, expected_state);
+        let audit_row = query(
+            "SELECT event_name, result, reason_class FROM identity_auth_events \
+             WHERE session_ref = $1",
+        )
+        .bind(session_id)
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(
+            audit_row.try_get::<String, _>("event_name")?,
+            "auth.session.expired"
+        );
+        assert_eq!(audit_row.try_get::<String, _>("result")?, "SUCCESS");
+        assert_eq!(
+            audit_row.try_get::<String, _>("reason_class")?,
+            expected_state
+        );
+
+        let replay = authority
+            .accept_session_for_user(
+                &SessionId::new(session_id)?,
+                &UserId::new("user-auth-1")?,
+                future_now,
+            )
+            .await;
+        assert!(matches!(
+            replay,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+        let audit_count_after_replay: i64 =
+            query_scalar("SELECT count(*) FROM identity_auth_events WHERE session_ref = $1")
+                .bind(session_id)
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(audit_count_after_replay, 1);
     }
     Ok(())
 }
@@ -1803,6 +1900,47 @@ fn assert_identity_functions_hardened(rows: &[FunctionSecurityRow]) {
     }
 }
 
+async fn assert_identity_auth_event_table_hardened(
+    ctx: &TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (
+        owner,
+        runtime_can_select,
+        runtime_can_insert,
+        runtime_can_update,
+        runtime_can_delete,
+        worker_can_select,
+        worker_can_insert,
+    ): (String, bool, bool, bool, bool, bool, bool) = query_as(
+        "SELECT owner.rolname, \
+                has_table_privilege('app_runtime', table_row.oid, 'SELECT'), \
+                has_table_privilege('app_runtime', table_row.oid, 'INSERT'), \
+                has_table_privilege('app_runtime', table_row.oid, 'UPDATE'), \
+                has_table_privilege('app_runtime', table_row.oid, 'DELETE'), \
+                has_table_privilege('app_worker', table_row.oid, 'SELECT'), \
+                has_table_privilege('app_worker', table_row.oid, 'INSERT') \
+         FROM pg_class AS table_row \
+         JOIN pg_namespace AS schema_row ON schema_row.oid = table_row.relnamespace \
+         JOIN pg_roles AS owner ON owner.oid = table_row.relowner \
+         WHERE schema_row.nspname = $1 AND table_row.relname = 'identity_auth_events'",
+    )
+    .bind(&ctx.schema_name)
+    .fetch_one(&ctx.admin_pool)
+    .await?;
+
+    assert_eq!(owner, "app_identity_owner");
+    assert!(
+        !runtime_can_select
+            && !runtime_can_insert
+            && !runtime_can_update
+            && !runtime_can_delete
+            && !worker_can_select
+            && !worker_can_insert,
+        "identity audit rows must be writable only by the security-definer owner"
+    );
+    Ok(())
+}
+
 /// Test: every SECURITY DEFINER function is owned by the non-login owner,
 /// pins a trusted `search_path`, and is executable only by `app_worker`.
 #[tokio::test]
@@ -1868,6 +2006,8 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
         .fetch_all(&ctx.admin_pool)
         .await?;
         assert_identity_functions_hardened(&identity_rows);
+
+        assert_identity_auth_event_table_hardened(&ctx).await?;
 
         let roles: Vec<(String, bool, bool, bool, bool, bool)> = query_as(
             "SELECT rolname, rolsuper, rolbypassrls, rolcanlogin, rolinherit, rolreplication

@@ -11,6 +11,11 @@ date: "2026-10-26"
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
 
+> **Verification correction:** The `0385aadd` session-expiry checkpoint below
+> is superseded. Contract review found it persisted expiry state without the
+> required audit event. Its CI results do not verify the corrected candidate;
+> see the [audit correction](phase3-session-expiry-audit-remediation-2026-10-26.md).
+
 ## Current implementation checkpoint — `0385aadd`
 
 Migration `0005_identity_session_expiry_state.sql` now persists idle and

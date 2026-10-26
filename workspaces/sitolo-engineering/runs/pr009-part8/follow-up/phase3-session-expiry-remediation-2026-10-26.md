@@ -53,7 +53,9 @@ passed on `0385aadd2697b9900e77eecd47ab0f71f886c66a`:
 - Policy: [40298701810](https://github.com/jelome265/sitolo/actions/runs/40298701810).
 - CodeQL: [121493288342](https://github.com/jelome265/sitolo/runs/121493288342).
 
-Phase 3 remains partial: this change does not implement durable session
-creation, logout/revocation, refresh rotation, MFA, recovery or device
-registration/revocation. Independent Stage 06 review and human PR approval are
-not claimed.
+The audit correction in
+`phase3-session-expiry-audit-remediation-2026-10-26.md` supersedes this
+implementation. The results above belong only to source `0385aadd`, whose
+expiry-state change lacked required audit evidence; do not use them to verify
+the corrected candidate. Phase 3 remains partial, and independent Stage 06
+review and human PR approval are not claimed.
