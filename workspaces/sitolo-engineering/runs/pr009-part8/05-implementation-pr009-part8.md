@@ -127,3 +127,17 @@ Added `every_organization_and_branch_transition_rolls_back_on_audit_and_outbox_f
 Local verification: `cargo fmt --all -- --check`, `cargo test -p sitolo-application --test membership_transaction_integration --no-run --locked`, `cargo clippy -p sitolo-application --test membership_transaction_integration --locked -- -D warnings`, and `git diff --check` passed. The test executed and passed in the exact-head PostgreSQL workflow; the membership transaction target reported 39 passed. The PostgreSQL workflow [39743712879](https://github.com/jelome265/sitolo/actions/runs/39743712879), Rust verification [39743712958](https://github.com/jelome265/sitolo/actions/runs/39743712958), security [39743712881](https://github.com/jelome265/sitolo/actions/runs/39743712881), and policy [39743712882](https://github.com/jelome265/sitolo/actions/runs/39743712882) all passed on this exact SHA, including CodeQL. The remaining PR check also passed. No local PostgreSQL was started or used.
 
 This adds fault-path coverage but does not independently close AUD-03. The exact source must pass PostgreSQL CI and receive Stage 06 re-audit; AUD-02's production OIDC/session/authorization composition also remains open, and protected live HTTP writes remain fail-closed. PR #49 remains open and unmerged.
+
+## Current implementation increment — durable session expiry, 2026-10-26
+
+From source `49affa5a118339ad6056cb7f4d1520820d14ebc8`, this increment adds
+an immutable follow-on migration that persists the Phase 3 `idle_expired` and
+`absolute_expired` terminal states when a matching session is presented after
+its deadline. The real PostgreSQL integration test now asserts both denial and
+persisted terminal state. The persistence harness applies migration 0005 after
+0004; the migration manifest pins its checksum. Local formatting, persistence
+all-target check, integration-target compilation, strict persistence Clippy,
+migration inventory and diff checks pass. The database test was not executed
+locally; exact-head CI is required. See
+`follow-up/phase3-session-expiry-remediation-2026-10-26.md`. This does not close
+the broader Phase 3 lifecycle or independent Stage 06 review.

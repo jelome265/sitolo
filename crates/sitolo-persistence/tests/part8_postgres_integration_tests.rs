@@ -163,6 +163,14 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
     ))
     .execute(&admin_pool)
     .await?;
+    let identity_expiry_sql =
+        include_str!("../schema/migrations/0005_identity_session_expiry_state.sql")
+            .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(
+        identity_expiry_sql.as_str(),
+    ))
+    .execute(&admin_pool)
+    .await?;
 
     let runtime_opts = targets
         .runtime
@@ -310,11 +318,63 @@ async fn postgres_identity_mapping_and_session_authority_fail_closed()
             invalidated_session,
             Err(sitolo_auth::AuthError::AuthenticationFailed)
         ));
+
+        assert_expired_sessions(&authority, &ctx).await?;
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
     teardown_test_context(&ctx).await?;
     result?;
+    Ok(())
+}
+
+async fn assert_expired_sessions(
+    authority: &PgRequestIdentityAuthority,
+    ctx: &TestContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let future_now = std::time::SystemTime::now()
+        .checked_add(Duration::from_secs(30))
+        .ok_or_else(|| std::io::Error::other("future test time overflow"))?;
+    for (session_id, expected_state) in [
+        ("session-auth-idle-expired", "idle_expired"),
+        ("session-auth-absolute-expired", "absolute_expired"),
+    ] {
+        let wrong_user = authority
+            .accept_session_for_user(
+                &SessionId::new(session_id)?,
+                &UserId::new("user-auth-2")?,
+                future_now,
+            )
+            .await;
+        assert!(matches!(
+            wrong_user,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+        let state_after_wrong_user: String =
+            query_scalar("SELECT state FROM identity_sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(state_after_wrong_user, "active");
+
+        let rejected = authority
+            .accept_session_for_user(
+                &SessionId::new(session_id)?,
+                &UserId::new("user-auth-1")?,
+                future_now,
+            )
+            .await;
+        assert!(matches!(
+            rejected,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+        let persisted_state: String =
+            query_scalar("SELECT state FROM identity_sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(persisted_state, expected_state);
+    }
     Ok(())
 }
 
@@ -354,6 +414,16 @@ async fn seed_identity_authority_fixtures(
              $6, $7, 'merchant', 'active', $3, $3, $3,
              $3 + INTERVAL '10 minutes', $3 + INTERVAL '1 hour', 600,
              'a1', 'oidc', 1
+         ), (
+             $8, $9, 'merchant', 'active', $3 - INTERVAL '2 hours',
+             $3 - INTERVAL '2 hours', $3 - INTERVAL '1 minute',
+             $3 - INTERVAL '1 second', $3 + INTERVAL '2 hours', 600,
+             'a1', 'oidc', 1
+         ), (
+             $10, $11, 'merchant', 'active', $3 - INTERVAL '2 hours',
+             $3 - INTERVAL '2 hours', $3 - INTERVAL '1 hour',
+             $3 - INTERVAL '1 minute', $3 - INTERVAL '1 second', 600,
+             'a1', 'oidc', 1
          )",
     )
     .bind("session-auth-1")
@@ -363,6 +433,10 @@ async fn seed_identity_authority_fixtures(
     .bind("user-auth-2")
     .bind("session-auth-suspended")
     .bind("user-auth-suspended")
+    .bind("session-auth-idle-expired")
+    .bind("user-auth-1")
+    .bind("session-auth-absolute-expired")
+    .bind("user-auth-1")
     .execute(&ctx.admin_pool)
     .await?;
     Ok(())
