@@ -138,6 +138,13 @@ persisted terminal state. The persistence harness applies migration 0005 after
 0004; the migration manifest pins its checksum. Local formatting, persistence
 all-target check, integration-target compilation, strict persistence Clippy,
 migration inventory and diff checks pass. The database test was not executed
-locally; exact-head CI is required. See
+locally; it passed in the approved disposable PostgreSQL CI service on exact
+implementation source `0385aadd2697b9900e77eecd47ab0f71f886c66a`. Rust
+[40298701887](https://github.com/jelome265/sitolo/actions/runs/40298701887),
+Integration [40298701841](https://github.com/jelome265/sitolo/actions/runs/40298701841),
+Security [40298701912](https://github.com/jelome265/sitolo/actions/runs/40298701912),
+Policy [40298701810](https://github.com/jelome265/sitolo/actions/runs/40298701810),
+and CodeQL [121493288342](https://github.com/jelome265/sitolo/runs/121493288342)
+all passed on that exact source. See
 `follow-up/phase3-session-expiry-remediation-2026-10-26.md`. This does not close
 the broader Phase 3 lifecycle or independent Stage 06 review.

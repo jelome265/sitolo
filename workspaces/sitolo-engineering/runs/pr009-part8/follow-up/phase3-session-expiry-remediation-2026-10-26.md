@@ -1,9 +1,11 @@
 ---
 artifact_type: remediation-extension
-status: implemented-awaiting-exact-head-postgresql-verification
+status: implemented-partial
 run_slug: "pr009-part8"
 security_relevant: yes
 source_before: "49affa5a118339ad6056cb7f4d1520820d14ebc8"
+implementation_source: "0385aadd2697b9900e77eecd47ab0f71f886c66a"
+verification_head: "0385aadd2697b9900e77eecd47ab0f71f886c66a"
 date: "2026-10-26"
 ---
 
@@ -39,8 +41,18 @@ persisted lifecycle state.
 - `python scripts/ci/check-schema-migrations.py` — pass.
 - `git diff --check` — pass.
 
-No local PostgreSQL was started. The database behavior still needs execution in
-the approved disposable PostgreSQL CI service on the exact pushed source head.
+No local PostgreSQL was started. The database regression executed in the
+approved disposable PostgreSQL CI environment; all required exact-head checks
+passed on `0385aadd2697b9900e77eecd47ab0f71f886c66a`:
+
+- Rust canonical verifier, including the session authority PostgreSQL test:
+  [40298701887](https://github.com/jelome265/sitolo/actions/runs/40298701887).
+- PostgreSQL application/contract integration:
+  [40298701841](https://github.com/jelome265/sitolo/actions/runs/40298701841).
+- Security: [40298701912](https://github.com/jelome265/sitolo/actions/runs/40298701912).
+- Policy: [40298701810](https://github.com/jelome265/sitolo/actions/runs/40298701810).
+- CodeQL: [121493288342](https://github.com/jelome265/sitolo/runs/121493288342).
+
 Phase 3 remains partial: this change does not implement durable session
 creation, logout/revocation, refresh rotation, MFA, recovery or device
 registration/revocation. Independent Stage 06 review and human PR approval are

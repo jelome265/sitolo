@@ -3,13 +3,29 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "31d89a9b63e76c1b47c88b1b1276cc7eb1d2d296"
+candidate_head: "0385aadd2697b9900e77eecd47ab0f71f886c66a"
 date: "2026-10-26"
 ---
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
 This index retains the historical cross-phase audit artifacts and points to the current remediation checkpoint. The deep audit, original plan and copy-paste guide remain pinned to source snapshot `a378beec2bc5097bb642825d2e8fcf4c967c105d`; the current implementation and exact-head verification are recorded separately below.
+
+## Current implementation checkpoint — `0385aadd`
+
+Migration `0005_identity_session_expiry_state.sql` now persists idle and
+absolute session expiry as terminal states when the matching user presents an
+expired active session. A real PostgreSQL regression verifies denial, the
+persisted terminal state, and no mutation from a wrong user selector. The
+canonical Rust verifier [40298701887](https://github.com/jelome265/sitolo/actions/runs/40298701887),
+PostgreSQL Integration [40298701841](https://github.com/jelome265/sitolo/actions/runs/40298701841),
+Security [40298701912](https://github.com/jelome265/sitolo/actions/runs/40298701912),
+Policy [40298701810](https://github.com/jelome265/sitolo/actions/runs/40298701810),
+and CodeQL [121493288342](https://github.com/jelome265/sitolo/runs/121493288342)
+passed on exact source `0385aadd2697b9900e77eecd47ab0f71f886c66a`. Phase 3 remains
+partial; durable session creation, logout/revocation, refresh, MFA, recovery,
+device lifecycle and independent Stage 06 review remain outstanding. Details:
+[session expiry remediation](phase3-session-expiry-remediation-2026-10-26.md).
 
 ## Current implementation checkpoint — `31d89a9`
 
