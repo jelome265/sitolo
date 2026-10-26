@@ -485,13 +485,13 @@ async fn postgres_session_logout_rolls_back_when_audit_insert_fails()
     let result = async {
         seed_identity_authority_fixtures(&ctx).await?;
         let reject_audit_sql = format!(
-            "CREATE FUNCTION \"{}\".reject_logout_audit() RETURNS trigger \\
-             LANGUAGE plpgsql AS $$ BEGIN \\
-             IF NEW.event_name = 'auth.session.revoked' THEN \\
-                 RAISE EXCEPTION 'forced logout audit failure' USING ERRCODE = 'P0001'; \\
-             END IF; \\
-             RETURN NEW; END $$; \\
-             CREATE TRIGGER reject_logout_audit BEFORE INSERT ON \"{}\".identity_auth_events \\
+            "CREATE FUNCTION \"{}\".reject_logout_audit() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN \
+             IF NEW.event_name = 'auth.session.revoked' THEN \
+                 RAISE EXCEPTION 'forced logout audit failure' USING ERRCODE = 'P0001'; \
+             END IF; \
+             RETURN NEW; END $$; \
+             CREATE TRIGGER reject_logout_audit BEFORE INSERT ON \"{}\".identity_auth_events \
              FOR EACH ROW EXECUTE FUNCTION \"{}\".reject_logout_audit()",
             ctx.schema_name, ctx.schema_name, ctx.schema_name
         );
