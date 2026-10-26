@@ -21,6 +21,7 @@ CI is a release-control boundary. Local success is useful evidence; protected CI
 - release/build verification where required;
 - dependency policy and audit checks.
 - source-level `#[expect]` lint exceptions must have a non-empty inline reason and an exact path-and-attribute entry in `scripts/ci/rust-lint-exceptions.json`; policy CI regression tests reject missing, changed and stale entries.
+- source-level `#[allow]`, `#[warn]`, and `cfg_attr` lint-level downgrades are rejected so they cannot weaken workspace or command-line enforcement.
 
 ### Security
 

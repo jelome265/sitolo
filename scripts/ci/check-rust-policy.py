@@ -10,8 +10,10 @@ import tomllib
 from pathlib import Path
 
 
-ALLOW_ATTRIBUTE = re.compile(r"#\s*!?\s*\[\s*allow\s*\(")
-CFG_ATTR_ALLOW = re.compile(r"#\s*!?\s*\[\s*cfg_attr\s*\([^]]*\ballow\s*\(", re.DOTALL)
+LOWERING_ATTRIBUTE = re.compile(r"#\s*!?\s*\[\s*(?:allow|warn)\s*\(")
+CFG_ATTR_LOWERING = re.compile(
+    r"#\s*!?\s*\[\s*cfg_attr\s*\([^]]*\b(?:allow|warn)\s*\(", re.DOTALL
+)
 EXPECT_ATTRIBUTE = re.compile(r"#\s*!?\s*\[\s*expect\s*\(")
 UNSAFE_ITEM = re.compile(r"\bunsafe\s*(?:\{|fn\b|impl\b|extern\b)")
 FORBIDDEN_FLAGS = re.compile(
@@ -61,6 +63,10 @@ def _lint_level(value: object) -> str | None:
 def _canonical_expect_attribute(attribute: str) -> str:
     """Normalize layout so exception inventory entries do not depend on wrapping."""
     return " ".join(attribute.split())
+
+
+def _has_lint_downgrade_attribute(source: str) -> bool:
+    return bool(LOWERING_ATTRIBUTE.search(source) or CFG_ATTR_LOWERING.search(source))
 
 
 def _expect_inventory_errors(
@@ -132,10 +138,11 @@ def check_repository(root: Path) -> list[str]:
         for source_path in sorted(source_dir.rglob("*.rs")):
             source = source_path.read_text(encoding="utf-8")
             relative = source_path.relative_to(root)
-            if ALLOW_ATTRIBUTE.search(source):
-                errors.append(f"{relative}: #[allow] attributes are forbidden; use a reviewed narrow #[expect] only when justified")
-            if CFG_ATTR_ALLOW.search(source):
-                errors.append(f"{relative}: cfg_attr-based lint downgrades are forbidden")
+            if _has_lint_downgrade_attribute(source):
+                errors.append(
+                    f"{relative}: source-level #[allow] and #[warn] lint downgrades are forbidden; "
+                    "use a reviewed narrow #[expect] only when justified"
+                )
             for match in EXPECT_ATTRIBUTE.finditer(source):
                 end = _attribute_end(source, match.start())
                 attribute = source[match.start():end]
