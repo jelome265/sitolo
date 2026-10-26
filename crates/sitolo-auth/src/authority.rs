@@ -57,6 +57,20 @@ pub trait RequestIdentityAuthority: Send + Sync {
         now: std::time::SystemTime,
     ) -> Result<SessionSnapshot, AuthError>;
 
+    /// Revokes the caller's current session after verifying that it belongs to
+    /// `expected_user_id`. Repeating logout is idempotent and does not reveal
+    /// whether a different user's session identifier exists.
+    ///
+    /// # Errors
+    /// Returns [`AuthError::IdentityAuthorityUnavailable`] when durable state
+    /// or required audit evidence cannot be committed.
+    async fn logout_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        now: std::time::SystemTime,
+    ) -> Result<(), AuthError>;
+
     /// Loads the device snapshot bound to a session, if the session is
     /// device-bound.
     ///

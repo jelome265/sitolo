@@ -24,3 +24,8 @@ sha256 = "cab9048b6f2baac62acd13a0935d2067aa53f5d04f6816bb43ffa65d8a06c8b5"
 version = 5
 file = "0005_identity_session_expiry_state.sql"
 sha256 = "45ad947d23f05545ba798d5c4f038c475260e65d8ac07c8576563fab1389711e"
+
+[[migration]]
+version = 6
+file = "0006_identity_session_logout.sql"
+sha256 = "458b6183a2c35b27ddc7c306625c9700e2fff16208c615338b42dbc8352e6a3a"

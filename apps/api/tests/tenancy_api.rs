@@ -12,6 +12,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use sitolo_api_bin::bootstrap::StartupContext;
 use sitolo_api_bin::serve::app_router;
+use sitolo_api_bin::serve::declared_routes;
 use sitolo_api_bin::state::AppState;
 use sitolo_application::TenancyService;
 use sitolo_auth::{
@@ -306,6 +307,11 @@ async fn live_route_rejects_missing_credentials() {
     );
 }
 
+#[test]
+fn logout_is_in_the_authenticated_route_inventory() {
+    assert!(declared_routes().contains(&("POST", "/v1/auth/logout", Some("authenticated"))));
+}
+
 #[tokio::test]
 #[expect(
     clippy::expect_used,
@@ -358,6 +364,45 @@ async fn live_route_requires_a_well_formed_session_id_header() {
     assert_eq!(
         after.session.last_seen_at, before.session.last_seen_at,
         "denied requests without a usable selector do not touch a session"
+    );
+}
+
+#[tokio::test]
+#[expect(
+    clippy::expect_used,
+    reason = "Fixed HTTP and identity fixtures assert harness invariants."
+)]
+async fn authenticated_logout_revokes_only_the_current_durable_session() {
+    let database = identity_database();
+    let session_id = provision_identity(&database, "user-1", true).await;
+    let app = router_with_identity(Arc::clone(&database)).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/logout")
+                .header("authorization", "Bearer syntactically-valid-token")
+                .header("session-id", session_id.as_str())
+                .body(Body::empty())
+                .expect("logout request is valid"),
+        )
+        .await
+        .expect("logout handler responds");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let snapshot = database
+        .session_snapshot(&session_id)
+        .await
+        .expect("logged-out session remains auditable");
+    assert_eq!(snapshot.session.state, sitolo_auth::SessionState::Revoked);
+    assert_eq!(
+        post_organization(
+            app,
+            Some("Bearer syntactically-valid-token"),
+            Some(session_id.as_str()),
+            "{}",
+        )
+        .await,
+        StatusCode::UNAUTHORIZED
     );
 }
 

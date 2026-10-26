@@ -883,6 +883,24 @@ impl sitolo_auth::RequestIdentityAuthority for IdentityDatabase {
         <Self as IdentityStores>::accept_session_for_user(self, id, expected_user_id, now).await
     }
 
+    async fn logout_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        _now: SystemTime,
+    ) -> Result<(), sitolo_auth::AuthError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(session) = state.sessions.get_mut(id)
+            && &session.user_id == expected_user_id
+        {
+            session.revoke(RevocationTrigger::Logout);
+        }
+        Ok(())
+    }
+
     async fn device_snapshot(
         &self,
         id: &DeviceId,

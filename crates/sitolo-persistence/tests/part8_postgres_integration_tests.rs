@@ -143,34 +143,7 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         .execute(&admin_pool)
         .await?;
 
-    let identity_sql = include_str!("../schema/migrations/0001_phase3_identity_authority.sql")
-        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
-        .execute(&admin_pool)
-        .await?;
-    let audit_outbox_sql = include_str!("../schema/migrations/0002_phase4_part8_audit_outbox.sql")
-        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_outbox_sql.as_str()))
-        .execute(&admin_pool)
-        .await?;
-    raw_sql(include_str!(
-        "../schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"
-    ))
-    .execute(&admin_pool)
-    .await?;
-    raw_sql(include_str!(
-        "../schema/migrations/0004_worker_consumer_inbox.sql"
-    ))
-    .execute(&admin_pool)
-    .await?;
-    let identity_expiry_sql =
-        include_str!("../schema/migrations/0005_identity_session_expiry_state.sql")
-            .replace("__SCHEMA__", &format!("\"{schema_name}\""));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(
-        identity_expiry_sql.as_str(),
-    ))
-    .execute(&admin_pool)
-    .await?;
+    apply_migrations(&admin_pool, &schema_name).await?;
 
     let runtime_opts = targets
         .runtime
@@ -224,6 +197,38 @@ async fn setup_test_context() -> Result<TestContext, Box<dyn std::error::Error>>
         worker_pool,
         schema_name,
     })
+}
+
+async fn apply_migrations(
+    admin_pool: &PgPool,
+    schema_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let identity_sql = include_str!("../schema/migrations/0001_phase3_identity_authority.sql")
+        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(identity_sql.as_str()))
+        .execute(admin_pool)
+        .await?;
+    let audit_outbox_sql = include_str!("../schema/migrations/0002_phase4_part8_audit_outbox.sql")
+        .replace("__SCHEMA__", &format!("\"{schema_name}\""));
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(audit_outbox_sql.as_str()))
+        .execute(admin_pool)
+        .await?;
+    for migration in [
+        include_str!("../schema/migrations/0003_phase4_part8_tenancy_provisioning.sql"),
+        include_str!("../schema/migrations/0004_worker_consumer_inbox.sql"),
+    ] {
+        raw_sql(migration).execute(admin_pool).await?;
+    }
+    for migration in [
+        include_str!("../schema/migrations/0005_identity_session_expiry_state.sql"),
+        include_str!("../schema/migrations/0006_identity_session_logout.sql"),
+    ] {
+        let migration = migration.replace("__SCHEMA__", &format!("\"{schema_name}\""));
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(migration.as_str()))
+            .execute(admin_pool)
+            .await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -373,6 +378,146 @@ async fn postgres_session_expiry_rolls_back_when_audit_insert_fails()
         let audit_count: i64 = query_scalar(
             "SELECT count(*) FROM identity_auth_events \
              WHERE session_ref = 'session-auth-idle-expired'",
+        )
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(audit_count, 0);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_session_logout_is_owner_bound_audited_and_idempotent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        seed_identity_authority_fixtures(&ctx).await?;
+        let authority =
+            PgRequestIdentityAuthority::new(ctx.runtime_pool.clone(), ctx.schema_name.clone())?;
+        let now = std::time::SystemTime::now();
+        let session = SessionId::new("session-auth-1")?;
+
+        let user = UserId::new("user-auth-1")?;
+        let (first_logout, concurrent_logout) = tokio::join!(
+            authority.logout_session_for_user(&session, &user, now),
+            authority.logout_session_for_user(&session, &user, now),
+        );
+        first_logout?;
+        concurrent_logout?;
+        let state: String = query_scalar("SELECT state FROM identity_sessions WHERE id = $1")
+            .bind(session.as_str())
+            .fetch_one(&ctx.admin_pool)
+            .await?;
+        assert_eq!(state, "revoked");
+        let metadata = query(
+            "SELECT revoked_at, revoke_reason FROM identity_sessions WHERE id = $1",
+        )
+        .bind(session.as_str())
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert!(metadata.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("revoked_at")?.is_some());
+        assert_eq!(metadata.try_get::<Option<String>, _>("revoke_reason")?.as_deref(), Some("logout"));
+
+        let event = query(
+            "SELECT event_name, reason_class, result FROM identity_auth_events WHERE session_ref = $1",
+        )
+        .bind(session.as_str())
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(event.try_get::<String, _>("event_name")?, "auth.session.revoked");
+        assert_eq!(event.try_get::<String, _>("reason_class")?, "logout");
+        assert_eq!(event.try_get::<String, _>("result")?, "SUCCESS");
+
+        // A mismatched user cannot revoke another user's session or create an event.
+        authority
+            .logout_session_for_user(
+                &SessionId::new("session-auth-2")?,
+                &UserId::new("user-auth-1")?,
+                now,
+            )
+            .await?;
+        let other_state: String =
+            query_scalar("SELECT state FROM identity_sessions WHERE id = 'session-auth-2'")
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(other_state, "active");
+        let other_events: i64 = query_scalar(
+            "SELECT count(*) FROM identity_auth_events WHERE session_ref = 'session-auth-2'",
+        )
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(other_events, 0);
+
+        // Replay is deliberately a no-op: it neither errors nor duplicates evidence.
+        authority
+            .logout_session_for_user(&session, &UserId::new("user-auth-1")?, now)
+            .await?;
+        let event_count: i64 = query_scalar(
+            "SELECT count(*) FROM identity_auth_events WHERE session_ref = $1",
+        )
+        .bind(session.as_str())
+        .fetch_one(&ctx.admin_pool)
+        .await?;
+        assert_eq!(event_count, 1);
+        let denied = authority
+            .accept_session_for_user(&session, &UserId::new("user-auth-1")?, now)
+            .await;
+        assert!(matches!(
+            denied,
+            Err(sitolo_auth::AuthError::AuthenticationFailed)
+        ));
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    teardown_test_context(&ctx).await?;
+    result?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_session_logout_rolls_back_when_audit_insert_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ctx = setup_test_context().await?;
+    let result = async {
+        seed_identity_authority_fixtures(&ctx).await?;
+        let reject_audit_sql = format!(
+            "CREATE FUNCTION \"{}\".reject_logout_audit() RETURNS trigger \\
+             LANGUAGE plpgsql AS $$ BEGIN \\
+             IF NEW.event_name = 'auth.session.revoked' THEN \\
+                 RAISE EXCEPTION 'forced logout audit failure' USING ERRCODE = 'P0001'; \\
+             END IF; \\
+             RETURN NEW; END $$; \\
+             CREATE TRIGGER reject_logout_audit BEFORE INSERT ON \"{}\".identity_auth_events \\
+             FOR EACH ROW EXECUTE FUNCTION \"{}\".reject_logout_audit()",
+            ctx.schema_name, ctx.schema_name, ctx.schema_name
+        );
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(reject_audit_sql.as_str()))
+            .execute(&ctx.admin_pool)
+            .await?;
+        let authority =
+            PgRequestIdentityAuthority::new(ctx.runtime_pool.clone(), ctx.schema_name.clone())?;
+        let failed = authority
+            .logout_session_for_user(
+                &SessionId::new("session-auth-1")?,
+                &UserId::new("user-auth-1")?,
+                std::time::SystemTime::now(),
+            )
+            .await;
+        assert!(matches!(
+            failed,
+            Err(sitolo_auth::AuthError::IdentityAuthorityUnavailable)
+        ));
+        let state: String =
+            query_scalar("SELECT state FROM identity_sessions WHERE id = 'session-auth-1'")
+                .fetch_one(&ctx.admin_pool)
+                .await?;
+        assert_eq!(state, "active");
+        let audit_count: i64 = query_scalar(
+            "SELECT count(*) FROM identity_auth_events WHERE session_ref = 'session-auth-1'",
         )
         .fetch_one(&ctx.admin_pool)
         .await?;
@@ -1885,7 +2030,7 @@ fn assert_worker_functions_hardened(
 /// Asserts every identity function is owned by the identity owner, carries an
 /// explicit ACL, is executable only by `app_runtime`, and pins `pg_catalog`.
 fn assert_identity_functions_hardened(rows: &[FunctionSecurityRow]) {
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
     for row in rows {
         assert_eq!(row.owner, "app_identity_owner");
         assert!(row.prosecdef);
@@ -1998,7 +2143,8 @@ async fn test_security_definer_functions_are_hardened() -> Result<(), Box<dyn st
              JOIN pg_roles AS r ON r.oid = p.proowner
              WHERE n.nspname = $1
                AND p.proname IN (
-                   'resolve_external_identity', 'accept_sitolo_session', 'load_identity_device'
+                   'resolve_external_identity', 'accept_sitolo_session', 'load_identity_device',
+                   'revoke_sitolo_session'
                )
              ORDER BY p.proname",
         )

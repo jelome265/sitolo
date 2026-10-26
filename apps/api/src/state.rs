@@ -231,6 +231,30 @@ impl AppState {
         .await
     }
 
+    /// Revokes the session established by this request's trusted security
+    /// context. The caller cannot choose another session or user identifier.
+    ///
+    /// # Errors
+    /// Returns [`AppError::DependencyUnavailable`] when the identity authority
+    /// is not composed, and an authentication error when revocation or its
+    /// required durable audit write fails.
+    pub async fn logout_current_session(
+        &self,
+        security_context: &SecurityContext,
+    ) -> Result<(), AppError> {
+        let Some(identity_authority) = self.identity_authority.as_deref() else {
+            return Err(AppError::DependencyUnavailable);
+        };
+        identity_authority
+            .logout_session_for_user(
+                &security_context.principal.session_id,
+                &security_context.principal.subject_id,
+                SystemTime::now(),
+            )
+            .await
+            .map_err(|error| map_auth_error(&error))
+    }
+
     /// Configured service name reported by the liveness probe.
     #[must_use]
     pub fn service_name(&self) -> &str {

@@ -47,6 +47,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Access {
     Public { reason: &'static str },
+    Authenticated,
     Permission(&'static str),
 }
 
@@ -83,6 +84,13 @@ const ROUTES: &[RouteSpec] = &[
         },
         body_limit: MAX_PROBE_BODY_BYTES,
         timeout: PROBE_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/auth/logout",
+        access: Access::Authenticated,
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
     },
     RouteSpec {
         method: Method::Post,
@@ -136,6 +144,7 @@ pub fn declared_routes() -> Vec<(&'static str, &'static str, Option<&'static str
             };
             let permission = match spec.access {
                 Access::Public { .. } => None,
+                Access::Authenticated => Some("authenticated"),
                 Access::Permission(permission) => Some(permission),
             };
             (method, spec.path, permission)
@@ -144,7 +153,7 @@ pub fn declared_routes() -> Vec<(&'static str, &'static str, Option<&'static str
 }
 
 /// Reviewed route snapshot. Update only with an intentional route change and its tests.
-pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
+pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/auth/logout access=authenticated body<=1024 timeout=10000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
 
 /// Errors returned while validating the static route inventory or serving HTTP.
 #[derive(Debug, Error)]
@@ -210,6 +219,9 @@ fn method_router(
     match (spec.method, spec.path, spec.access) {
         (Method::Get, "/process/live", Access::Public { .. }) => Ok(bounded(spec, get(liveness))),
         (Method::Get, "/process/ready", Access::Public { .. }) => Ok(bounded(spec, get(readiness))),
+        (Method::Post, "/v1/auth/logout", Access::Authenticated) => {
+            Ok(authenticated(spec, state, post(logout_route)))
+        }
         (Method::Post, "/v1/organizations", Access::Permission(_)) => {
             Ok(authenticated(spec, state, post(create_organization_route)))
         }
@@ -296,6 +308,7 @@ fn validate_route_inventory() -> Result<String, ServeError> {
     for (index, spec) in ROUTES.iter().enumerate() {
         let access_ok = match spec.access {
             Access::Public { reason } => !reason.trim().is_empty(),
+            Access::Authenticated => true,
             Access::Permission(permission) => !permission.trim().is_empty(),
         };
         let duplicate = ROUTES.get(..index).is_some_and(|prior| {
@@ -325,6 +338,7 @@ fn render_route(spec: &RouteSpec) -> String {
     };
     let access = match spec.access {
         Access::Public { reason } => format!("public({reason})"),
+        Access::Authenticated => "authenticated".to_owned(),
         Access::Permission(permission) => format!("perm({permission})"),
     };
     format!(
@@ -353,6 +367,16 @@ async fn readiness(State(state): State<Arc<AppState>>) -> Response {
             Json(json!({"status": "not_ready"})),
         )
             .into_response()
+    }
+}
+
+async fn logout_route(
+    State(state): State<Arc<AppState>>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    match state.logout_current_session(&security_context).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(&error),
     }
 }
 

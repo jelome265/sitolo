@@ -13,6 +13,7 @@ harnesses apply these exact source files to disposable schemas in this order.
 | 0003 | `0003_phase4_part8_tenancy_provisioning.sql` | Organization, branch, membership, invitation, role, and scope state | Apply with the target application schema as `search_path`; `app_runtime` and owner roles must already exist. |
 | 0004 | `0004_worker_consumer_inbox.sql` | Durable consumer idempotency and aggregate sequence guard | Apply with the target application schema as `search_path`; `app_worker` must already exist. |
 | 0005 | `0005_identity_session_expiry_state.sql` | Persist terminal idle and absolute expiry states with immutable `auth.session.expired` audit evidence | Provision and catalog-check `app_runtime` and `app_identity_owner`; replace `__SCHEMA__` with the validated quoted schema identifier. |
+| 0006 | `0006_identity_session_logout.sql` | Persist owner-bound current-session logout and immutable `auth.session.revoked` audit evidence | Apply after 0005; provision and catalog-check `app_runtime` and `app_identity_owner`; replace `__SCHEMA__` with the validated quoted schema identifier. |
 
 The `__SCHEMA__` placeholder is an SQL identifier, not a value. A runner must
 validate it against the approved schema-name contract and substitute a quoted

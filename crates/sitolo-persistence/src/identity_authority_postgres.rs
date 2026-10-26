@@ -130,6 +130,24 @@ impl RequestIdentityAuthority for PgRequestIdentityAuthority {
         })
     }
 
+    async fn logout_session_for_user(
+        &self,
+        id: &SessionId,
+        expected_user_id: &UserId,
+        now: SystemTime,
+    ) -> Result<(), sitolo_auth::AuthError> {
+        let now = crate::postgres_time::to_utc(now)
+            .ok_or(sitolo_auth::AuthError::AuthenticationFailed)?;
+        query("SELECT revoke_sitolo_session($1, $2, $3)")
+            .bind(id.as_str())
+            .bind(expected_user_id.as_str())
+            .bind(now)
+            .execute(&self.runtime_pool)
+            .await
+            .map_err(|_error| sitolo_auth::AuthError::IdentityAuthorityUnavailable)?;
+        Ok(())
+    }
+
     async fn device_snapshot(
         &self,
         id: &DeviceId,

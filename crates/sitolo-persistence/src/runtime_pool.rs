@@ -223,6 +223,7 @@ impl PgRuntimePool {
                AND to_regprocedure(format('%I.%s', $1, 'resolve_external_identity(text,text)')) IS NOT NULL \
                AND to_regprocedure(format('%I.%s', $1, 'accept_sitolo_session(text,text,timestamp with time zone)')) IS NOT NULL \
                AND to_regprocedure(format('%I.%s', $1, 'load_identity_device(text,text)')) IS NOT NULL \
+               AND to_regprocedure(format('%I.%s', $1, 'revoke_sitolo_session(text,text,timestamp with time zone)')) IS NOT NULL \
                AND to_regprocedure(format('%I.%s', $1, 'lock_organization_mutations(text)')) IS NOT NULL \
                AND to_regprocedure(format('%I.%s', $1, 'transition_organization_state(text,text)')) IS NOT NULL \
                AND to_regprocedure(format('%I.%s', $1, 'transition_branch_state(text,text,text)')) IS NOT NULL \
@@ -293,6 +294,7 @@ impl PgRuntimePool {
                    AND to_regprocedure(format('%I.%s', $1, 'resolve_external_identity(text,text)')) IS NOT NULL \
                    AND to_regprocedure(format('%I.%s', $1, 'accept_sitolo_session(text,text,timestamp with time zone)')) IS NOT NULL \
                    AND to_regprocedure(format('%I.%s', $1, 'load_identity_device(text,text)')) IS NOT NULL \
+                   AND to_regprocedure(format('%I.%s', $1, 'revoke_sitolo_session(text,text,timestamp with time zone)')) IS NOT NULL \
                    AND to_regprocedure(format('%I.%s', $1, 'lock_organization_mutations(text)')) IS NOT NULL \
                    AND to_regprocedure(format('%I.%s', $1, 'transition_organization_state(text,text)')) IS NOT NULL \
                    AND to_regprocedure(format('%I.%s', $1, 'transition_branch_state(text,text,text)')) IS NOT NULL \
