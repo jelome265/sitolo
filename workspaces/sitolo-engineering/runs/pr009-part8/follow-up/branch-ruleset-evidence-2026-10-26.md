@@ -3,7 +3,7 @@ artifact_type: repository-settings-evidence
 status: verified-incomplete
 run_slug: "pr009-part8"
 security_relevant: yes
-observed_pr_head: "1eba7f976fab4635662415b63881174ee3b73e29"
+observed_pr_head: "793fbdb3832d195288a6827d953d7853cdf5dd40"
 ruleset_id: 22459107
 date: "2026-10-26"
 ---
@@ -22,10 +22,19 @@ This inspection supersedes older notes that the ruleset API returned 403; the cu
 - It has no required status-check rule. Thus Rust, Integration, Security and Policy workflow success is not enforced by this ruleset before updating `main`.
 - `dismiss_stale_reviews_on_push`, `require_code_owner_review`, `require_last_push_approval`, and `required_review_thread_resolution` are false. A repository-role bypass actor has `always` bypass mode; the authenticated user can bypass.
 
-For PR head `1eba7f976fab4635662415b63881174ee3b73e29`, `gh pr checks 49` reports the Rust `verify`, Integration application/contract tests, Security jobs, Policy, and CodeQL checks all successful. These are observed results, not evidence that the ruleset requires them.
+For PR head `793fbdb3832d195288a6827d953d7853cdf5dd40`, `gh pr checks 49` and the commit's check-runs report success for the following exact contexts:
+
+| Workflow group | Successful check contexts observed on the PR head |
+|---|---|
+| Rust | `architecture`, `toolchain`, `verify` |
+| Integration | `application and contract tests with PostgreSQL` |
+| Security | `dependency-policy`, `advisories`, `secrets`, `codeql`, `offensive-regression`, plus the GitHub Advanced Security `CodeQL` check |
+| Policy | `policy` |
+
+These are observed successes, not evidence that the ruleset requires them. The administrator should require the listed contexts for the corresponding gates and retain the exact spellings GitHub exposes when configuring the ruleset. The PR is still `OPEN` with review decision `REVIEW_REQUIRED`.
 
 ## Disposition and required action
 
-The repository settings do not satisfy the work order's required-check gate. A repository administrator must configure the active default-branch ruleset to require the canonical Rust, Integration, Security and Policy checks and review the always-bypass role against the human-review requirement. Re-read the ruleset after configuration and record the resulting exact contexts and review/bypass controls. Do not claim branch protection is complete until that evidence exists.
+The repository settings do not satisfy the work order's required-check gate. A repository administrator must configure the active default-branch ruleset to require the exact contexts listed above, preserve the required human approval, and review the always-bypass role against the human-review requirement. Re-read the ruleset after configuration and record the resulting exact contexts and review/bypass controls. Do not claim branch protection is complete until that evidence exists.
 
 This record documents read-only inspection; it does not change repository settings. PR #49 remains open and review-required.
