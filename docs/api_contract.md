@@ -1192,6 +1192,12 @@ GET  /v1/branches/{branch_id}
 PATCH /v1/branches/{branch_id}
 ```
 
+Organization creation is the complete onboarding command: it commits the organization
+as `ACTIVE` together with its initial owner membership and default branch/configuration.
+Incomplete setup is not exposed as a normal tenant. There is no separate organization
+activation HTTP endpoint; a future provisioning workflow must define that contract
+before adding such a route.
+
 Authorization varies by operation.
 
 Branch mutation is not granted merely because a user can view a branch.

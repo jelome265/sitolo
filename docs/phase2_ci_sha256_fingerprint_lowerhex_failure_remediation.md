@@ -119,7 +119,7 @@ It explicitly states that effective configuration must be fingerprintable over *
 
 The dedicated PostgreSQL/Phase 2 document further states that database fingerprint inputs include host, port, database, role, pool limits, acquisition timeout, and secret reference. A secret value change alone must not change the fingerprint. fileciteturn8file2L108-L132
 
-That same contract explicitly requires a distinction between `DATABASE__PASSWORD_REF` as canonical configuration and `SITOLO__DATABASE__PASSWORD` as a development-only secret-provider input. The password value must remain outside `AppConfig` and outside the fingerprint. fileciteturn9file1L196-L222
+That same contract explicitly requires a distinction between `DATABASE__PASSWORD_REF` as canonical configuration and `SITOLO_SECRET__DATABASE__PASSWORD` as a development-only secret-provider input. The password value must remain outside `AppConfig` and outside the fingerprint. fileciteturn9file1L196-L222
 
 The Phase 2 Definition of Done also requires a deterministic configuration fingerprint that excludes secret values. fileciteturn8file8L545-L582
 

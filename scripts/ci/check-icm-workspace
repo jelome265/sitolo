@@ -257,9 +257,66 @@ if [[ -d .codex ]]; then
   fail=1
 fi
 
-if [[ -d .agents/skills || -d .agents/evals ]]; then
-  echo "ICM WORKSPACE VIOLATION: repository-global agent workflow detected" >&2
+# Editor-specific reusable skill instructions are allowed under .agents/skills.
+# They are not an alternate workflow engine: the canonical run lifecycle remains
+# workspaces/sitolo-engineering/stages/01-select..09-deliver. Reject eval shelves,
+# arbitrary .agents root entries, malformed skill packages, and executable files
+# outside a skill's explicit scripts/ directory.
+if [[ -d .agents ]]; then
+  unexpected_entries="$(find .agents -mindepth 1 -maxdepth 1 ! -name skills ! -name evals -print)"
+  if [[ -n "$unexpected_entries" ]]; then
+    echo "ICM WORKSPACE VIOLATION: unsupported .agents root entries detected:" >&2
+    printf '%s\n' "$unexpected_entries" >&2
+    fail=1
+  fi
+fi
+
+if [[ -d .agents/evals ]]; then
+  echo "ICM WORKSPACE VIOLATION: repository-local agent eval/orchestration shelf is not permitted" >&2
   fail=1
+fi
+
+if [[ -d .agents/skills ]]; then
+  stray_entries="$(find .agents/skills -mindepth 1 -maxdepth 1 ! -type d -print)"
+  if [[ -n "$stray_entries" ]]; then
+    echo "ICM WORKSPACE VIOLATION: .agents/skills may contain skill directories only:" >&2
+    printf '%s\n' "$stray_entries" >&2
+    fail=1
+  fi
+
+  skill_dirs=()
+  mapfile -t skill_dirs < <(find .agents/skills -mindepth 1 -maxdepth 1 -type d -print | sort)
+  for skill_dir in "${skill_dirs[@]}"; do
+    skill_name="${skill_dir##*/}"
+    if [[ ! "$skill_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+      echo "ICM WORKSPACE VIOLATION: invalid repo-local skill directory name: $skill_dir" >&2
+      fail=1
+    fi
+    if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+      echo "ICM WORKSPACE VIOLATION: each repo-local skill requires SKILL.md: $skill_dir" >&2
+      fail=1
+    fi
+  done
+
+  symlinks="$(find .agents/skills -type l -print)"
+  if [[ -n "$symlinks" ]]; then
+    echo "ICM WORKSPACE VIOLATION: symlinks are not allowed in repo-local skill packages:" >&2
+    printf '%s\n' "$symlinks" >&2
+    fail=1
+  fi
+
+  while IFS= read -r skill_file; do
+    [[ -z "$skill_file" ]] && continue
+    relative="${skill_file#.agents/skills/}"
+    case "$relative" in
+      */SKILL.md|*/references/*.md|*/references/*.toml|*/references/*.rs|*/references/*.json|*/scripts/*.sh|*/scripts/*.py|*/assets/*)
+        ;;
+      *)
+        echo "ICM WORKSPACE VIOLATION: repo-local skill file is outside approved SKILL.md/references/scripts/assets surfaces: $skill_file" >&2
+        fail=1
+        ;;
+    esac
+  done < <(find .agents/skills -type f -print | sort)
 fi
 
 if grep -Eq 'openai/codex-action|\[agents\.|codex-review\.yml' .github/workflows/*.yml 2>/dev/null; then

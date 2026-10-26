@@ -25,6 +25,14 @@ pub const MAX_OPERATION: usize = 64;
 pub struct OperationName(String);
 
 impl OperationName {
+    /// Parses an operation name for use in telemetry fields.
+    ///
+    /// Returns `None` unless the value is non-empty, at most
+    /// [`MAX_OPERATION`] bytes long, and composed only of lowercase ASCII
+    /// alphanumerics plus `.`, `_`, or `-`. The accepted grammar keeps
+    /// request-derived text, secrets, and serialized objects out of metric
+    /// labels.
+    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         if value.is_empty()
             || value.len() > MAX_OPERATION
@@ -37,6 +45,8 @@ impl OperationName {
         Some(OperationName(value.to_string()))
     }
 
+    /// Borrows the validated operation name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -78,7 +88,7 @@ mod tests {
     }
 
     #[test]
-    fn emission_uses_registry_schema_version() {
+    fn emission_uses_registry_schema_version() -> Result<(), Box<dyn std::error::Error>> {
         use std::io::Write;
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
@@ -89,7 +99,7 @@ mod tests {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 self.0
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .extend_from_slice(buf);
                 Ok(buf.len())
             }
@@ -97,7 +107,7 @@ mod tests {
                 Ok(())
             }
         }
-        impl<'a> MakeWriter<'a> for Sink {
+        impl MakeWriter<'_> for Sink {
             type Writer = Sink;
             fn make_writer(&self) -> Sink {
                 self.clone()
@@ -109,8 +119,10 @@ mod tests {
             .json()
             .with_writer(sink.clone())
             .finish();
-        let request_id = RequestId::parse_client("client-1").expect("client id");
-        let operation = OperationName::parse("auth.login").expect("operation");
+        let request_id = RequestId::parse_client("client-1")
+            .ok_or(std::io::Error::other("valid request id rejected"))?;
+        let operation = OperationName::parse("auth.login")
+            .ok_or(std::io::Error::other("valid operation name rejected"))?;
         tracing::subscriber::with_default(subscriber, || {
             assert!(emit_registered("service.starting", &request_id, &operation));
             assert!(!emit_registered("no.such.event", &request_id, &operation));
@@ -118,17 +130,17 @@ mod tests {
         let output = String::from_utf8(
             sink.0
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone(),
-        )
-        .expect("captured JSON is UTF-8");
+        )?;
         // Schema version comes from the registry definition, and the
         // bounded operation is the only operation text emitted.
         let expected_version = event("service.starting")
-            .expect("registered")
+            .ok_or(std::io::Error::other("registered event absent"))?
             .schema_version;
         assert!(output.contains(&format!("\"event_schema_version\":{expected_version}")));
         assert!(output.contains("\"operation\":\"auth.login\""));
         assert!(!output.contains("no.such.event"));
+        Ok(())
     }
 }

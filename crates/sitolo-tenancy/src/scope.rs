@@ -46,18 +46,28 @@ pub struct TrustedOrganizationId(pub OrganizationId);
 /// registry) so tenant existence is never enumerable.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ScopeError {
+    /// Authoritative tenancy records could not be read.
+    #[error("authoritative tenancy records are unavailable")]
+    AuthorityUnavailable,
+    /// The caller has no authority for the requested organization.
     #[error("no authority for the requested organization")]
     OrganizationDenied,
+    /// The caller has no authority for the requested branch.
     #[error("no authority for the requested branch")]
     BranchDenied,
+    /// The membership is not active enough to carry business authority.
     #[error("membership lacks ordinary business authority")]
     MembershipNotActive,
+    /// The organization is not in an operating state.
     #[error("organization is not operating")]
     OrganizationNotActive,
+    /// The branch is not in an operating state.
     #[error("branch is not operating")]
     BranchNotActive,
+    /// The membership lacks the permission the operation requires.
     #[error("membership lacks the required permission")]
     PermissionDenied,
+    /// No active scope grant covers the requested scope.
     #[error("no scope grant covers the requested scope")]
     ScopeDenied,
 }
@@ -66,6 +76,10 @@ pub enum ScopeError {
 /// (sections 5, 55). Succeeds only when the selector names the membership's
 /// own organization — a Tenant A member requesting Tenant B is denied without
 /// disclosing whether Tenant B exists.
+///
+/// # Errors
+/// Returns [`ScopeError::OrganizationDenied`] when the requested selector does
+/// not name the membership's own organization.
 pub fn bind_organization(
     requested: &RequestedOrganizationId,
     membership: &Membership,
@@ -87,11 +101,18 @@ pub fn bind_organization(
 /// "no permissions" outside the authorizing path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveScope {
+    /// Organization the authority was resolved for.
     pub organization_id: OrganizationId,
+    /// Membership that carries the authority.
     pub membership_id: MembershipId,
+    /// Requested branch, when the operation is branch-scoped.
     pub branch_id: Option<BranchId>,
+    /// Organization optimistic-concurrency version at resolution time.
     pub organization_version: u64,
+    /// Membership optimistic-concurrency version at resolution time.
     pub membership_version: u64,
+    /// Permissions resolved from effective role assignments. Empty means
+    /// unresolved, never "no permissions", outside the authorizing path.
     pub permissions: BTreeSet<Permission>,
 }
 
@@ -187,6 +208,14 @@ impl AuthorizedScope {
 /// state, suspended/revoked membership, non-operating organization or branch,
 /// branch owned by another organization, or a device/branch mismatch (branch
 /// binding arrives in a later Phase 4 PR).
+///
+/// # Errors
+/// Returns [`ScopeError::OrganizationDenied`] when the membership belongs to a
+/// different organization, [`ScopeError::OrganizationNotActive`] when the
+/// organization is not operating, [`ScopeError::MembershipNotActive`] when the
+/// membership cannot carry authority, [`ScopeError::BranchDenied`] when the
+/// branch belongs to another organization, and [`ScopeError::BranchNotActive`]
+/// when the branch is not operating.
 pub fn resolve_effective_scope(
     membership: &Membership,
     organization: &Organization,
@@ -226,110 +255,88 @@ pub fn resolve_effective_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sitolo_domain::tenancy::{
-        BranchId, MembershipId, MembershipState, OrganizationId, TenantUserId,
+    use sitolo_domain::tenancy::{BranchId, Membership, MembershipState};
+    use sitolo_testkit::{
+        active_branch as branch, active_membership as membership, active_organization as org,
+        tenant_user_id,
     };
-
-    fn org(id: &str) -> Organization {
-        let mut organization =
-            Organization::provision(OrganizationId::new(id).unwrap(), "Merchant").unwrap();
-        organization.activate().unwrap();
-        organization
-    }
-
-    fn branch(id: &str, org: &str) -> Branch {
-        let mut branch = Branch::provision(
-            BranchId::new(id).unwrap(),
-            OrganizationId::new(org).unwrap(),
-            "Branch",
-        )
-        .unwrap();
-        branch.activate().unwrap();
-        branch
-    }
-
-    fn membership(id: &str, org: &str, user: &str) -> Membership {
-        let mut membership = Membership::invite(
-            MembershipId::new(id).unwrap(),
-            OrganizationId::new(org).unwrap(),
-            TenantUserId::new(user).unwrap(),
-        );
-        membership.mark_pending().unwrap();
-        membership.activate().unwrap();
-        membership
-    }
+    use std::error::Error;
 
     #[test]
-    fn org_wide_scope_resolves_for_active_membership() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let scope = resolve_effective_scope(&membership, &organization, None).unwrap();
+    fn org_wide_scope_resolves_for_active_membership() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let scope = resolve_effective_scope(&membership, &organization, None)?;
         assert_eq!(scope.organization_id.as_str(), "org-a");
         assert_eq!(scope.membership_id.as_str(), "m1");
         assert_eq!(scope.branch_id, None);
+        Ok(())
     }
 
     #[test]
-    fn branch_scoped_operation_resolves_within_organization() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let branch = branch("branch-a1", "org-a");
-        let scope = resolve_effective_scope(&membership, &organization, Some(&branch)).unwrap();
+    fn branch_scoped_operation_resolves_within_organization() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let branch = branch("branch-a1", "org-a")?;
+        let scope = resolve_effective_scope(&membership, &organization, Some(&branch))?;
         assert_eq!(
             scope.branch_id.as_ref().map(BranchId::as_str),
             Some("branch-a1")
         );
+        Ok(())
     }
 
     #[test]
-    fn cross_tenant_access_is_denied() {
-        let membership = membership("m1", "org-a", "u1");
-        let other = org("org-b");
+    fn cross_tenant_access_is_denied() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let other = org("org-b")?;
         assert_eq!(
             resolve_effective_scope(&membership, &other, None),
             Err(ScopeError::OrganizationDenied)
         );
-        let requested = RequestedOrganizationId(OrganizationId::new("org-b").unwrap());
+        let requested = RequestedOrganizationId(OrganizationId::new("org-b")?);
         assert_eq!(
             bind_organization(&requested, &membership),
             Err(ScopeError::OrganizationDenied)
         );
-        let own = RequestedOrganizationId(OrganizationId::new("org-a").unwrap());
-        assert!(bind_organization(&own, &membership).is_ok());
+        let own = RequestedOrganizationId(OrganizationId::new("org-a")?);
+        bind_organization(&own, &membership)?;
+        Ok(())
     }
 
     #[test]
-    fn cross_branch_access_is_denied() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let foreign = branch("branch-b1", "org-b");
+    fn cross_branch_access_is_denied() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let foreign = branch("branch-b1", "org-b")?;
         assert_eq!(
             resolve_effective_scope(&membership, &organization, Some(&foreign)),
             Err(ScopeError::BranchDenied)
         );
+        Ok(())
     }
 
     #[test]
-    fn non_operating_records_deny() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let branch = branch("branch-a1", "org-a");
+    fn non_operating_records_deny() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let branch = branch("branch-a1", "org-a")?;
 
         let mut suspended_org = organization.clone();
-        suspended_org.suspend().unwrap();
+        suspended_org.suspend()?;
         assert_eq!(
             resolve_effective_scope(&membership, &suspended_org, None),
             Err(ScopeError::OrganizationNotActive)
         );
 
         let mut suspended_member = membership.clone();
-        suspended_member.suspend().unwrap();
+        suspended_member.suspend()?;
         assert_eq!(
             resolve_effective_scope(&suspended_member, &organization, None),
             Err(ScopeError::MembershipNotActive)
         );
         let mut revoked_member = membership.clone();
-        revoked_member.revoke().unwrap();
+        revoked_member.revoke()?;
         assert_eq!(
             resolve_effective_scope(&revoked_member, &organization, None),
             Err(ScopeError::MembershipNotActive)
@@ -339,69 +346,73 @@ mod tests {
             Err(ScopeError::MembershipNotActive)
         );
 
-        let mut suspended_branch = branch.clone();
-        suspended_branch.suspend().unwrap();
+        let mut suspended_branch = branch;
+        suspended_branch.suspend()?;
         assert_eq!(
             resolve_effective_scope(&membership, &organization, Some(&suspended_branch)),
             Err(ScopeError::BranchNotActive)
         );
 
         let mut expired = Membership::invite(
-            MembershipId::new("m9").unwrap(),
-            OrganizationId::new("org-a").unwrap(),
-            TenantUserId::new("u9").unwrap(),
+            MembershipId::new("m9")?,
+            OrganizationId::new("org-a")?,
+            tenant_user_id("u9")?,
         );
-        expired.mark_pending().unwrap();
-        expired.expire().unwrap();
+        expired.mark_pending()?;
+        expired.expire()?;
         assert_eq!(expired.state, MembershipState::Expired);
         assert_eq!(
             resolve_effective_scope(&expired, &organization, None),
             Err(ScopeError::MembershipNotActive)
         );
+        Ok(())
     }
 
     #[test]
-    fn closed_branch_cannot_authorize() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let mut branch = branch("branch-a1", "org-a");
-        branch.begin_close().unwrap();
+    fn closed_branch_cannot_authorize() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let mut branch = branch("branch-a1", "org-a")?;
+        branch.begin_close()?;
         assert_eq!(
             resolve_effective_scope(&membership, &organization, Some(&branch)),
             Err(ScopeError::BranchNotActive)
         );
-        branch.close().unwrap();
+        branch.close()?;
         assert_eq!(
             resolve_effective_scope(&membership, &organization, Some(&branch)),
             Err(ScopeError::BranchNotActive)
         );
+        Ok(())
     }
 
     #[test]
-    fn scope_versions_track_authority_state() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let scope = resolve_effective_scope(&membership, &organization, None).unwrap();
+    fn scope_versions_track_authority_state() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let scope = resolve_effective_scope(&membership, &organization, None)?;
         assert_eq!(scope.organization_version, organization.state_version);
         assert_eq!(scope.membership_version, membership.state_version);
+        Ok(())
     }
 
     #[test]
-    fn authorized_scope_derives_from_effective_and_trusted() {
-        let membership = membership("m1", "org-a", "u1");
-        let organization = org("org-a");
-        let effective = resolve_effective_scope(&membership, &organization, None).unwrap();
+    fn authorized_scope_derives_from_effective_and_trusted() -> Result<(), Box<dyn Error>> {
+        let membership = membership("m1", "org-a", "u1")?;
+        let organization = org("org-a")?;
+        let effective = resolve_effective_scope(&membership, &organization, None)?;
         let via_effective = AuthorizedScope::from_effective(&effective);
         assert_eq!(via_effective.organization_id().as_str(), "org-a");
         assert_eq!(via_effective.membership_id().as_str(), "m1");
 
-        let requested = RequestedOrganizationId(OrganizationId::new("org-a").unwrap());
-        let trusted = bind_organization(&requested, &membership).unwrap();
+        let requested = RequestedOrganizationId(OrganizationId::new("org-a")?);
+        let trusted = bind_organization(&requested, &membership)?;
         let via_trusted = AuthorizedScope::from_trusted(&trusted, &membership);
         assert_eq!(
             via_trusted.organization_id(),
             via_effective.organization_id()
         );
         assert_eq!(via_trusted.membership_id(), via_effective.membership_id());
+        Ok(())
     }
 }

@@ -6,14 +6,27 @@
 //!
 //! Phase 3: identity use cases that wire authentication, sessions, MFA,
 //! device lifecycle, password management, and security-context construction
-//! against the persistence ports.
+//! against application-owned identity ports.
 //!
 //! Phase 4: tenancy use cases that wire organization provisioning, branch
-//! lifecycle, and membership lifecycle against the tenancy persistence port.
+//! lifecycle, and membership lifecycle against application-owned tenancy
+//! ports. The durable adapter implements [`TenancyUnitOfWork`]; the
+//! application never imports a database driver or the persistence crate.
 #![forbid(unsafe_code)]
 
 mod identity;
+mod identity_ports;
 mod tenancy;
+mod tenancy_ports;
 
-pub use identity::IdentityService;
-pub use tenancy::TenancyService;
+pub use identity::{IdentityPolicy, IdentityService, LoginResult, RefreshResult};
+pub use identity_ports::{
+    DeviceRegistrationInput, DeviceRevocationEffect, EstablishedSession, IdentityStores,
+    MfaEnrollmentResult, PasswordResetResult, RefreshRotation, SessionSnapshot, UserSnapshot,
+};
+pub use tenancy::{AuthorizedTenancyError, TenancyService};
+pub use tenancy_ports::{
+    AcceptedInvitation, CreateInvitationInput, CreatedInvitation, ExpiredInvitation,
+    InvitationRecord, MembershipRecord, MembershipSelector, RoleAssignmentOutcome, ScopeMaterial,
+    TenancyStores, TenancyTransaction, TenancyUnitOfWork,
+};

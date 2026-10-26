@@ -4,5 +4,31 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "External integration adapters for OIDC, AWS secrets and messaging."
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
+aws-config.workspace = true
+aws-sdk-secretsmanager.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+rustls.workspace = true
+jsonwebtoken.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+url.workspace = true
+sitolo-auth.workspace = true
+sitolo-security.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

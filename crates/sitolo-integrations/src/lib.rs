@@ -4,3 +4,8 @@
 //! (Phase 1 specification, §5.12). External systems are untrusted trust
 //! boundaries; provider representations remain behind adapters.
 #![forbid(unsafe_code)]
+
+pub mod oidc;
+pub mod secrets;
+
+pub use oidc::{CognitoOidcConfig, CognitoOidcProvider};

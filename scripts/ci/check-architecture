@@ -15,7 +15,10 @@ FORBIDDEN='\b(axum|sqlx|redis|reqwest|hyper|tokio-postgres|ureq)\b'
 
 fail=0
 for crate in "${PURE_CRATES[@]}"; do
-  tree="$(cargo tree --locked -p "$crate" 2>/dev/null || true)"
+  if ! tree="$(cargo tree --locked -p "$crate" 2>/dev/null)"; then
+    echo "ARCHITECTURE CHECK ERROR: unable to inspect dependency graph for $crate" >&2
+    exit 2
+  fi
   if grep -qiE "$FORBIDDEN" <<<"$tree"; then
     echo "ARCHITECTURE VIOLATION: $crate depends on a forbidden infrastructure crate:"
     echo "$tree" | grep -qiE "$FORBIDDEN" && echo "$tree" | grep -iE "$FORBIDDEN"
@@ -41,5 +44,8 @@ if [ "$fail" -ne 0 ]; then
   echo "Architecture check FAILED"
   exit 1
 fi
+
+echo "==> Crate boundary contract"
+python3 scripts/ci/check-crate-boundaries.py
 
 echo "Architecture check PASSED"

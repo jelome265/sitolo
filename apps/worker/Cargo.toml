@@ -4,9 +4,37 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Sitolo outbox relay and consumer worker runtime."
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "sitolo-worker"
 path = "src/main.rs"
 
 [dependencies]
+aws-config.workspace = true
+aws-sdk-sns.workspace = true
+aws-sdk-sqs.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+sitolo-audit.workspace = true
+sitolo-config.workspace = true
+sitolo-domain = { path = "../../crates/sitolo-domain" }
+sitolo-events.workspace = true
+sitolo-integrations = { path = "../../crates/sitolo-integrations" }
+sitolo-persistence.workspace = true
+sitolo-security.workspace = true
+serde_json.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

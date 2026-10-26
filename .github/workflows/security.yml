@@ -19,6 +19,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Dependency, license, and source policy
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        env:
+          # The action's pinned container has Rust 1.85 installed. The repo's
+          # newer rust-toolchain.toml override is not installed in that image;
+          # cargo-deny itself does not build project code.
+          RUSTUP_TOOLCHAIN: 1.85.0
 
   advisories:
     runs-on: ubuntu-latest
@@ -28,7 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: python3 ./scripts/ci/install-policy-tools.py --tool cargo-audit
       - name: Advisory scan
         run: cargo audit
 
@@ -92,9 +97,11 @@ jobs:
         env:
           SITOLO_OFFENSIVE_ALLOWED: true
           SITOLO_OFFENSIVE_ENV: disposable
+          SITOLO_TEST_DATABASE_DISPOSABLE: "true"
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_offensive
           DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_offensive
           RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_offensive
+          WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_offensive
         run: bash ./scripts/ci/run-offensive-security 2>&1 | tee offensive-security.log
       - name: Publish offensive security evidence
         if: always()

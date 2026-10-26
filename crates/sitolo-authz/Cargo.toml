@@ -4,8 +4,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Authorization model: roles, permissions, scopes and effective-scope resolution."
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 sha2.workspace = true
 sitolo-domain = { path = "../sitolo-domain" }
 thiserror.workspace = true
+[lints]
+workspace = true

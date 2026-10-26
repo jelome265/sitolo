@@ -1,0 +1,31 @@
+format_version = 1
+
+[[migration]]
+version = 1
+file = "0001_phase3_identity_authority.sql"
+sha256 = "48eceb1067730aa92318845eafc23d796fafec1b267e58701f5e70fa100e54c4"
+
+[[migration]]
+version = 2
+file = "0002_phase4_part8_audit_outbox.sql"
+sha256 = "607a4c80e60c4b7e46e0bfa968832f11ac0e914e42bc442aaec6915e49052ae5"
+
+[[migration]]
+version = 3
+file = "0003_phase4_part8_tenancy_provisioning.sql"
+sha256 = "6a75f2d13b8087cfed9ed86d0b3dc7fa6fee912d5a268383079cf303c999851f"
+
+[[migration]]
+version = 4
+file = "0004_worker_consumer_inbox.sql"
+sha256 = "cab9048b6f2baac62acd13a0935d2067aa53f5d04f6816bb43ffa65d8a06c8b5"
+
+[[migration]]
+version = 5
+file = "0005_identity_session_expiry_state.sql"
+sha256 = "45ad947d23f05545ba798d5c4f038c475260e65d8ac07c8576563fab1389711e"
+
+[[migration]]
+version = 6
+file = "0006_identity_session_logout.sql"
+sha256 = "458b6183a2c35b27ddc7c306625c9700e2fff16208c615338b42dbc8352e6a3a"

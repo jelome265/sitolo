@@ -1,7 +1,7 @@
 # Sitolo — Current Implementation Status
 
 **Status:** Current implementation-state pointer
-**Date:** 2026-09-26
+**Date:** 2026-10-26
 **Main baseline:** `623f7aed6105664d10d1a2802480fde8316ed5f8`
 
 ## Active product implementation
@@ -9,6 +9,16 @@
 The active Sitolo product-development stream is **Phase 4 Part 8 / PR-009: durable audit evidence + transactional outbox**.
 
 PR #49 is the active implementation PR for that work. It remains open and is not the same work as PR #52.
+
+### PR #49 latest implementation checkpoint
+
+The latest implementation source is `76154ffd639ff6467729f3e4ab508f554a72f919` on `feat/phase4-pr009-audit-outbox`. Rust [40290717776](https://github.com/jelome265/sitolo/actions/runs/40290717776), Integration [40290717827](https://github.com/jelome265/sitolo/actions/runs/40290717827), Security [40290718200](https://github.com/jelome265/sitolo/actions/runs/40290718200), and Policy [40290717731](https://github.com/jelome265/sitolo/actions/runs/40290717731) all pass on that exact SHA. The branch includes fail-closed disposable-database target validation, fingerprint coverage, shared testkit fixtures, organization activation route disposition, PostgreSQL transaction/identity evidence, worker ordering and SQS lease renewal, and strict lint/CI controls. The policy inventories all 45 existing reasoned source `#[expect]` exception pairs and rejects direct or conditional `#[allow]` and `#[warn]` downgrades with CI regression coverage.
+
+PR #49 remains **not ready for merge or Phase 4 closure**. Production consumer/effect composition, migration/release authority, full mutation/Phase 3 identity evidence, default-branch required-check configuration, independent Stage 06 review, and human review remain open. The active default-branch ruleset currently lacks required status checks and permits an always-bypass repository role; see the [ruleset evidence](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/branch-ruleset-evidence-2026-10-26.md). The organization activation route was removed from the active API surface because no persisted provisioning transition exists; shared testkit fixtures and automated lint/CI policy enforcement are implemented. See [`phase4_part8_pr009_current_status.md`](phase4_part8_pr009_current_status.md) and the [Phase 1–4 requirements matrix](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-requirements-matrix-2026-10-25.md).
+
+### Focused test-harness follow-up — 2026-10-25
+
+Code head `db4fcbaa69f12b96971d95d8bc6c2786c978858f` now validates the generated Part 8 test schema identifier before connecting or executing DDL. Its focused regression, strict Clippy and formatting checks pass. Rust [40180985925](https://github.com/jelome265/sitolo/actions/runs/40180985925), Integration [40180985800](https://github.com/jelome265/sitolo/actions/runs/40180985800), Security [40180985807](https://github.com/jelome265/sitolo/actions/runs/40180985807), and Policy [40180985960](https://github.com/jelome265/sitolo/actions/runs/40180985960) passed on that exact head. This closes only the generated identifier guard; the blockers above remain. See the [verification follow-up](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-follow-up-2026-10-25.md).
 
 ## PR #52
 

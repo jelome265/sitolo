@@ -40,7 +40,7 @@ Record explicit, time-bounded deviations from mandatory security controls. An ex
 
 **No active security exceptions are recorded here.**
 
-The separate test-scope exception `SCOPE-EXC-001` remains documented in `docs/security_test_harness.md`; it is not production risk acceptance and does not authorize database security claims.
+The bounded workflow-scope record `SCOPE-EXC-001` is documented in `docs/testing_strategy.md`. It is not a waiver or production risk acceptance and does not authorize database security claims.
 
 ## Closure
 

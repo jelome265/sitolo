@@ -3676,6 +3676,7 @@ DENY / REAUTHENTICATE / RECOVER
 | DEVICE_REVOKED | device | 401/403 | no | generic |
 | DEVICE_VERIFICATION_REQUIRED | device | 403 | controlled flow | generic |
 | IDENTITY_PROVIDER_UNAVAILABLE | dependency | 503 | bounded retry | generic |
+| IDENTITY_AUTHORITY_UNAVAILABLE | dependency | 503 | bounded retry | generic |
 | INVALID_RECOVERY_ARTIFACT | recovery | 400/401 | no | generic |
 | RECOVERY_ARTIFACT_USED | recovery | 409/401 | no | generic |
 

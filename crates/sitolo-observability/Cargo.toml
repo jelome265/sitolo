@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Bounded telemetry admission, correlation identifiers, and closed event and metric registries for Sitolo."
+repository = "https://github.com/jelome265/sitolo"
+readme = "../../README.md"
+keywords = ["observability", "telemetry", "tracing", "metrics"]
+categories = ["development-tools::debugging"]
 
 [dependencies]
 tracing.workspace = true
@@ -12,3 +17,6 @@ uuid.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

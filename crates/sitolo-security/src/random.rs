@@ -7,6 +7,7 @@
 //! wire an OS CSPRNG-backed adapter; this crate provides only a deterministic
 //! test double, hard-refusing production use (Phase 2 §16 fail-closed pattern).
 
+use std::fmt;
 use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
@@ -15,6 +16,7 @@ use thiserror::Error;
 /// Errors produced by randomness sources.
 #[derive(Debug, Error)]
 pub enum RandomSourceError {
+    /// A deterministic generator was requested for a production posture.
     #[error("deterministic randomness is forbidden in production")]
     ForbiddenInProduction,
 }
@@ -35,28 +37,38 @@ pub trait RandomSource: Send + Sync {
 
 /// A deterministic SHA-256 counter-chain generator.
 ///
-/// Test and fixture use only. Like [`crate::EnvSecretProvider`], it can be
-/// constructed in a production posture but every read is refused, so a
-/// misconfigured wiring fails at first use rather than minting predictable
-/// credentials (§43 fail-closed rule).
+/// Test and fixture use only. The production-guarded [`Self::new`] constructor
+/// refuses a production posture before a value can be created.
 pub struct DeterministicRandom {
     seed: [u8; 32],
     counter: Mutex<u64>,
-    production: bool,
+}
+
+impl fmt::Debug for DeterministicRandom {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `seed` is key material; the counter is derived state. Neither is
+        // safe to render.
+        f.write_str("DeterministicRandom(***)")
+    }
 }
 
 impl DeterministicRandom {
     /// Development/test construction path.
+    #[must_use]
     pub fn test_only(seed: [u8; 32]) -> Self {
         DeterministicRandom {
             seed,
             counter: Mutex::new(0),
-            production: false,
         }
     }
 
     /// Production-guarded construction: succeeds only when `production` is
     /// false, mirroring the local secret provider rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RandomSourceError::ForbiddenInProduction`] when `production`
+    /// is true; no generator is created in that case.
     pub fn new(seed: [u8; 32], production: bool) -> Result<Self, RandomSourceError> {
         if production {
             return Err(RandomSourceError::ForbiddenInProduction);
@@ -68,7 +80,7 @@ impl DeterministicRandom {
         let mut counter = self
             .counter
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *counter = counter.wrapping_add(1);
         let mut h = Sha256::new();
         h.update(self.seed);
@@ -79,16 +91,12 @@ impl DeterministicRandom {
 
 impl RandomSource for DeterministicRandom {
     fn fill(&self, dest: &mut [u8]) {
-        if self.production {
-            // Fail closed: predictable output must never reach a caller.
-            panic!("deterministic randomness is forbidden in production");
-        }
-        let mut offset = 0usize;
-        while offset < dest.len() {
+        // `chunks_mut` bounds every chunk by the 32-byte block width, so the
+        // split point is always in range and no arithmetic can overflow.
+        for chunk in dest.chunks_mut(32) {
             let block = self.stream_next();
-            let take = (dest.len() - offset).min(block.len());
-            dest[offset..offset + take].copy_from_slice(&block[..take]);
-            offset += take;
+            let (source, _) = block.split_at(chunk.len());
+            chunk.copy_from_slice(source);
         }
     }
 }
@@ -112,5 +120,11 @@ mod tests {
         let b = r.bytes(16);
         assert_ne!(a, b, "consecutive draws must differ");
         assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn debug_never_carries_the_seed() {
+        let r = DeterministicRandom::test_only([0xAB; 32]);
+        assert_eq!(format!("{r:?}"), "DeterministicRandom(***)");
     }
 }
