@@ -175,3 +175,28 @@ Policy [40301735372](https://github.com/jelome265/sitolo/actions/runs/4030173537
 and CodeQL [121503273264](https://github.com/jelome265/sitolo/runs/121503273264)
 also passed on that head. See
 `follow-up/phase3-session-expiry-audit-remediation-2026-10-26.md`.
+
+## Follow-up contract disposition — role-grant risk policy, 2026-11-01
+
+The current source and binding API/Phase 4 contracts were rechecked on branch
+`feat/phase4-pr009-audit-outbox`, source `25b40df08cdac63de520b36d890ec74fb5474ee3`.
+`TenancyService::assign_role_with_evidence` authorizes persisted
+`ROLE_ASSIGN`, then calls `TenancyTransaction::insert_role_assignment`, whose
+PostgreSQL adapter inserts the requested role as `EFFECTIVE`. API contract §92
+also requires target-role, scope, separation-of-duties and approval checks;
+Phase 4 §19 requires step-up/approval for high-risk role grants but leaves
+the classification and policy unspecified. No role grant/revoke HTTP route is
+currently exposed. The current source therefore does not establish those
+additional controls, and this report does not claim the generic command is
+ready for a public route.
+
+The exact policy dependency and required owner decision are recorded in the
+[Phase 1–4 requirements matrix](follow-up/phase1-4-requirements-matrix-2026-10-25.md).
+Product/security owners must approve role risk classes and the target-role,
+scope, separation-of-duties, step-up and second-person approval rules before
+the command is exposed or treated as fully authorized. The current ICM update
+is documentation-only (`007b749c2e22838679cf86fbd3c5e1cf4366310f`); it does
+not modify source behavior. `python scripts/ci/check-doc-references` and the
+Git Bash invocation of `scripts/ci/check-icm-workspace` pass locally. Exact-head
+Rust, Integration, Security and Policy workflows were queued on `007b749` and
+must be reported only after completion.
