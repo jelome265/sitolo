@@ -1,23 +1,24 @@
 # Sitolo — Phase 4 Part 8 PR-009 Current Status
 
-**Status:** NOT READY FOR MERGE — exact-head Rust, Integration, Security and Policy checks pass on `76154ff`; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
+**Status:** NOT READY FOR MERGE — exact-head Rust, Integration, Security and Policy checks pass on `da81810`; Phase 1–4 release blockers, independent Stage 06 review and human review remain outstanding.
 **PR:** [#49 — Phase 4 Part 8 audit and outbox](https://github.com/jelome265/sitolo/pull/49)
 **Branch:** `feat/phase4-pr009-audit-outbox`
-**Latest implementation source:** `76154ffd639ff6467729f3e4ab508f554a72f919` completes path-specific lint exception inventory and rejects source-level `#[allow]`/`#[warn]` downgrades.
-**Latest exact-head verification:** [Rust](https://github.com/jelome265/sitolo/actions/runs/40290717776), [Integration](https://github.com/jelome265/sitolo/actions/runs/40290717827), [Security](https://github.com/jelome265/sitolo/actions/runs/40290718200), and [Policy](https://github.com/jelome265/sitolo/actions/runs/40290717731) pass on exact SHA `76154ffd639ff6467729f3e4ab508f554a72f919`.
+**Latest implementation source:** `5b4563bdd5107008f44a30e9f3516f967f81a492` contains the logout implementation and PostgreSQL trigger correction; `25b40df08cdac63de520b36d890ec74fb5474ee3` and `da818106a7a181e7faa258be2d30a87e89a0cb23` add exact verification and role-policy blocker evidence.
+**Latest exact-head verification:** [Rust](https://github.com/jelome265/sitolo/actions/runs/41248362784), [Integration](https://github.com/jelome265/sitolo/actions/runs/41248362794), [Security](https://github.com/jelome265/sitolo/actions/runs/41248362779), [Policy](https://github.com/jelome265/sitolo/actions/runs/41248362777), and [CodeQL](https://github.com/jelome265/sitolo/runs/124677562109) pass on exact SHA `da818106a7a181e7faa258be2d30a87e89a0cb23`.
 **Recent remediation:** commits `289ae0c`, `e48b12a`, `ef0e97b`, `468186c`, `4858341`, `db4fcba`, `a4cb381`, `18dce7e`, `d4b48d7`, `3cd8a20`, `f432da2`, `d332ead`, `d8032ef`, `eea9486`, `6220b3b`, `3385041`, `23d8e14`, `1743f3a`, and `15147ef` cover database target/schema guards, optional fingerprint encoding and inventory, lint/CI policy, shared testkit fixtures, organization activation route disposition, route evidence, PostgreSQL harness guard reuse, credential redaction, identity-denial evidence, and real database failure injection for audit/outbox rollback.
 **Cross-phase evidence:** [Phase 1–4 deep audit](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-deep-audit-2026-10-25.md), [remediation plan](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/phase1-4-remediation-plan-2026-10-25.md), [follow-up index](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/README.md).
 **Verification evidence:** [ICM verification report](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md)
 **Continuation guide:** `docs/phase4_part8_pr009_remediation_execution_contract.md`  
-**Date:** 2026-10-26
+**Date:** 2026-11-01
 
 The historical checkpoint details below are retained for provenance. They do not supersede the exact-head source and CI evidence above.
 
 ## Remaining release blockers
 
 - Production consumer/effect composition, approved resource identities, inbox transaction and acknowledgement-after-commit evidence remain unresolved.
-- The canonical production migration/release owner and immutable migration artifact remain unresolved.
+- The repository-owned migration bundle is versioned and checksum-pinned, but production migration ownership, runner, durable version ledger, preflight and recovery procedures remain unresolved.
 - The complete mandatory mutation matrix and Phase 3 lifecycle evidence are not demonstrated.
+- Risk classes and required target-role, scope, separation-of-duties, step-up and second-person approval rules for role grants still require Product/Security approval; generic assignment is not exposed as a live HTTP route.
 - The unavailable organization activation route was removed from the active route inventory and API surface. Organization creation atomically persists the active organization, owner and default branch; other lifecycle transitions remain part of the incomplete mutation matrix.
 - `sitolo-testkit` now supplies validated tenancy fixtures consumed by tenancy and application test targets and is enforced as dev-only. Automated lint/CI policy checks pass. Read-only inspection found the active default-branch ruleset has one required PR approval but no required status checks and an always-bypass repository role; administrator configuration remains required. See the [ruleset evidence](../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/branch-ruleset-evidence-2026-10-26.md).
 - An independent Stage 06 audit and human review are still required. PR #49 remains open and unmerged.
