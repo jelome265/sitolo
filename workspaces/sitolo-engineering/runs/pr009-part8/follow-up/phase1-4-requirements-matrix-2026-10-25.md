@@ -3,9 +3,9 @@ artifact_type: phase-requirements-matrix
 status: partial
 run_slug: "pr009-part8"
 security_relevant: yes
-implementation_source: "31d89a9b63e76c1b47c88b1b1276cc7eb1d2d296"
-verification_head: "31d89a9b63e76c1b47c88b1b1276cc7eb1d2d296"
-date: "2026-10-26"
+implementation_source: "e4935905b14ed6cf5293d84c1b32e4e45f07c693"
+verification_head: "e4935905b14ed6cf5293d84c1b32e4e45f07c693"
+date: "2026-11-01"
 ---
 
 # Phase 1–4 requirements matrix — PR #49

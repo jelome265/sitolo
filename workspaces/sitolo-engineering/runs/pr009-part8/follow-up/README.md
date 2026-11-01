@@ -3,9 +3,13 @@ artifact_type: follow-up-index
 status: current-snapshot-index
 run_slug: "pr009-part8"
 security_relevant: yes
-candidate_head: "5b4563bdd5107008f44a30e9f3516f967f81a492"
-date: "2026-10-26"
+candidate_head: "e4935905b14ed6cf5293d84c1b32e4e45f07c693"
+date: "2026-11-01"
 ---
+
+## Exact-head verification — 2026-11-01 (`e493590`)
+
+Rust [41270291604](https://github.com/jelome265/sitolo/actions/runs/41270291604), Integration [41270291610](https://github.com/jelome265/sitolo/actions/runs/41270291610), Security [41270291603](https://github.com/jelome265/sitolo/actions/runs/41270291603), and Policy [41270291620](https://github.com/jelome265/sitolo/actions/runs/41270291620) passed on exact head `e4935905b14ed6cf5293d84c1b32e4e45f07c693`. PostgreSQL integration ran against its disposable service; CodeQL, advisory, dependency-policy, secrets and offensive-regression checks passed. See the [November 1 verification report](pr49-phase4-part8-verification-2026-11-01-report.md). PR #49 remains open and unmerged.
 
 # PR #49 / Phase 1–4 Audit Follow-up Index
 
