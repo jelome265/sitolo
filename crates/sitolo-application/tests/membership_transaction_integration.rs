@@ -68,6 +68,16 @@ struct TestDb {
     schema: String,
 }
 
+async fn drop_test_schema(db: &TestDb) -> Result<(), Box<dyn std::error::Error>> {
+    validate_generated_schema_name(&db.schema).map_err(std::io::Error::other)?;
+    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{}\" CASCADE",
+        db.schema
+    )))
+    .execute(&db.admin)
+    .await?;
+    Ok(())
+}
 async fn install_postgres_evidence_failure_triggers(
     admin: &PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -375,12 +385,7 @@ async fn operation_authorization_uses_one_persisted_tenant_authority_snapshot()
             .await,
         Err(ScopeError::MembershipNotActive)
     );
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -462,12 +467,7 @@ async fn authenticated_membership_suspend_authorizes_and_records_server_actor()
     assert_eq!(target_state, "ACTIVE");
     assert_eq!(denied_evidence, 0);
 
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -528,12 +528,7 @@ async fn authenticated_membership_revoke_authorizes_and_records_server_actor()
     assert_eq!(target_state, "ACTIVE");
     assert_eq!(denied_evidence, 0);
 
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -701,12 +696,7 @@ async fn authenticated_role_assignment_authorizes_and_records_server_actor()
         )
         .await?;
 
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -821,12 +811,7 @@ async fn organization_and_branch_lifecycle_changes_commit_with_evidence()
     .await
     ?;
     assert_eq!(evidence_count, 20);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -876,12 +861,7 @@ async fn organization_and_branch_lifecycle_failures_roll_back_state_and_evidence
     .await
     ?;
     assert_eq!(evidence_count, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1107,12 +1087,7 @@ async fn every_organization_and_branch_transition_rolls_back_on_audit_and_outbox
             assert_eq!(evidence_count, 0, "{name} must not leave partial evidence");
         }
     }
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1157,12 +1132,7 @@ async fn branch_creation_rolls_back_state_and_evidence_on_write_failures()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1228,12 +1198,7 @@ async fn competing_organization_transitions_and_cross_tenant_branch_update_are_d
     .await
     ?;
     assert_eq!(event_counts, (1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1278,12 +1243,7 @@ async fn member_invitation_and_required_evidence_commit_together()
     .await
     ?;
     assert_eq!(evidence_count, 2);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1328,12 +1288,7 @@ async fn member_invitation_rolls_back_state_and_evidence_on_write_failures()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1400,12 +1355,7 @@ async fn token_invitation_issue_persists_only_hash_and_emits_approved_event()
     .await
     ?;
     assert_eq!(evidence_count, 2);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1476,12 +1426,7 @@ async fn token_invitation_issue_rolls_back_when_audit_write_fails()
             .is_err()
     );
     assert_invitation_rows_absent(&db, &org).await?;
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1516,12 +1461,7 @@ async fn token_invitation_issue_rolls_back_when_outbox_write_fails()
             .is_err()
     );
     assert_invitation_rows_absent(&db, &org).await?;
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1607,12 +1547,7 @@ async fn token_invitation_withdrawal_erases_contact_and_token_hash_atomically()
             .all(|payload| !payload.contains("withdrawal@example.test")
                 && !payload.contains("0123456789abcdef0123456789abcdef"))
     );
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1674,12 +1609,7 @@ async fn concurrent_token_invitation_withdrawals_emit_one_transition()
     .await
     ?;
     assert_eq!(event_counts, (1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1753,12 +1683,7 @@ async fn token_invitation_withdrawal_rolls_back_when_audit_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(event_count, 1);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1840,12 +1765,7 @@ async fn token_invitation_withdrawal_rolls_back_when_outbox_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(audit_count, 1);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1889,12 +1809,7 @@ async fn membership_transition_and_audit_outbox_commit_together()
     .await
     ?;
     assert_eq!(evidence_count, 2);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -1937,12 +1852,7 @@ async fn membership_transition_rolls_back_when_audit_write_fails()
     .await
     ?;
     assert_eq!(evidence_count, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2020,12 +1930,7 @@ async fn authenticated_membership_suspend_and_revoke_roll_back_on_evidence_failu
         );
     }
 
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2068,12 +1973,7 @@ async fn membership_transition_rolls_back_when_outbox_write_fails()
     .await
     ?;
     assert_eq!(evidence_count, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2129,12 +2029,7 @@ async fn invitation_expiry_sweep_commits_both_transitions_and_is_duplicate_safe(
             "iam.membership.expired".to_owned(),
         ]
     );
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2237,12 +2132,7 @@ async fn invitation_accept_withdraw_and_expiry_race_commits_one_terminal_transit
     .await?;
     assert_eq!(membership_state, "EXPIRED");
 
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2291,12 +2181,7 @@ async fn invitation_expiry_sweep_rolls_back_when_audit_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(expiry_events, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2345,12 +2230,7 @@ async fn invitation_expiry_sweep_rolls_back_when_outbox_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(expiry_audits, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2401,12 +2281,7 @@ async fn membership_expiry_rolls_back_when_audit_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(expiry_events, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2437,12 +2312,7 @@ async fn membership_expiry_rolls_back_when_outbox_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(expiry_audits, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2603,12 +2473,7 @@ async fn membership_accept_resume_and_revoke_roll_back_on_audit_and_outbox_failu
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(evidence_count, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2699,12 +2564,7 @@ async fn role_assignment_commits_with_evidence_and_is_semantically_idempotent()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2759,12 +2619,7 @@ async fn concurrent_role_assignment_retries_emit_one_semantic_event()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (1, 1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2807,12 +2662,7 @@ async fn role_assignment_rolls_back_when_audit_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(evidence_count, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2849,12 +2699,7 @@ async fn role_assignment_rolls_back_when_outbox_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(counts, (0, 0, 0));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2928,12 +2773,7 @@ async fn role_revocation_preserves_history_and_regrant_is_duplicate_safe()
     .await
     ?;
     assert_eq!(counts, (2, 1, 2, 2, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -2983,12 +2823,7 @@ async fn role_revocation_rolls_back_when_audit_write_fails()
     .await
     ?;
     assert_eq!(removal_events, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3038,12 +2873,7 @@ async fn role_revocation_rolls_back_when_outbox_write_fails()
     .await
     ?;
     assert_eq!(removal_events, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3111,12 +2941,7 @@ async fn concurrent_role_revocations_emit_one_semantic_event()
     .await
     ?;
     assert_eq!(counts, (1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3191,12 +3016,7 @@ async fn scope_grant_and_revocation_commit_with_single_evidence_pair()
     .await
     ?;
     assert_eq!(counts, (1, 1, 1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3256,12 +3076,7 @@ async fn scope_grant_rolls_back_when_audit_or_outbox_write_fails()
     .fetch_one(&db.admin)
     .await?;
     assert_eq!(remaining, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3344,12 +3159,7 @@ async fn scope_revocation_rolls_back_when_audit_or_outbox_write_fails()
     .await
     ?;
     assert_eq!(revoked_evidence, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3390,12 +3200,7 @@ async fn concurrent_identical_scope_grants_emit_one_evidence_pair()
     .await
     ?;
     assert_eq!(counts, (1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3486,12 +3291,7 @@ async fn invitation_acceptance_activates_member_and_erases_terminal_pii_atomical
     .await
     ?;
     assert_eq!(pii_outbox, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3568,12 +3368,7 @@ async fn invitation_acceptance_rolls_back_on_audit_and_outbox_failures()
     .await
     ?;
     assert_eq!(accepted_events, 0);
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
 
@@ -3634,11 +3429,6 @@ async fn concurrent_invitation_acceptance_claims_token_once()
     .await
     ?;
     assert_eq!(counts, (1, 1, 1));
-    raw_sql(sqlx_core::sql_str::AssertSqlSafe(format!(
-        "DROP SCHEMA \"{}\" CASCADE",
-        db.schema
-    )))
-    .execute(&db.admin)
-    .await?;
+    drop_test_schema(&db).await?;
     Ok(())
 }
