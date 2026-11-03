@@ -18,33 +18,61 @@ use sitolo_auth::{Assurance, AuditEventId, AuthenticationMethod, ClientPlatform,
 /// in the specification map 1:1 to these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthEventName {
+    /// Successful authentication.
     LoginSuccess,
+    /// Failed authentication attempt.
     LoginFailure,
+    /// Authentication attempt rejected by rate limiting.
     LoginRateLimited,
+    /// Session established.
     SessionCreated,
+    /// Session refreshed.
     SessionRefreshed,
+    /// Session revoked.
     SessionRevoked,
+    /// Session reached a terminal lifetime bound.
     SessionExpired,
+    /// Explicit logout.
     Logout,
+    /// Refresh credential rotated.
     RefreshRotated,
+    /// Replayed refresh credential detected.
     RefreshReuseDetected,
+    /// Password changed by an authenticated user.
     PasswordChanged,
+    /// Password reset requested.
     PasswordResetRequested,
+    /// Password reset redeemed.
     PasswordResetCompleted,
+    /// MFA enrollment started.
     MfaEnrollmentStarted,
+    /// MFA enrollment completed.
     MfaEnrollmentCompleted,
+    /// MFA enrollment rejected.
     MfaEnrollmentRejected,
+    /// MFA challenge satisfied.
     MfaSuccess,
+    /// MFA challenge failed.
     MfaFailure,
+    /// MFA state reset by an administrator.
     MfaReset,
+    /// Recovery code redeemed.
     RecoveryCodeRedeemed,
+    /// Device registration started.
     DeviceRegistrationStarted,
+    /// Device registered.
     DeviceRegistered,
+    /// Device suspended.
     DeviceSuspended,
+    /// Device revoked.
     DeviceRevoked,
+    /// Device replaced.
     DeviceReplaced,
+    /// Device verification failed.
     DeviceVerificationFailed,
+    /// JWKS refresh failed.
     JwksRefreshFailed,
+    /// Token validation failed.
     TokenValidationFailed,
 }
 
@@ -88,7 +116,9 @@ impl AuthEventName {
 /// Audit event outcome (§37.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {
+    /// The audited operation succeeded.
     Success,
+    /// The audited operation failed.
     Failure,
 }
 
@@ -101,25 +131,40 @@ pub enum EventResult {
 /// private key, recovery code) is not part of this shape.
 #[derive(Debug, Clone)]
 pub struct AuthenticationEvent {
+    /// Globally unique audit event identifier.
     pub event_id: AuditEventId,
+    /// Stable event name from the catalogue.
     pub event_name: AuthEventName,
+    /// Server time at which the event occurred.
     pub occurred_at: SystemTime,
+    /// Correlation identifier for the originating request.
     pub request_id: Option<String>,
+    /// Distributed trace identifier, when one was propagated.
     pub trace_id: Option<String>,
+    /// Pseudonymous subject reference; never a raw credential.
     pub subject_ref: Option<String>,
+    /// Pseudonymous session reference.
     pub session_ref: Option<String>,
+    /// Pseudonymous device reference.
     pub device_ref: Option<String>,
+    /// Client platform class, when known.
     pub client_platform: Option<ClientPlatform>,
+    /// Authentication method used, when known.
     pub authentication_method: Option<AuthenticationMethod>,
+    /// Assurance level reached by the authentication.
     pub assurance_level: Option<Assurance>,
+    /// Outcome classification.
     pub result: EventResult,
+    /// Bounded failure reason label, when the result is a failure.
     pub reason_class: Option<&'static str>,
+    /// Security version in force at the time of the event.
     pub security_version: Option<SecurityVersion>,
 }
 
 /// Audit persistence failure (§43.4).
 #[derive(Debug, Error)]
 pub enum AuditError {
+    /// The audit record could not be persisted.
     #[error("audit record persistence failed")]
     PersistenceFailed,
 }
@@ -127,13 +172,20 @@ pub enum AuditError {
 /// Whether a record is mandatory or diagnostic (§43.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditRequirement {
+    /// The audited operation must fail when the record cannot be persisted.
     Mandatory,
+    /// Best-effort diagnostic record; persistence failure is logged only.
     Diagnostic,
 }
 
 /// Audit recorder boundary (§37, §43.4).
 #[async_trait]
 pub trait AuditRecorder: Send + Sync {
+    /// Records one authentication audit event.
+    ///
+    /// # Errors
+    /// Returns [`AuditError::PersistenceFailed`] when a mandatory record
+    /// cannot be durably written.
     async fn record(
         &self,
         event: AuthenticationEvent,
@@ -142,12 +194,14 @@ pub trait AuditRecorder: Send + Sync {
 }
 
 /// In-memory audit sink for tests and local reference wiring.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct InMemoryAuditSink {
     events: Mutex<Vec<AuthenticationEvent>>,
 }
 
 impl InMemoryAuditSink {
+    /// Creates an empty sink.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -156,7 +210,7 @@ impl InMemoryAuditSink {
     pub fn events(&self) -> Vec<AuthenticationEvent> {
         self.events
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }
@@ -170,7 +224,7 @@ impl AuditRecorder for InMemoryAuditSink {
     ) -> Result<(), AuditError> {
         self.events
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(event);
         Ok(())
     }
@@ -191,13 +245,13 @@ mod tests {
     }
 
     #[test]
-    fn record_shape_has_no_secret_fields() {
+    fn record_shape_has_no_secret_fields() -> Result<(), sitolo_auth::AuthError> {
         // The record shape is secret-free by construction. This test
         // documents the invariant: no field in AuthenticationEvent can hold
         // a password, otp, mfa secret, refresh token, access token,
         // authorization code, client secret, private key, or recovery code.
         let event = AuthenticationEvent {
-            event_id: AuditEventId::new("evt-1").unwrap(),
+            event_id: AuditEventId::new("evt-1")?,
             event_name: AuthEventName::LoginSuccess,
             occurred_at: SystemTime::UNIX_EPOCH,
             request_id: Some("req-1".into()),
@@ -216,5 +270,6 @@ mod tests {
         assert!(!debug.contains("hunter2"));
         assert!(!debug.contains("secret"));
         assert!(!debug.contains("Bearer"));
+        Ok(())
     }
 }

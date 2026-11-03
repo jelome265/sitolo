@@ -16,6 +16,12 @@ use crate::id::{base64url, hex};
 /// PKCE verifier (§7.2).
 pub struct PkceVerifier(String);
 
+impl std::fmt::Debug for PkceVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PkceVerifier(redacted)")
+    }
+}
+
 impl PkceVerifier {
     /// Generates a PKCE verifier and challenge (§7.2).
     #[must_use]
@@ -49,10 +55,15 @@ impl PkceVerifier {
 /// Authorization transaction state (§7.1, §7.4).
 #[derive(Debug, Clone)]
 pub struct AuthorizationTransaction {
+    /// Opaque one-time state value echoed by the authorization server.
     pub state: String,
+    /// S256 challenge bound to this transaction.
     pub challenge: String,
+    /// When the transaction was created.
     pub created_at: SystemTime,
+    /// Hard expiry of the transaction.
     pub expires_at: SystemTime,
+    /// Whether the callback has already been completed.
     pub completed: bool,
 }
 
@@ -63,12 +74,25 @@ pub struct AuthorizationTransactionLog {
 }
 
 impl AuthorizationTransactionLog {
+    /// Creates an empty transaction log.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Begins an authorization transaction (§7.1, §7.4).
+    ///
+    /// The transaction expiry is the sum of `now` and `ttl`. Both are
+    /// server-controlled values, and the signature cannot report an
+    /// unrepresentable expiry, so the deadline is computed with the same
+    /// panicking addition used by the rest of the crate rather than silently
+    /// fabricating a different deadline.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "The published signature returns a transaction, not a Result, and the \
+                  operands are server-controlled; a checked fallback would silently move \
+                  the deadline instead of failing loudly."
+    )]
     #[must_use]
     pub fn begin(
         &mut self,
@@ -86,12 +110,18 @@ impl AuthorizationTransactionLog {
             expires_at: now + ttl,
             completed: false,
         };
-        self.transactions.insert(state.clone(), txn.clone());
+        self.transactions.insert(state, txn.clone());
         txn
     }
 
     /// Completes a callback (§7.1, §7.4). Rejects unsolicited callbacks
     /// (unknown state), expired transactions, and replays.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::AuthenticationFailed`] when `state` is unknown,
+    /// when the transaction has expired at `now`, or when it has already been
+    /// completed.
     pub fn complete(
         &mut self,
         state: &str,
@@ -117,6 +147,12 @@ mod tests {
     use super::*;
     use sitolo_security::DeterministicRandom;
 
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
     #[test]
     fn pkce_s256_roundtrip() {
         let rng = DeterministicRandom::test_only([1u8; 32]);
@@ -126,21 +162,22 @@ mod tests {
     }
 
     #[test]
-    fn authorization_transaction_single_use() {
+    fn authorization_transaction_single_use() -> Result<(), AuthError> {
         let rng = DeterministicRandom::test_only([2u8; 32]);
         let mut log = AuthorizationTransactionLog::new();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let txn = log.begin(&rng, "challenge".into(), now, Duration::from_secs(60));
-        let completed = log.complete(&txn.state, now).unwrap();
+        let completed = log.complete(&txn.state, now)?;
         assert!(completed.completed);
         // Replay rejected.
         assert!(log.complete(&txn.state, now).is_err());
+        Ok(())
     }
 
     #[test]
     fn unsolicited_callback_rejected() {
         let mut log = AuthorizationTransactionLog::new();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         assert!(log.complete("unknown", now).is_err());
     }
 
@@ -148,9 +185,9 @@ mod tests {
     fn expired_transaction_rejected() {
         let rng = DeterministicRandom::test_only([3u8; 32]);
         let mut log = AuthorizationTransactionLog::new();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let txn = log.begin(&rng, "challenge".into(), now, Duration::from_secs(60));
-        let later = now + Duration::from_secs(61);
+        let later = at(1_061);
         assert!(log.complete(&txn.state, later).is_err());
     }
 }

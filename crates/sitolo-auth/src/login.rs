@@ -7,19 +7,28 @@
 /// Internal login outcome (§22).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternalLoginOutcome {
+    /// The credential was verified and the login may proceed.
     Authenticated,
+    /// A credential was presented but did not verify.
     InvalidCredential,
+    /// No account exists for the presented identifier.
     UnknownIdentifier,
+    /// The attempt was throttled by the rate limiter (§23).
     RateLimited,
+    /// The credential verified but a second factor is still required (§17).
     MfaRequired,
 }
 
 /// Public login outcome (§22).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicLoginOutcome {
+    /// The login succeeded.
     Authenticated,
+    /// Authentication failed for a reason that must not be disclosed.
     GenericFailure,
+    /// The attempt was throttled (§23).
     RateLimited,
+    /// A second factor is required before the login can complete (§17).
     MfaRequired,
 }
 
@@ -27,12 +36,18 @@ impl PublicLoginOutcome {
     /// Maps an internal outcome to a public outcome (§22). Invalid credential
     /// and unknown identifier both map to `GenericFailure` to prevent
     /// enumeration.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The by-value signature is the published conversion contract; taking a \
+                  reference would break every existing caller."
+    )]
     #[must_use]
     pub fn from_internal(outcome: InternalLoginOutcome) -> Self {
         match outcome {
             InternalLoginOutcome::Authenticated => PublicLoginOutcome::Authenticated,
-            InternalLoginOutcome::InvalidCredential => PublicLoginOutcome::GenericFailure,
-            InternalLoginOutcome::UnknownIdentifier => PublicLoginOutcome::GenericFailure,
+            InternalLoginOutcome::InvalidCredential | InternalLoginOutcome::UnknownIdentifier => {
+                PublicLoginOutcome::GenericFailure
+            }
             InternalLoginOutcome::RateLimited => PublicLoginOutcome::RateLimited,
             InternalLoginOutcome::MfaRequired => PublicLoginOutcome::MfaRequired,
         }

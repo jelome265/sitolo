@@ -25,15 +25,51 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "Apache-2.0"
+repository = "https://github.com/jelome265/sitolo"
+keywords = ["sitolo", "saas", "multi-tenant"]
+categories = ["web-programming"]
+
+# Release hardening: integer overflow must trap in production, not wrap
+# silently. The strict `arithmetic_side_effects` lint covers code we write;
+# these profiles are the runtime backstop for code we do not.
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+debug = "line-tables-only"
 
 [workspace.dependencies]
+aws-config = { version = "1.13.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-sns = { version = "1.119.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-sqs = { version = "1.117.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-secretsmanager = { version = "1.120.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 async-trait = { version = "0.1.83", default-features = false }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false }
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["aws-lc-rs", "http1", "native-tokio", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
+serde_urlencoded = "0.7"
+url = "2"
 sha2 = { version = "0.11", default-features = false }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros"] }
+# PostgreSQL-only SQLx crates. The `sqlx` meta-crate and `sqlx-macros` retain
+# optional MySQL packages in Cargo.lock even when those features are disabled;
+# depending on the backend crates directly removes that unused lockfile surface.
+# `_rt-tokio` is the runtime feature the SQLx meta-crate enables for Tokio.
+sqlx-core = { version = "0.9", default-features = false, features = ["_rt-tokio", "_tls-rustls-aws-lc-rs"] }
+sqlx-postgres = { version = "0.9", default-features = false, features = ["chrono", "json"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+tower = { version = "0.5.3", default-features = false, features = ["limit", "load-shed", "util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout"] }
 # `std` is required for dispatcher installation (`with_default` in tests)
 # and subscriber timestamp/thread metadata. Every workspace crate is
 # std-only, so this is not a no-std regression.
@@ -43,14 +79,110 @@ uuid = { version = "1", default-features = false, features = ["v4"] }
 sitolo-security = { path = "crates/sitolo-security" }
 sitolo-auth = { path = "crates/sitolo-auth" }
 sitolo-audit = { path = "crates/sitolo-audit" }
+sitolo-domain = { path = "crates/sitolo-domain" }
+sitolo-events = { path = "crates/sitolo-events" }
 sitolo-observability = { path = "crates/sitolo-observability" }
 sitolo-persistence = { path = "crates/sitolo-persistence" }
 sitolo-config = { path = "crates/sitolo-config" }
 
-[profile.dev]
-overflow-checks = true
+[workspace.lints.rust]
+# Workspace default is deny so the two serialized Rust 2024 test harnesses can
+# carry explicit, reasoned crate-level #[expect(unsafe_code)] declarations.
+# Production crates may not use unsafe blocks without an approved exception.
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+let_underscore_drop = "warn"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2024_compatibility = { level = "warn", priority = -1 }
 
-[profile.release]
-overflow-checks = true
-lto = "thin"
-debug = "line-tables-only"
+[workspace.lints.clippy]
+# Every workspace member opts into this policy through [lints] workspace = true.
+# CI uses -D warnings, so pedantic/cargo warnings cannot silently accumulate.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Framework bans are configured at the workspace root in clippy.toml.
+disallowed_methods = "deny"
+disallowed_types = "deny"
+
+# Panic freedom and error discipline.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+todo = "deny"
+unwrap_in_result = "deny"
+exit = "deny"
+map_err_ignore = "deny"
+let_underscore_must_use = "deny"
+let_underscore_future = "deny"
+let_underscore_untyped = "deny"
+
+# Console output and debug artifacts.
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# Indexing, casts, arithmetic, and floating-point comparisons.
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+cast_lossless = "warn"
+arithmetic_side_effects = "deny"
+float_cmp = "deny"
+float_cmp_const = "deny"
+
+# Unsafe, uninitialized memory, and ownership hazards.
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+mem_forget = "deny"
+mem_replace_with_uninit = "deny"
+uninit_vec = "deny"
+
+# Concurrency and asynchronous execution.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+large_futures = "warn"
+rc_mutex = "deny"
+
+# Types, documentation, and API contracts.
+wildcard_enum_match_arm = "deny"
+must_use_candidate = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "deny"
+
+# Allocation and ownership.
+clone_on_ref_ptr = "deny"
+redundant_clone = "warn"
+needless_collect = "deny"
+needless_pass_by_value = "warn"
+
+# Exception / lint-suppression discipline.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# Reviewed suppressions for noisy naming lints.
+module_name_repetitions = "allow"
+similar_names = "allow"
+
+# Transitive duplication this workspace does not control: `async-trait 0.1.92`
+# requires syn 3 while `aws-smithy-runtime-api-macros` still requires syn 2.
+# Both are build-time only. Remove this exception when the AWS SDK moves to
+# syn 3; do not pin an old `async-trait` just to silence the lint.
+multiple_crate_versions = "allow"

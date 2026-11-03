@@ -13,24 +13,34 @@ use thiserror::Error;
 use crate::error::AuthError;
 use crate::id::Assurance;
 
+/// Failures raised while validating a token (§13).
 #[derive(Debug, Error)]
 pub enum TokenError {
+    /// The declared algorithm is not permitted by policy (§13, §60).
     #[error("algorithm not permitted")]
     AlgorithmNotPermitted,
+    /// The issuer is not trusted by policy.
     #[error("issuer not trusted")]
     IssuerNotTrusted,
+    /// The audience does not match the expected audience.
     #[error("audience mismatch")]
     AudienceMismatch,
+    /// The token is expired at the evaluation time.
     #[error("token expired")]
     Expired,
+    /// The token's not-before time is in the future.
     #[error("token not yet valid")]
     NotYetValid,
+    /// The token carries no key identifier while policy requires one.
     #[error("key id missing")]
     KeyIdMissing,
+    /// No verification key is available for the token's key identifier.
     #[error("key not found")]
     KeyNotFound,
+    /// The signature does not verify.
     #[error("signature invalid")]
     SignatureInvalid,
+    /// The token-use claim is not permitted for this operation.
     #[error("token use not permitted")]
     TokenUseNotPermitted,
 }
@@ -38,14 +48,22 @@ pub enum TokenError {
 /// Allowed JWT algorithms (§13). `none` is never permitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenAlgorithm {
+    /// `RSASSA-PKCS1-v1_5` with SHA-256.
     Rs256,
+    /// ECDSA with P-256 and SHA-256.
     Es256,
+    /// `EdDSA` over a supported Edwards curve.
     EdDsa,
 }
 
 impl TokenAlgorithm {
     /// Parses a declared algorithm string. Rejects `none` and unknown values
     /// (§13, §60).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError::AlgorithmNotPermitted`] for `none` and for every
+    /// value outside the `RS256`, `ES256`, and `EdDSA` allowlist.
     pub fn parse(declared: &str) -> Result<Self, TokenError> {
         match declared {
             "RS256" => Ok(TokenAlgorithm::Rs256),
@@ -55,6 +73,7 @@ impl TokenAlgorithm {
         }
     }
 
+    /// The exact JOSE algorithm name.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -68,31 +87,47 @@ impl TokenAlgorithm {
 /// Token use claim (§13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenUse {
+    /// Access token for calling resource servers.
     Access,
+    /// OIDC ID token describing an authentication event.
     IdToken,
 }
 
 /// Parsed JWT claims (§13).
 #[derive(Debug, Clone)]
 pub struct TokenClaims {
+    /// Issuer (`iss`) claim.
     pub issuer: String,
+    /// Audience (`aud`) claim.
     pub audience: String,
+    /// Subject (`sub`) claim.
     pub subject: String,
+    /// Expiry (`exp`) claim.
     pub expires_at: SystemTime,
+    /// Not-before (`nbf`) claim, when present.
     pub not_before: Option<SystemTime>,
+    /// Issued-at (`iat`) claim, when present.
     pub issued_at: Option<SystemTime>,
+    /// Whether this is an access or ID token.
     pub token_use: TokenUse,
+    /// Key identifier (`kid`) used to select verification material.
     pub key_id: String,
+    /// Algorithm declared in the JOSE header.
     pub algorithm: TokenAlgorithm,
 }
 
 /// Validation policy (§13).
 #[derive(Debug, Clone)]
 pub struct TokenValidationPolicy {
+    /// Issuers the deployment trusts.
     pub trusted_issuers: Vec<String>,
+    /// Audience this service expects.
     pub expected_audience: String,
+    /// Algorithms the deployment accepts.
     pub allowed_algorithms: Vec<TokenAlgorithm>,
+    /// Tolerance applied to time-based claims.
     pub clock_skew: Duration,
+    /// Whether a key identifier is mandatory.
     pub require_key_id: bool,
 }
 
@@ -102,6 +137,12 @@ pub struct TokenValidationPolicy {
 pub trait SignatureVerifier: Send + Sync {
     /// Verifies the signature over `signing_input` using the key identified
     /// by `key_id` and the declared algorithm.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the verifier cannot evaluate the signature, for
+    /// example because the selected key is unusable for the declared
+    /// algorithm.
     async fn verify(
         &self,
         key_id: &str,
@@ -117,18 +158,35 @@ pub trait SignatureVerifier: Send + Sync {
 /// Validated token (§13).
 #[derive(Debug, Clone)]
 pub struct ValidatedToken {
+    /// Subject the token was issued for.
     pub subject: String,
+    /// Issuer that signed the token.
     pub issuer: String,
+    /// Audience the token was issued to.
     pub audience: String,
+    /// Expiry carried by the token.
     pub expires_at: SystemTime,
+    /// Whether this was an access or ID token.
     pub token_use: TokenUse,
+    /// Key identifier that verified the signature.
     pub key_id: String,
+    /// Assurance implied by the token use (§16).
     pub assurance_hint: Assurance,
 }
 
 /// Validates a token against the policy (§13). The order of checks is
 /// explicit: algorithm allowlist, issuer, audience, time claims, key
 /// availability, signature.
+///
+/// # Errors
+///
+/// Returns [`AuthError::AuthenticationFailed`] when the algorithm is not
+/// allowed, the issuer is untrusted, the audience does not match, the
+/// not-before claim is in the future beyond the clock skew, or the signature
+/// does not verify. Returns [`AuthError::SessionExpired`] when the token is
+/// expired beyond the clock skew, and [`AuthError::IdentityKeyUnavailable`]
+/// when a required key identifier is missing or the verifier does not know the
+/// key. Errors from the verifier are propagated unchanged.
 pub async fn validate_token(
     claims: &TokenClaims,
     signing_input: &[u8],
@@ -149,13 +207,22 @@ pub async fn validate_token(
     if claims.audience != policy.expected_audience {
         return Err(AuthError::AuthenticationFailed);
     }
-    // Expiration with clock skew (§13).
-    if now > claims.expires_at + policy.clock_skew {
+    // Expiration with clock skew (§13). An unrepresentable skewed deadline
+    // can only occur at the end of representable time, where the token is
+    // treated as expired.
+    if claims
+        .expires_at
+        .checked_add(policy.clock_skew)
+        .is_none_or(|deadline| now > deadline)
+    {
         return Err(AuthError::SessionExpired);
     }
-    // Not-before with clock skew (§13).
+    // Not-before with clock skew (§13). If the skewed lower bound precedes the
+    // representable range, no lower bound applies.
     if let Some(nbf) = claims.not_before
-        && now < nbf - policy.clock_skew
+        && nbf
+            .checked_sub(policy.clock_skew)
+            .is_some_and(|earliest| now < earliest)
     {
         return Err(AuthError::AuthenticationFailed);
     }
@@ -193,9 +260,13 @@ pub async fn validate_token(
 /// JWKS cache policy (§14.1).
 #[derive(Debug, Clone)]
 pub struct JwksCachePolicy {
+    /// How long a fetched key remains trusted.
     pub ttl: Duration,
+    /// How long a failed refresh suppresses further attempts.
     pub negative_ttl: Duration,
+    /// Refresh budget per window (§67).
     pub max_refreshes_per_window: u32,
+    /// Length of the refresh budget window.
     pub window: Duration,
 }
 
@@ -210,6 +281,7 @@ pub struct JwksCache {
 }
 
 impl JwksCache {
+    /// Creates an empty cache whose refresh window starts at `now`.
     #[must_use]
     pub fn new(policy: JwksCachePolicy, now: SystemTime) -> Self {
         JwksCache {
@@ -226,20 +298,30 @@ impl JwksCache {
     /// exhausted; `Trusted` if the key is fresh.
     #[must_use]
     pub fn resolve_key(&mut self, key_id: &str, now: SystemTime) -> KeyResolution {
-        // Reset window if elapsed.
-        if now > self.window_start + self.policy.window {
+        // Reset window if elapsed. An unrepresentable window end means the
+        // window cannot have elapsed, so the budget is retained.
+        if self
+            .window_start
+            .checked_add(self.policy.window)
+            .is_some_and(|end| now > end)
+        {
             self.window_start = now;
             self.refresh_count = 0;
         }
-        // Negative cache (§14.1).
+        // Negative cache (§14.1). An unrepresentable end keeps the negative
+        // entry in force.
         if let Some(negative) = self.last_negative
-            && now < negative + self.policy.negative_ttl
+            && negative
+                .checked_add(self.policy.negative_ttl)
+                .is_none_or(|until| now < until)
         {
             return KeyResolution::Backoff;
         }
-        // Known key.
+        // Known key. An unrepresentable expiry keeps the key trusted.
         if let Some(fetched_at) = self.keys.get(key_id)
-            && now < *fetched_at + self.policy.ttl
+            && fetched_at
+                .checked_add(self.policy.ttl)
+                .is_none_or(|expires| now < expires)
         {
             return KeyResolution::Trusted;
         }
@@ -255,28 +337,37 @@ impl JwksCache {
         for kid in key_ids {
             self.keys.insert(kid, now);
         }
-        self.refresh_count += 1;
+        self.refresh_count = self.refresh_count.saturating_add(1);
         self.last_negative = None;
     }
 
     /// Records a failed refresh (§14.1).
     pub fn record_refresh_failure(&mut self, now: SystemTime) {
         self.last_negative = Some(now);
-        self.refresh_count += 1;
+        self.refresh_count = self.refresh_count.saturating_add(1);
     }
 }
 
 /// Key resolution decision (§14.1, §67).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyResolution {
+    /// The key is cached and fresh.
     Trusted,
+    /// A refresh may be attempted.
     RefreshNeeded,
+    /// The refresh budget or negative cache forbids a refresh.
     Backoff,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
 
     #[test]
     fn algorithm_parsing_rejects_none() {
@@ -287,7 +378,7 @@ mod tests {
 
     #[test]
     fn jwks_cache_prevents_stampede() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let policy = JwksCachePolicy {
             ttl: Duration::from_secs(300),
             negative_ttl: Duration::from_secs(60),
@@ -312,7 +403,7 @@ mod tests {
 
     #[test]
     fn jwks_negative_cache_blocks_refresh() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         let policy = JwksCachePolicy {
             ttl: Duration::from_secs(300),
             negative_ttl: Duration::from_secs(60),
@@ -323,7 +414,7 @@ mod tests {
         cache.record_refresh_failure(now);
         assert_eq!(cache.resolve_key("unknown", now), KeyResolution::Backoff);
         // Negative cache expires.
-        let later = now + Duration::from_secs(61);
+        let later = at(1_061);
         assert_eq!(
             cache.resolve_key("unknown", later),
             KeyResolution::RefreshNeeded

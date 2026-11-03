@@ -21,7 +21,10 @@
 
 use std::time::SystemTime;
 
-use sitolo_auth::{AuthError, CredentialMaterial, Device, SecurityContext, Session};
+use sitolo_auth::{
+    AuthError, CredentialMaterial, Device, IdentityProviderPort, RequestIdentityAuthority,
+    SecurityContext, Session, SessionId,
+};
 use sitolo_observability::{RequestId, TraceParent};
 
 use crate::error::AppError;
@@ -53,6 +56,11 @@ pub mod bounds {
 /// Cheap structural rejection runs first; account-enumeration defenses (§22)
 /// are preserved by mapping all credential failures to the same generic
 /// [`AppError::Authentication`].
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the identifier is empty or over
+/// [`bounds::MAX_IDENTIFIER_LEN`], or when the password exceeds
+/// [`bounds::MAX_PASSWORD_LEN`].
 pub fn validate_login_input(identifier: &str, password_len: usize) -> Result<(), AppError> {
     if identifier.is_empty()
         || identifier.len() > bounds::MAX_IDENTIFIER_LEN
@@ -64,6 +72,10 @@ pub fn validate_login_input(identifier: &str, password_len: usize) -> Result<(),
 }
 
 /// Validates a one-time code shape before verification (§47).
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the code is empty or longer than
+/// [`bounds::MAX_OTP_LEN`].
 pub fn validate_otp_input(code: &str) -> Result<(), AppError> {
     if code.is_empty() || code.len() > bounds::MAX_OTP_LEN {
         return Err(AppError::Authentication);
@@ -77,6 +89,11 @@ pub fn validate_otp_input(code: &str) -> Result<(), AppError> {
 /// verifier; `Debug`/`Display` never render the raw value. Missing,
 /// malformed, or overlong headers map to generic authentication failure —
 /// never to a distinct enumerable signal beyond 401.
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the header is absent, is not a
+/// `Bearer` header, is empty, exceeds [`bounds::MAX_CREDENTIAL_LEN`], or
+/// carries a non-opaque character.
 pub fn extract_bearer(authorization: Option<&str>) -> Result<CredentialMaterial, AppError> {
     let header = authorization.ok_or(AppError::Authentication)?;
     if header.len() > bounds::MAX_CREDENTIAL_LEN + 7 {
@@ -130,6 +147,7 @@ pub fn map_auth_error(err: &AuthError) -> AppError {
         AuthError::IdentityProviderUnavailable | AuthError::IdentityKeyUnavailable => {
             AppError::DependencyUnavailable
         }
+        AuthError::IdentityAuthorityUnavailable => AppError::DependencyUnavailable,
         AuthError::ConfigurationInvalid => AppError::Internal,
         AuthError::AuthorizationDenied => AppError::Authorization,
     }
@@ -148,6 +166,11 @@ pub fn map_auth_error(err: &AuthError) -> AppError {
 /// - a device identifier alone never authenticates (§50 wrong examples).
 ///
 /// Raw credentials must not reach this function (§32.1, §49).
+///
+/// # Errors
+/// Returns the mapped public error when the session is not valid, when a bound
+/// device record is missing or inactive, or when the device fails the
+/// established session's binding checks.
 pub fn establish_context(
     session: &mut Session,
     device: Option<&Device>,
@@ -172,15 +195,99 @@ pub fn establish_context(
     .map_err(|e| map_auth_error(&e))
 }
 
+/// Validates the upstream bearer token, resolves only a pre-linked exact
+/// `(issuer, subject)` pair, and accepts a server-side session belonging to
+/// that mapped user. The session selector is an index only; it never selects
+/// the principal. Tenant, role, and permission resolution remain a separate
+/// authorization step and must run before protected commands.
+///
+/// # Errors
+/// Returns [`AppError::Authentication`] when the session selector or bearer
+/// credential is absent or malformed, or the session cannot be established.
+/// Returns [`AppError::DependencyUnavailable`] when the identity provider or
+/// identity authority is unavailable.
+pub async fn authenticate_request(
+    authorization: Option<&str>,
+    session_selector: Option<&str>,
+    identity_provider: &dyn IdentityProviderPort,
+    identity_stores: &dyn RequestIdentityAuthority,
+    now: SystemTime,
+    request_id: RequestId,
+    trace: Option<TraceParent>,
+) -> Result<SecurityContext, AppError> {
+    // Reject malformed selectors before performing provider network work.
+    let session_selector = session_selector.ok_or(AppError::Authentication)?;
+    if session_selector.len() > bounds::MAX_IDENTIFIER_LEN {
+        return Err(AppError::Authentication);
+    }
+    let session_id =
+        SessionId::new(session_selector.to_owned()).map_err(|error| map_auth_error(&error))?;
+    let credential = extract_bearer(authorization)?;
+    let raw_assertion = credential.expose();
+    let external_identity = identity_provider
+        .validate_assertion(&raw_assertion)
+        .await
+        .map_err(|error| map_auth_error(&error))?;
+    drop(raw_assertion);
+
+    // An unknown provider identity is not auto-provisioned or linked by email.
+    let user_id = identity_stores
+        .resolve_external_identity(&external_identity.issuer, &external_identity.subject)
+        .await
+        .map_err(|error| map_auth_error(&error))?
+        .ok_or(AppError::Authentication)?;
+    let mut session_snapshot = identity_stores
+        .accept_session_for_user(&session_id, &user_id, now)
+        .await
+        .map_err(|error| map_auth_error(&error))?;
+    let device = match session_snapshot.session.device_id.as_ref() {
+        Some(device_id) => Some(
+            identity_stores
+                .device_snapshot(device_id, &user_id)
+                .await
+                .map_err(|error| map_auth_error(&error))?
+                .ok_or_else(|| map_auth_error(&AuthError::DeviceNotRegistered))?,
+        ),
+        None => None,
+    };
+    let accepted_lifetime = session_lifetime_for_accepted(&session_snapshot.session);
+    establish_context(
+        &mut session_snapshot.session,
+        device.as_ref(),
+        session_snapshot.user_security_version,
+        // A session's configured policy is applied by the authoritative store
+        // when it is accepted. This value is used only for the in-memory
+        // context consistency check after that operation.
+        accepted_lifetime,
+        now,
+        request_id,
+        trace,
+    )
+}
+
+fn session_lifetime_for_accepted(session: &Session) -> sitolo_auth::SessionLifetime {
+    let absolute = session
+        .absolute_expires_at
+        .duration_since(session.created_at)
+        .unwrap_or_default();
+    let idle = session
+        .idle_expires_at
+        .duration_since(session.last_seen_at)
+        .unwrap_or_default();
+    sitolo_auth::SessionLifetime { idle, absolute }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use std::time::Duration;
 
     use sitolo_auth::{
         Assurance, AuthenticationMethod, SecurityVersion, SessionClass, SessionId, SessionLifetime,
-        UserId,
+        SessionPolicySet, TestIdentityProvider, UserId,
     };
+    use sitolo_persistence::{IdentityDatabase, IdentityStores};
 
     fn lifetime() -> SessionLifetime {
         SessionLifetime {
@@ -189,11 +296,19 @@ mod tests {
         }
     }
 
-    fn session() -> Session {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        Session::create(
-            SessionId::new("sess-1").unwrap(),
-            UserId::new("user-1").unwrap(),
+    /// A fixed, non-zero timestamp for deterministic session tests.
+    fn test_now() -> Result<SystemTime, Box<dyn Error>> {
+        match SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(1_000)) {
+            Some(now) => Ok(now),
+            None => Err("fixed test timestamp overflowed".into()),
+        }
+    }
+
+    fn session() -> Result<Session, Box<dyn Error>> {
+        let now = test_now()?;
+        Ok(Session::create(
+            SessionId::new("sess-1")?,
+            UserId::new("user-1")?,
             None,
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -201,7 +316,107 @@ mod tests {
             SecurityVersion(1),
             lifetime(),
             now,
+        ))
+    }
+
+    fn identity_database() -> IdentityDatabase {
+        let lifetime = lifetime();
+        IdentityDatabase::new(
+            SessionPolicySet {
+                merchant: lifetime,
+                administrator: lifetime,
+                break_glass: lifetime,
+            },
+            Duration::from_secs(300),
         )
+    }
+
+    async fn user_with_session(
+        database: &IdentityDatabase,
+        user_id: &str,
+        bind_provider_identity: bool,
+    ) -> Result<SessionId, Box<dyn Error>> {
+        let user_id = UserId::new(user_id)?;
+        database.create_user(user_id.clone(), None, None).await?;
+        if bind_provider_identity {
+            database
+                .bind_external_identity("test-issuer".into(), "subject-1".into(), &user_id)
+                .await?;
+        }
+        let created = database
+            .establish_session(
+                user_id,
+                None,
+                SessionClass::Merchant,
+                AuthenticationMethod::OidcAssertion,
+                sitolo_auth::ClientPlatform::Android,
+                Assurance::A1,
+                SystemTime::now(),
+            )
+            .await?;
+        Ok(created.session.id)
+    }
+
+    #[tokio::test]
+    async fn verified_identity_and_owned_active_session_establish_context()
+    -> Result<(), Box<dyn Error>> {
+        let database = identity_database();
+        let session_id = user_with_session(&database, "user-1", true).await?;
+        let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
+        let context = authenticate_request(
+            Some("Bearer signed-token"),
+            Some(session_id.as_str()),
+            &provider,
+            &database,
+            SystemTime::now(),
+            RequestId::new_server(),
+            None,
+        )
+        .await
+        .map_err(|error| std::io::Error::other(format!("authentication failed: {error:?}")))?;
+        assert_eq!(context.principal.subject_id.as_str(), "user-1");
+        assert_eq!(context.principal.session_id, session_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_selector_cannot_cross_the_mapped_user_boundary() -> Result<(), Box<dyn Error>>
+    {
+        let database = identity_database();
+        let _mapped_user_session = user_with_session(&database, "user-1", true).await?;
+        let other_user_session = user_with_session(&database, "user-2", false).await?;
+        let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
+        let result = authenticate_request(
+            Some("Bearer signed-token"),
+            Some(other_user_session.as_str()),
+            &provider,
+            &database,
+            SystemTime::now(),
+            RequestId::new_server(),
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unknown_external_identity_is_not_auto_linked() -> Result<(), Box<dyn Error>> {
+        let database = identity_database();
+        let session_id = user_with_session(&database, "user-1", false).await?;
+        let provider = TestIdentityProvider::new("subject-1", Assurance::A1);
+        let result = authenticate_request(
+            Some("Bearer signed-token"),
+            Some(session_id.as_str()),
+            &provider,
+            &database,
+            SystemTime::now(),
+            RequestId::new_server(),
+            None,
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Authentication)));
+        Ok(())
     }
 
     #[test]
@@ -216,10 +431,13 @@ mod tests {
     }
 
     #[test]
-    fn bearer_material_never_renders() {
-        let cred = extract_bearer(Some("Bearer secret-token")).unwrap();
+    fn bearer_material_never_renders() -> Result<(), Box<dyn Error>> {
+        let cred = extract_bearer(Some("Bearer secret-token")).map_err(|error| {
+            std::io::Error::other(format!("bearer extraction failed: {error:?}"))
+        })?;
         assert_eq!(format!("{cred:?}"), "CredentialMaterial(redacted)");
         assert_eq!(cred.to_string(), "<credential>");
+        Ok(())
     }
 
     #[test]
@@ -250,6 +468,12 @@ mod tests {
             503
         );
         assert_eq!(
+            map_auth_error(&AuthError::IdentityAuthorityUnavailable)
+                .public()
+                .code,
+            "DEPENDENCY_UNAVAILABLE"
+        );
+        assert_eq!(
             map_auth_error(&AuthError::RecoveryArtifactUsed)
                 .public()
                 .status,
@@ -258,13 +482,13 @@ mod tests {
     }
 
     #[test]
-    fn bound_device_requires_device_record() {
-        use sitolo_auth::{ClientPlatform, Device, DeviceId};
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let device_id = DeviceId::new("dev-1").unwrap();
+    fn bound_device_requires_device_record() -> Result<(), Box<dyn Error>> {
+        use sitolo_auth::DeviceId;
+        let now = test_now()?;
+        let device_id = DeviceId::new("dev-1")?;
         let mut sess = Session::create(
-            SessionId::new("sess-2").unwrap(),
-            UserId::new("user-1").unwrap(),
+            SessionId::new("sess-2")?,
+            UserId::new("user-1")?,
             Some(device_id),
             SessionClass::Merchant,
             AuthenticationMethod::Password,
@@ -289,7 +513,7 @@ mod tests {
             .is_err()
         );
         // An unbound session establishes normally.
-        let mut free = session();
+        let mut free = session()?;
         let request_id = RequestId::new_server();
         let ctx = establish_context(
             &mut free,
@@ -300,15 +524,11 @@ mod tests {
             request_id,
             None,
         )
-        .unwrap();
+        .map_err(|error| {
+            std::io::Error::other(format!("context establishment failed: {error:?}"))
+        })?;
         assert_eq!(ctx.assurance, Assurance::A1);
-        let _ = Device::begin_registration(
-            DeviceId::new("dev-x").unwrap(),
-            UserId::new("user-1").unwrap(),
-            ClientPlatform::Android,
-            SecurityVersion(1),
-            now,
-        );
+        Ok(())
     }
 
     #[test]

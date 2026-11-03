@@ -1,0 +1,182 @@
+[
+  {
+    "path": "apps/api/src/main.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-01: the binary entry point is the only place allowed to construct the multi-thread runtime.\" )]"
+  },
+  {
+    "path": "apps/api/src/main.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-03 / BP-AS-04: the serve task handle is awaited before exit, so the task is not fire-and-forget.\" )]"
+  },
+  {
+    "path": "apps/api/src/serve.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-AXM-01: the inventory registry is the only sanctioned `Router::route` call site; each spec is validated and snapshot-checked.\" )]"
+  },
+  {
+    "path": "apps/api/tests/startup.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-03: the live serve task is owned by the test and awaited after the bounded probes.\" )]"
+  },
+  {
+    "path": "apps/api/tests/startup_env.rs",
+    "attribute": "#![expect( unsafe_code, reason = \"Rust 2024 process-environment mutation is unsafe and serialized by ENV_LOCK; EnvGuard removes test-owned keys on drop\" )]"
+  },
+  {
+    "path": "apps/api/tests/tenancy_api.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary.\" )]"
+  },
+  {
+    "path": "apps/api/tests/tenancy_api.rs",
+    "attribute": "#[expect( clippy::expect_used, reason = \"Fixed HTTP and identity fixtures assert harness invariants.\" )]"
+  },
+  {
+    "path": "apps/api/tests/tenancy_api.rs",
+    "attribute": "#[expect( clippy::expect_used, reason = \"Fixed HTTP fixture identifiers make the request deterministic.\" )]"
+  },
+  {
+    "path": "apps/api/tests/tenancy_api.rs",
+    "attribute": "#[expect( clippy::expect_used, reason = \"Fixed fixture IDs and in-memory identity setup are asserted test preconditions.\" )]"
+  },
+  {
+    "path": "apps/api/tests/tenancy_api.rs",
+    "attribute": "#[expect( clippy::expect_used, reason = \"Test bootstrap is a fixed, validated fixture.\" )]"
+  },
+  {
+    "path": "apps/worker/src/main.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-01: the binary entry point is the only place allowed to construct the multi-thread runtime.\" )]"
+  },
+  {
+    "path": "apps/worker/src/main.rs",
+    "attribute": "#[expect( clippy::print_stderr, reason = \"the worker has no logging subscriber until configuration validates, and the fixed message deliberately omits the error chain, which can embed credentials\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/src/identity.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"Audit event fields stay explicit so authentication context cannot be silently omitted from the audit record.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/src/identity_ports.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"The explicit session-establishment fields expose the transaction contract at call sites.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/src/tenancy.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"Invitation issuance keeps tenant, actor, and token material explicit at the application boundary.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/src/tenancy.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"the explicit audit and invitation fields keep tenant, actor, target, and provenance reviewable at call sites\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/src/tenancy.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"the transition descriptor must keep the expected/next state and event provenance explicit\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/tests/membership_transaction_integration.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/tests/membership_transaction_integration.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/tests/part8_provision_organization_evidence_tests.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-CLP-02: the integration-test harness reads the CI-provided DSNs; production configuration is parsed at the binary boundary.\" )]"
+  },
+  {
+    "path": "crates/sitolo-application/tests/part8_provision_organization_evidence_tests.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-03: the two concurrent calls are a bounded test harness and every handle is awaited.\" )]"
+  },
+  {
+    "path": "crates/sitolo-audit/src/iam_event.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"the audit envelope keeps tenant, actor, target, and provenance explicit\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/login.rs",
+    "attribute": "#[expect( clippy::needless_pass_by_value, reason = \"The by-value signature is the published conversion contract; taking a \\ reference would break every existing caller.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/mfa.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The published method returns (), and the TTL is server configuration; a \\ checked fallback would silently change the challenge window.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/pkce.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The published signature returns a transaction, not a Result, and the \\ operands are server-controlled; a checked fallback would silently move \\ the deadline instead of failing loudly.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/ratelimit.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The lockout deadline cannot be reported as an error from a decision-returning \\ API, and every fallback would fail open for a security control.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/reset.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The published constructor returns the artifact, not a Result, and the \\ operands are server-controlled; a checked fallback would silently move the \\ reset window instead of failing loudly.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/session.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The published constructor returns the session, not a Result, and the lifetime \\ comes from validated server configuration; a checked fallback would silently \\ shorten or fabricate the mandated deadline.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/session.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, reason = \"The published method returns (), and the idle lifetime is validated server \\ configuration; a checked fallback would silently change the session lifetime.\" )]"
+  },
+  {
+    "path": "crates/sitolo-auth/src/session.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"The explicit session constructor keeps the Appendix A.1 creation invariant reviewable at call sites.\" )]"
+  },
+  {
+    "path": "crates/sitolo-authz/src/invitations.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"Invitation issuance keeps tenant, actor, scope, expiry, and token inputs explicit for security review.\" )]"
+  },
+  {
+    "path": "crates/sitolo-config/src/model.rs",
+    "attribute": "#[expect( clippy::expect_used, reason = \"the fixed development reference uses only allowed ASCII path characters\" )]"
+  },
+  {
+    "path": "crates/sitolo-config/tests/env_namespace.rs",
+    "attribute": "#![expect( unsafe_code, reason = \"Rust 2024 environment mutation is unsafe and serialized in this integration-test harness\" )]"
+  },
+  {
+    "path": "crates/sitolo-events/src/outbox.rs",
+    "attribute": "#[expect( clippy::too_many_arguments, reason = \"constructor mirrors the persisted event columns before database assignment\" )]"
+  },
+  {
+    "path": "crates/sitolo-persistence/src/tenancy.rs",
+    "attribute": "#[expect( clippy::unwrap_used, reason = \"unit-test organization identifiers are fixed valid fixture literals\" )]"
+  },
+  {
+    "path": "crates/sitolo-persistence/src/tenancy.rs",
+    "attribute": "#[expect( clippy::unwrap_used, reason = \"unit-test user identifiers are fixed valid fixture literals\" )]"
+  },
+  {
+    "path": "crates/sitolo-persistence/tests/common/mod.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"Integration harness reads the explicit disposable-target contract before connecting.\" )]"
+  },
+  {
+    "path": "crates/sitolo-persistence/tests/rls_security_tests.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-TOK-03 / BP-AS-04: the task isolates an unwind for teardown and its handle is awaited immediately.\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/provider.rs",
+    "attribute": "#[expect( clippy::disallowed_methods, reason = \"FW-CLP-02: the local-only secret adapter is the one sanctioned environment read and is rejected in production.\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/redact.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, clippy::indexing_slicing, reason = \"`end` is derived from `at` and validated against `bytes.len()` before every \\ slice, and all byte offsets stay within the same bounded buffer\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/redact.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, clippy::indexing_slicing, reason = \"every slice and index is guarded by an explicit `i < bytes.len()` or \\ `bytes[i..].len() >= s.len()` check against the same buffer\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/redact.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, clippy::indexing_slicing, reason = \"the scan advances only while `i < bytes.len()` and clamps the quoted-value \\ return to `bytes.len()`\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/redact.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, clippy::indexing_slicing, reason = \"the scan advances only while `i < bytes.len()`\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/src/redact.rs",
+    "attribute": "#[expect( clippy::arithmetic_side_effects, clippy::indexing_slicing, reason = \"the scan keeps `i < bytes.len()` and `i + 7 <= bytes.len()` proven before every \\ slice, and `j` advances only while bounded by `bytes.len()`\" )]"
+  },
+  {
+    "path": "crates/sitolo-security/tests/provider_env.rs",
+    "attribute": "#![expect( unsafe_code, reason = \"Rust 2024 requires unsafe environment mutation in this serialized integration-test harness\" )]"
+  }
+]

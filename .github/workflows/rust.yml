@@ -10,6 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Install architecture tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      # Independent, early gate: a crate that is unclassified or that crosses a
+      # declared layer boundary fails here, before formatting, lint or tests can
+      # hide it behind an unrelated failure.
+      - name: Enforce crate boundary contract
+        run: ./scripts/ci/check-architecture
+
   toolchain:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -47,12 +64,19 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      - name: Install mandatory security tooling
+      - name: Install mandatory policy tooling
         run: |
-          cargo install cargo-deny --locked || true
-          cargo install cargo-audit --locked || true
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      - name: Install mandatory security tooling
+        run: python3 ./scripts/ci/install-policy-tools.py
       - name: Run canonical verification
         env:
+          SITOLO_TEST_DATABASE_DISPOSABLE: "true"
+          # The admin DSN is used only for schema and role setup. Runtime and
+          # worker authenticate as their own restricted LOGIN roles, which the
+          # isolated-schema fixture creates before the pools connect.
           ADMIN_DATABASE_URL: postgres://postgres@127.0.0.1:5432/sitolo_test
           RUNTIME_DATABASE_URL: postgres://app_runtime@127.0.0.1:5432/sitolo_test
+          WORKER_DATABASE_URL: postgres://app_worker@127.0.0.1:5432/sitolo_test
         run: ./scripts/ci/verify

@@ -11,7 +11,7 @@ Implementation-specific Layer 3 context.
 | Phase 2 | ../../../../docs/phase2_config_secrets_logging_errors_telemetry_implementation.md | Runtime configuration and telemetry |
 | Phase 3 | ../../../../docs/phase3_identity_sessions_mfa_device_identity_implementation.md | Identity, session and device controls |
 | Phase 4 | ../../../../docs/phase4_tenant_organization_branch_iam_implementation.md | Tenant, organization, branch and IAM target contract |
-| Active Part 8 | ../../../../docs/phase4_part8_audit_outbox_implementation_contract.md; ../../../../docs/phase4_part8_pr009_current_status.md | Binding Part 8 contract and current PR-009 status |
+| Active Part 8 | ../../../../docs/phase4_part8_audit_outbox_implementation_contract.md; ../../../../docs/phase4_part8_pr009_current_status.md; ../../../../docs/phase4_part8_pr009_remediation_execution_contract.md; ../../../../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-read-only-re-audit-2026-10-25.md; ../../../../workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-phase4-part8-verification-2026-10-25-report.md | Binding Part 8 contract, current status/continuation guide, audit findings snapshot, and exact-head verification evidence. Neither follow-up artifact substitutes for independent Stage 06 approval. |
 | Current implementation | ../../../../docs/current_implementation_status.md | Full file | Active product phase vs ICM workflow separation |
 | Phase 5 | ../../../../docs/phase5_postgresql_schema_migrations_constraints_rls_implementation.md | Schema and RLS |
 | Phase 6 | ../../../../docs/phase6_authorization_engine_policy_enforcement_implementation.md | Authorization |

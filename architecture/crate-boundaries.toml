@@ -1,0 +1,168 @@
+version = 1
+dev_only_dependencies = ["sitolo-testkit"]
+
+# Hard layer boundaries, not advisory targets.
+#
+# Every workspace package must appear exactly once. `scripts/ci/check-crate-boundaries.py`
+# fails closed when a package has no rule (unclassified crate), when a rule names a
+# package that no longer exists (stale rule), or when a declared production
+# dependency edge crosses a forbidden boundary.
+#
+# `forbidden_dependencies` are matched against direct *normal* dependencies from
+# `cargo metadata`; dev- and build-dependencies are out of scope. The source scan
+# (`forbidden_source_tokens`) is a supplementary guard: it catches infrastructure
+# types reached through a re-export, which a manifest check cannot see.
+
+# --- domain and pure policy layers -------------------------------------------
+
+[[rules]]
+crate = "sitolo-domain"
+role = "domain"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-authz"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-tenancy"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-auth"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-security"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-events"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-audit"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-observability"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+[[rules]]
+crate = "sitolo-config"
+role = "pure"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-application", "sitolo-api",
+]
+
+# --- application layer -------------------------------------------------------
+# Use cases, authorization orchestration and business decisions live here.
+# Persistence and driver types must arrive through application-owned ports;
+# importing the concrete PostgreSQL adapter reverses the dependency direction.
+
+[[rules]]
+crate = "sitolo-application"
+role = "application"
+forbidden_dependencies = [
+  "axum", "sqlx", "sqlx-core", "sqlx-postgres", "redis", "reqwest", "hyper",
+  "tokio-postgres", "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence", "sitolo-api",
+]
+forbidden_source_tokens = [
+  "sqlx_core::", "sqlx_postgres::", "sqlx::", "sitolo_persistence::",
+  "PgPool", "PgConnection", "Transaction<'_, Postgres>",
+]
+
+# --- transport layer ---------------------------------------------------------
+# HTTP application surface. It may call application use cases, but it must not
+# reach around them into the database adapter.
+
+[[rules]]
+crate = "sitolo-api"
+role = "transport"
+forbidden_dependencies = [
+  "sqlx", "sqlx-core", "sqlx-postgres", "tokio-postgres", "redis",
+  "aws-config", "aws-sdk-sns", "aws-sdk-sqs",
+  "sitolo-persistence",
+]
+
+# --- adapters ----------------------------------------------------------------
+
+[[rules]]
+crate = "sitolo-persistence"
+role = "persistence"
+# An adapter depends on the crate that owns the port it implements, so
+# `sitolo-application` is deliberately allowed here. What is forbidden is the
+# reverse edge: application must never import this crate.
+forbidden_dependencies = ["axum", "sitolo-api"]
+
+[[rules]]
+crate = "sitolo-integrations"
+role = "integration"
+forbidden_dependencies = ["axum", "sitolo-api", "sitolo-application", "sitolo-persistence"]
+
+# --- composition roots -------------------------------------------------------
+# Runtime composition is the only place allowed to wire every layer together.
+
+[[rules]]
+crate = "sitolo-api-bin"
+role = "composition"
+forbidden_dependencies = []
+
+[[rules]]
+crate = "sitolo-worker-bin"
+role = "composition"
+forbidden_dependencies = []
+
+# --- tooling -----------------------------------------------------------------
+
+[[rules]]
+crate = "sitolo-sync"
+role = "tooling"
+forbidden_dependencies = ["axum", "sitolo-api", "sitolo-application"]
+
+[[rules]]
+crate = "sitolo-testkit"
+role = "tooling"
+forbidden_dependencies = ["axum", "sitolo-api"]

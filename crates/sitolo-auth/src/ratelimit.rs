@@ -12,21 +12,34 @@ use std::time::{Duration, SystemTime};
 /// Abuse control classification (§23; Phase 4 §38 IAM classes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AbuseClass {
+    /// Password or provider login attempt.
     Login,
+    /// Request for a password-reset artifact.
     PasswordResetRequest,
+    /// Redemption of a password-reset artifact.
     PasswordResetRedeem,
+    /// MFA challenge verification.
     MfaVerify,
+    /// TOTP code verification.
     TotpVerify,
+    /// Passkey authentication completion.
     PasskeyComplete,
+    /// Refresh-token rotation.
     Refresh,
+    /// Session creation.
     SessionCreate,
+    /// Device registration.
     DeviceRegister,
+    /// Recovery-code redemption.
     RecoveryRedeem,
+    /// Invitation creation.
     InvitationCreate,
+    /// Invitation acceptance.
     InvitationAccept,
 }
 
 impl AbuseClass {
+    /// Stable bounded label for telemetry (§38).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -49,17 +62,32 @@ impl AbuseClass {
 /// Rate limit rule (§23).
 #[derive(Debug, Clone, Copy)]
 pub struct RateLimitRule {
+    /// Attempts permitted inside one window.
     pub max_attempts: u32,
+    /// Length of the counting window.
     pub window: Duration,
+    /// How long the bucket stays locked after the limit is exceeded.
     pub lockout: Duration,
 }
 
 /// Rate limit decision (§23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitDecision {
-    Allowed { remaining: u32 },
-    Throttled { retry_after: Duration },
-    Locked { until: SystemTime },
+    /// The attempt is permitted; `remaining` attempts stay in the window.
+    Allowed {
+        /// Attempts still available before the bucket locks.
+        remaining: u32,
+    },
+    /// The attempt is throttled without a lockout.
+    Throttled {
+        /// How long the caller should wait before retrying.
+        retry_after: Duration,
+    },
+    /// The bucket is locked until `until`.
+    Locked {
+        /// End of the current lockout.
+        until: SystemTime,
+    },
 }
 
 /// Rate limiter state (§23).
@@ -76,12 +104,23 @@ struct Bucket {
 }
 
 impl RateLimiter {
+    /// Creates an empty rate limiter.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Checks the rate limit for a given class and key (§23).
+    ///
+    /// The lockout deadline is server-controlled configuration and the
+    /// decision type has no error variant. A checked fallback would either
+    /// unlock the bucket immediately or fabricate a deadline, both of which
+    /// fail open, so an unrepresentable deadline fails loudly instead.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "The lockout deadline cannot be reported as an error from a decision-returning \
+                  API, and every fallback would fail open for a security control."
+    )]
     #[must_use]
     pub fn check(
         &mut self,
@@ -107,8 +146,13 @@ impl RateLimiter {
             bucket.count = 0;
             bucket.window_start = now;
         }
-        // Reset window if elapsed.
-        if now > bucket.window_start + rule.window {
+        // Reset window if elapsed. An unrepresentable window end means the
+        // window cannot have elapsed, so the count is retained.
+        if bucket
+            .window_start
+            .checked_add(rule.window)
+            .is_some_and(|end| now > end)
+        {
             bucket.window_start = now;
             bucket.count = 0;
         }
@@ -119,7 +163,7 @@ impl RateLimiter {
                 until: now + rule.lockout,
             };
         }
-        bucket.count += 1;
+        bucket.count = bucket.count.saturating_add(1);
         let remaining = rule.max_attempts.saturating_sub(bucket.count);
         RateLimitDecision::Allowed { remaining }
     }
@@ -136,6 +180,12 @@ impl RateLimiter {
 mod tests {
     use super::*;
 
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
     #[test]
     fn rate_limit_allows_within_window() {
         let mut limiter = RateLimiter::new();
@@ -144,7 +194,7 @@ mod tests {
             window: Duration::from_secs(60),
             lockout: Duration::from_secs(300),
         };
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         for _ in 0..5 {
             let decision = limiter.check(AbuseClass::Login, "user-1", &rule, now);
             assert!(matches!(decision, RateLimitDecision::Allowed { .. }));
@@ -161,11 +211,11 @@ mod tests {
             window: Duration::from_secs(60),
             lockout: Duration::from_secs(10),
         };
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let _ = limiter.check(AbuseClass::Login, "user-1", &rule, now);
+        let now = at(1_000);
+        let _first = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         let decision = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         assert!(matches!(decision, RateLimitDecision::Locked { .. }));
-        let later = now + Duration::from_secs(11);
+        let later = at(1_011);
         let decision = limiter.check(AbuseClass::Login, "user-1", &rule, later);
         assert!(matches!(decision, RateLimitDecision::Allowed { .. }));
     }
@@ -178,11 +228,11 @@ mod tests {
             window: Duration::from_secs(60),
             lockout: Duration::from_secs(300),
         };
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let now = at(1_000);
         for _ in 0..3 {
-            let _ = limiter.check(AbuseClass::Login, "user-1", &rule, now);
+            let _decision = limiter.check(AbuseClass::Login, "user-1", &rule, now);
         }
-        let later = now + Duration::from_secs(61);
+        let later = at(1_061);
         let decision = limiter.check(AbuseClass::Login, "user-1", &rule, later);
         assert!(matches!(decision, RateLimitDecision::Allowed { .. }));
     }

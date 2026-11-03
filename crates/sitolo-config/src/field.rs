@@ -1,9 +1,18 @@
 //! Version-controlled metadata for every accepted canonical configuration key.
 
+/// Lifecycle class of a configuration key.
+///
+/// The class decides how a key participates in reload and secret handling; it
+/// is metadata only and never carries a configuration or secret value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigClass {
+    /// Process-lifetime value that only changes through a redeploy.
     Static,
+    /// Reference to a secret in an external secret authority; never the secret
+    /// value itself.
     SecretReference,
+    /// Bounded operational tuning value that validation keeps below a hard
+    /// ceiling.
     Tunable,
 }
 
@@ -11,15 +20,25 @@ pub enum ConfigClass {
 /// never configuration metadata and are never accepted as ordinary config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigField {
+    /// Canonical key name without the `SITOLO__` prefix.
     pub key: &'static str,
+    /// Lifecycle class that governs reload and secret handling.
     pub class: ConfigClass,
+    /// Layer that may supply the value (environment over compiled default).
     pub source: &'static str,
+    /// Documented behaviour when no layer supplies the key.
     pub default_behavior: &'static str,
+    /// Whether startup fails when the key is absent.
     pub required: bool,
+    /// Whether the value may change without restarting the process.
     pub reloadable: bool,
+    /// Domain that owns the value and its semantics.
     pub owner: &'static str,
+    /// Accepted syntax, including bounds where applicable.
     pub syntax: &'static str,
+    /// Contract when the value is missing or invalid at startup.
     pub startup_failure: &'static str,
+    /// Contract for a value that becomes invalid after startup.
     pub runtime_failure: &'static str,
 }
 
@@ -106,6 +125,13 @@ const CATALOGUE: &[ConfigField] = &[
         "bounded database name"
     ),
     field!(
+        "DATABASE__SCHEMA",
+        Static,
+        true,
+        "platform",
+        "PostgreSQL identifier: lowercase ASCII letters, digits, underscore; maximum 63 bytes"
+    ),
+    field!(
         "DATABASE__USER",
         Static,
         true,
@@ -118,6 +144,41 @@ const CATALOGUE: &[ConfigField] = &[
         true,
         "security",
         "typed secret reference"
+    ),
+    field!(
+        "WORKER__DATABASE__PASSWORD_REF",
+        SecretReference,
+        false,
+        "security",
+        "typed database secret reference for app_worker"
+    ),
+    field!(
+        "IDENTITY__OIDC__ISSUER",
+        Static,
+        false,
+        "security",
+        "HTTPS Cognito issuer URL"
+    ),
+    field!(
+        "IDENTITY__OIDC__CLIENT_ID",
+        Static,
+        false,
+        "security",
+        "bounded Cognito app client identifier"
+    ),
+    field!(
+        "IDENTITY__OIDC__TOKEN_ENDPOINT",
+        Static,
+        false,
+        "security",
+        "HTTPS OAuth token endpoint URL"
+    ),
+    field!(
+        "IDENTITY__OIDC__REDIRECT_URI",
+        Static,
+        false,
+        "security",
+        "registered HTTPS or sitolo callback URI"
     ),
     field!(
         "DATABASE__POOL_MIN",
@@ -182,7 +243,55 @@ const CATALOGUE: &[ConfigField] = &[
         "security",
         "boolean; false in production"
     ),
+    field!(
+        "SECRETS__AWS_REGION",
+        Static,
+        false,
+        "security",
+        "AWS region identifier for ECS workload secret provider"
+    ),
+    field!(
+        "EVENTS__RELAY__AWS_REGION",
+        Static,
+        false,
+        "platform",
+        "AWS region identifier"
+    ),
+    field!(
+        "EVENTS__RELAY__SNS_TOPIC_ARN",
+        Static,
+        false,
+        "platform",
+        "SNS FIFO topic ARN"
+    ),
+    field!(
+        "EVENTS__RELAY__BATCH_SIZE",
+        Tunable,
+        true,
+        "platform",
+        "positive u32 <= 100"
+    ),
+    field!(
+        "EVENTS__RELAY__MAX_ATTEMPTS",
+        Tunable,
+        true,
+        "platform",
+        "positive u32 <= 10"
+    ),
+    field!(
+        "EVENTS__RELAY__BACKOFF_MAX_MS",
+        Tunable,
+        true,
+        "platform",
+        "positive milliseconds <= 1 hour"
+    ),
 ];
+/// Returns the version-controlled catalogue of every accepted configuration
+/// key.
+///
+/// The catalogue is the schema contract: parser acceptance, validation, and
+/// documentation must all agree with it.
+#[must_use]
 pub fn catalogue() -> &'static [ConfigField] {
     CATALOGUE
 }
@@ -201,8 +310,14 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "DATABASE__HOST",
     "DATABASE__PORT",
     "DATABASE__NAME",
+    "DATABASE__SCHEMA",
     "DATABASE__USER",
     "DATABASE__PASSWORD_REF",
+    "WORKER__DATABASE__PASSWORD_REF",
+    "IDENTITY__OIDC__ISSUER",
+    "IDENTITY__OIDC__CLIENT_ID",
+    "IDENTITY__OIDC__TOKEN_ENDPOINT",
+    "IDENTITY__OIDC__REDIRECT_URI",
     "DATABASE__POOL_MIN",
     "DATABASE__POOL_MAX",
     "DATABASE__ACQUIRE_TIMEOUT_MS",
@@ -212,4 +327,10 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "TELEMETRY__TRACE_SAMPLE_RATIO",
     "LOG__LEVEL",
     "SECRETS__ALLOW_LOCAL_PROVIDER",
+    "SECRETS__AWS_REGION",
+    "EVENTS__RELAY__AWS_REGION",
+    "EVENTS__RELAY__SNS_TOPIC_ARN",
+    "EVENTS__RELAY__BATCH_SIZE",
+    "EVENTS__RELAY__MAX_ATTEMPTS",
+    "EVENTS__RELAY__BACKOFF_MAX_MS",
 ];

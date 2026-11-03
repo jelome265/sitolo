@@ -7,8 +7,11 @@
 /// Subsystems stopped during shutdown, in stop order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subsystem {
+    /// Network ingress, stopped first so no new work arrives.
     Listener,
+    /// Telemetry flush accounting.
     Telemetry,
+    /// Persistence-intent release.
     PersistenceIntent,
 }
 
@@ -18,12 +21,16 @@ pub const SHUTDOWN_DRAIN_DEADLINE_SECS: u64 = 10;
 /// Maximum concurrently tracked connections during drain.
 pub const MAX_IN_FLIGHT_CONNECTIONS: usize = 128;
 
+/// Tracks the ordered, idempotent shutdown of process subsystems.
+#[derive(Debug)]
 pub struct ShutdownCoordinator {
     completed: Vec<Subsystem>,
     done: bool,
 }
 
 impl ShutdownCoordinator {
+    /// Creates a coordinator that has not yet stopped any subsystem.
+    #[must_use]
     pub fn new() -> Self {
         ShutdownCoordinator {
             completed: Vec::new(),
@@ -47,6 +54,8 @@ impl ShutdownCoordinator {
         &self.completed
     }
 
+    /// Whether the ordered shutdown has already completed.
+    #[must_use]
     pub fn is_shut_down(&self) -> bool {
         self.done
     }
