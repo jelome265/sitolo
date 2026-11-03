@@ -38,3 +38,15 @@ These are observed successes, not evidence that the ruleset requires them. The a
 The repository settings do not satisfy the work order's required-check gate. A repository administrator must configure the active default-branch ruleset to require the exact contexts listed above, preserve the required human approval, and review the always-bypass role against the human-review requirement. Re-read the ruleset after configuration and record the resulting exact contexts and review/bypass controls. Do not claim branch protection is complete until that evidence exists.
 
 This record documents read-only inspection; it does not change repository settings. PR #49 remains open and review-required.
+
+## Ruleset update — 2026-11-03
+
+The active repository ruleset `22459107` was updated on 2026-11-03 after the read-only inspection above. The previous `verified-incomplete` observation is retained as historical evidence; the live state now is:
+
+- Required status checks are strict and bound to their expected providers: Integration `application and contract tests with PostgreSQL`; Rust `architecture`, `toolchain`, and `verify`; Security `dependency-policy`, `advisories`, `secrets`, `offensive-regression`, `codeql`, and Advanced Security `CodeQL`; Policy `policy`.
+- One approving review remains required. Branches must be up to date before merge, and non-fast-forward updates remain prohibited.
+- The bypass actor list is empty; `current_user_can_bypass` is `never`.
+- Classic branch protection still returns 404; enforcement is through repository ruleset `22459107`.
+- PR #49 remains open at `db071f67adfe435dd1381216cdcee38bb0cdc2b8`. Every required check context is successful on that exact head. Its review decision remains `REVIEW_REQUIRED`, so human review is still outstanding.
+
+Source evidence: authenticated `gh api repos/jelome265/sitolo/rulesets/22459107` and `gh pr view 49 --json ...` on 2026-11-03. The PR check run URLs are recorded in the current verification report and PR metadata. This change configures enforcement; it does not represent human approval or independent Stage 06 audit.
