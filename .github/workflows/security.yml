@@ -62,7 +62,7 @@ jobs:
       - name: Autobuild
         uses: github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938
       - name: Analyze
-        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
 
   offensive-regression:
     runs-on: ubuntu-latest
