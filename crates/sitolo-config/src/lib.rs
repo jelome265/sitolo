@@ -462,7 +462,12 @@ mod contract_tests {
         ])
         .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(mismatched).is_err());
+        Ok(())
+    }
 
+    #[test]
+    fn consumer_destination_rejects_missing_region_and_malformed_urls()
+    -> Result<(), Box<dyn Error>> {
         let missing_region = EnvLoader::from_pairs([
             (
                 "SITOLO__WORKER__DATABASE__PASSWORD_REF".into(),
@@ -507,7 +512,10 @@ mod contract_tests {
                     "SITOLO__EVENTS__CONSUMER__NAME".into(),
                     "iam-projection".into(),
                 ),
-                ("SITOLO__EVENTS__CONSUMER__SQS_QUEUE_URL".into(), bad_url.into()),
+                (
+                    "SITOLO__EVENTS__CONSUMER__SQS_QUEUE_URL".into(),
+                    bad_url.into(),
+                ),
                 (
                     "SITOLO__EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL".into(),
                     "https://sqs.af-south-1.amazonaws.com/123456789012/iam-dlq.fifo".into(),
