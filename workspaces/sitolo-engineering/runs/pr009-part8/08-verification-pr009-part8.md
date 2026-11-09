@@ -199,3 +199,86 @@ No local PostgreSQL was started. PostgreSQL-backed tests remain CI-only. This re
 - **Stage 06 findings remain open.** S06-01 (mutation matrix), S06-03 (migration/release ownership), S06-05 (Phase 3 identity), S06-06 (production AWS/ops) remain PARTIAL; S06-02 (consumer business effect) and S06-04 (role-risk governance) remain BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED. Green CI does **not** close owner decisions, production evidence gaps, or Stage 07 owner assignments.
 - **Independent non-author review: NOT OBTAINED in this record.** Per Stage 07, the repository owner must nominate a qualified non-author reviewer who submits a GitHub `COMMENT` review explicitly stating `APPROVED FOR AUDIT SCOPE ONLY` or `NOT APPROVED` for Stage 06 and Stage 07. No `APPROVE` is requested here. This verification record is not a human review, approval, or merge authorization.
 - **Do not merge, close the PR, close Phase 4 Part 8, or claim production readiness.** Stage 09 delivery remains blocked until the approved effect, mutation scope, migration ownership, role-risk policy, Phase 3 release dependency and required human approval have been resolved or formally accepted by their accountable owners.
+
+## Exact-head verification record — 2026-11-09 (candidate head `4b24937`)
+
+**Purpose:** Executive-directive §5 Stage 08 exact-head verification against the actual candidate head after Stage 06 approval validation and Stage 07 handoff validation. This addendum supersedes the `a83d9d1` record above where they conflict; the `a83d9d1` record is preserved as historical evidence for that head.
+
+### Baseline (FACT)
+
+| Item | Value |
+|---|---|
+| PR | #49 `feat/phase4-pr009-audit-outbox` → `main` |
+| GitHub PR metadata `headRefOid` | `4b24937a9787c03977d98c262e21b517c47637bb` |
+| Base `baseRefOid` (`main`) | `d2dbcce6606db49b1b87669f364721905c6509f8` |
+| PR state / merge state | OPEN / UNMERGED |
+| Remote branch head / local HEAD | `4b24937a9787c03977d98c262e21b517c47637bb` (match) |
+| Stage 06 pinned implementation source | `5e963123dcb84d9d1d50993d7611ddbc1bae0466` |
+| PR-body “Current PR head” | `a83d9d1e70e4d2a1d73278cbede2324a22514764` — **DIFFERENT from metadata; DISCREPANCY RESOLVED in favour of GitHub metadata and remote branch head**. PR-body text names implementation-unchanged from `f42c54ef…`, which is one docs-only commit behind the pinned `5e963123` (see below). Do not trust the PR body as head authority. |
+| `5e963123…4b24937` diff | **3 files, 208 insertions, docs-only**: `06-audit-pr009-part8.md` (+80), `07-remediation-pr009-part8.md` (+57), `08-verification-pr009-part8.md` (+71). `git log --oneline 5e963123..4b24937` = 6× `docs(icm)` / `docs(sitolo)` commits. No `crates/`, `apps/`, migration, workflow or security-control change. |
+| Implication | **Documentation-only correction.** The existing implementation audit remains current; no fresh Stage 06 implementation audit is triggered. Documentation-integrity verification is required (see below). |
+
+- FACT — Six post-`5e963123` commits change audit/remediation/verification records only. No implementation source changed.
+- ASSUMPTION — None. Head identity is proven by `gh pr view 49 --json headRefOid` + `git rev-parse origin/feat/phase4-pr009-audit-outbox`.
+- DECISION — Resolve head-authority discrepancy in favour of GitHub metadata, not the outdated PR description.
+- RISK — Treating the PR-body `a83d9d1` as current would reuse the prior CI cycle as proof for `4b24937`. This record does not.
+- UNKNOWN — Independent reviewer identity/expertise beyond GitHub login `zagweratadala33-cpu` (see §4 gate below).
+
+### Stage 06 / Stage 07 validation (inputs to this verification)
+
+- FACT — Stage 06 artifact `06-audit-pr009-part8.md` carries audit identity (repo/PR `jelome265/sitolo` #49, SHA `5e963123`, date 2026-11-09, AI auditor, scope `phase4_part8_audit_outbox_implementation_contract` + brief/plan/implementation/mutation matrix/SC-002,006,009,010,011/runbook), module/tool limitations (read-only, no local build/PG/AWS, CI-only test evidence), 248-path review boundary, `REQUIREMENT → IMPLEMENTATION → TEST/EVIDENCE → DISPOSITION` trace with disposition limited to PASS/PARTIAL/FAIL/NOT EVIDENCED (BLOCKED_BY_APPROVED_DECISION reported as a finding state, not a PASS), findings S06-01…S06-06 + ECC manifest warning, and overall disposition **NOT READY FOR MERGE OR PHASE 4 PART 8 CLOSURE**. It explicitly distinguishes CI verification vs AI audit vs external owner decisions vs production evidence vs human review, and keeps historical findings (F-01…F-04) reconciled without rewriting them.
+- FACT — Stage 07 artifact `07-remediation-pr009-part8.md` (current addendum 2026-11-09) maps each Stage 06 finding to current disposition, accountable owner role, required decision/remediation, closure evidence, release impact (§3 checklist), and retains PARTIAL / BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED / OPEN classifications without converting them to CLOSED on the basis of code existence or green CI. Owner ledger records Product/Domain, Product/Security, Database/Platform and Platform/AWS owners as NOT RECORDED; repository owner `jelome265` and requested reviewer `zagweratadala33-cpu` (request submitted, no sign-off) are the only identities. No owner decision, AWS identifier, migration ownership or consumer effect is invented.
+- RESULT — **Stage 06 audit artifact: VALIDATED for audit scope. Stage 07 handoff: VALIDATED.** Neither is claimed as human-approved or release-clearing. Green CI is not used to close findings.
+
+### Required GitHub Actions workflows — exact-head evidence for `4b24937`
+
+All four required workflows completed successfully with `head_sha == 4b24937a9787c03977d98c262e21b517c47637bb`:
+
+| Workflow | Run | Conclusion | Jobs / steps (observed) |
+|---|---:|---|---|
+| Rust | [42682309237](https://github.com/jelome265/sitolo/actions/runs/42682309237) | PASS | `toolchain`, `architecture`, `verify` all `success`; `verify` → “Run canonical verification” `success` |
+| PostgreSQL Integration | [42682309692](https://github.com/jelome265/sitolo/actions/runs/42682309692) | PASS | `application and contract tests with PostgreSQL` `success`; “Run boundary and contract tests” `success` |
+| Security | [42682309701](https://github.com/jelome265/sitolo/actions/runs/42682309701) | PASS | `dependency-policy`, `codeql`, `offensive-regression`, `secrets`, `advisories` all `success` |
+| Policy | [42682309319](https://github.com/jelome265/sitolo/actions/runs/42682309319) | PASS | `policy` `success`; steps: Workflow policy, Rust lint and test policy, Rust lint exception inventory, **ICM workspace policy**, ICM PowerShell parity, **System Map generated-file**, **Documentation reference**, Repository policy presence — all `success` |
+
+- FACT — Disposable PostgreSQL CI service executed database suites (`application and contract tests with PostgreSQL`; canonical verifier PostgreSQL suites within `verify`). No local PostgreSQL was installed or run.
+- FACT — `verify` job success includes the canonical verifier (`scripts/ci/verify`): ICM workspace, architecture (early, fail-closed), schema-migration inventory, Rust lint/unsafe policy, lockfile verification, `cargo fmt`, Clippy (`-D warnings`), `cargo check`, unit tests, Part 8 PostgreSQL integration + RLS suites, release build, Phase 2 policy, `cargo deny` + `cargo audit`. These are reported as CI evidence, not re-run locally (see below).
+- FACT — Policy PASS includes ICM integrity, System Map integrity, documentation references, and PowerShell/Bash parity checks.
+
+### Additional checks (§5 list)
+
+| Check | Evidence location | Result |
+|---|---|---|
+| `cargo fmt --all -- --check` | Local, HEAD `4b24937` (Windows, PowerShell 5.1) | PASS (exit 0) |
+| `cargo check --workspace --all-targets --all-features --locked` | CI `verify` → “Run canonical verification” | PASS (within Rust 42682309237) |
+| Strict workspace Clippy (`-D warnings`) | CI `verify` | PASS (within Rust 42682309237) |
+| Canonical verification scripts | CI `verify` + Policy steps | PASS |
+| ICM workspace integrity | CI Policy → “ICM workspace policy check” + parity | PASS |
+| Documentation references | Local `python scripts/ci/check-doc-references` + CI Policy step | PASS — 262 files, 1162 refs, 0 errors |
+| System Map integrity | CI Policy → “System Map generated-file check” | PASS |
+| Migration inventory & checksums | Local `check-schema-migrations.py` + CI `verify` | PASS — `SCHEMA MIGRATION INVENTORY PASSED` |
+| Rust lint / unsafe policy | Local `check-rust-policy.py` | PASS |
+| Security regression coverage | CI Security jobs (`offensive-regression`, `codeql`, `secrets`, `dependency-policy`, `advisories`) | PASS |
+
+**NOT RUN locally (recorded as NOT RUN, never PASS):**
+
+- `scripts/ci/verify` end-to-end locally — NOT RUN. Requires bash, full workspace test suite + PostgreSQL services, tool installs; PG execution is not authorised locally. CI `verify` is the evidence.
+- `cargo check` / `cargo clippy` / `cargo test` locally — NOT RUN locally for this head. CI `verify` is the evidence.
+- `scripts/ci/check-icm-workspace.ps1` locally — NOT RUN. Host has no `bash` (`bash: command not found`). CI Policy ICM steps are the evidence. Do not report as locally passed.
+- PostgreSQL integration / RLS locally — NOT RUN. No local DB per directive; CI Integration + `verify` suites are the evidence. No skipped PG test is counted as PASS.
+- `bash` policy scripts (`check-workflow-policy`, `check-icm-workspace-contracts`, `check-architecture`, `check-phase2-policy`) locally — NOT RUN as `python` (they are bash). CI Policy/Rust jobs are the evidence.
+
+### Stage 08 control trace (security-relevant)
+
+- SC-002 — server-derived tenant scope → `apps/api` route tests + RLS/role suites → PASS for exercised routes; NOT proven for full mutation matrix (see S06-01). Limitation in Stage 06 remains.
+- SC-006 — transaction integrity / idempotency → Part 8 provisioning evidence suite + concurrent same-payload case → PASS for tested organisation-provisioning path only.
+- SC-009 — durable audit evidence → audit/outbox rollback cases → PASS for exercised application transaction path.
+- SC-010 — bounded / fail-closed → claim/retry/quarantine + RLS/privilege suites → PASS for tested relay policy; production adapter/runtime NOT EVIDENCED (see S06-02/S06-06).
+- SC-011 — dependency integrity → `advisories` + `dependency-policy` (`rsa` path removed, no suppression) → PASS at exact head.
+
+### Stage 08 process disposition
+
+- Step 7 (“latest audit has no unresolved material findings and no applicable security control remains unproven”) — **NOT SATISFIED.** S06-01 PARTIAL, S06-02 BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED, S06-03 PARTIAL, S06-04 BLOCKED_BY_APPROVED_DECISION, S06-05 PARTIAL, S06-06 PARTIAL remain open. SC-002/SC-010 remain partial for their unproven scopes.
+- **Exact-head CI: PASS 4/4 at `4b24937`. Release verification: BLOCKED.** Green CI does not close Stage 06 findings, owner decisions or production evidence gaps.
+- Routing: do **not** hand back to Stage 07 for code remediation of owner decisions (no speculative remediation is authorised). Continue to Stage 09 only to record the NOT MERGE READY determination below. No implementation change is made by this verification.
+- **Independent non-author review: NOT OBTAINED.** FACT — `gh pr view` shows `reviewRequests: [zagweratadala33-cpu]`; `gh api pulls/49/reviews` = 0; issue comments carry no reviewer COMMENT attestation. A request is not an approval. An AI audit is not a human review. No `APPROVE` was requested or submitted. This record is not a human approval.

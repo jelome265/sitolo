@@ -301,3 +301,60 @@ AUD-04 is wired and integration-tested for the five approved mappings, including
 Source `96ca56b08804211895106612fb5b393e2d66e686` adds PostgreSQL failure-injection coverage for direct branch creation, direct member invitation, and scope-grant revocation. All nine exact-head checks passed, including the PostgreSQL workflow [39738690198](https://github.com/jelome265/sitolo/actions/runs/39738690198), Rust verification [39738690312](https://github.com/jelome265/sitolo/actions/runs/39738690312), policy [39738690391](https://github.com/jelome265/sitolo/actions/runs/39738690391), and security/CodeQL [39738690317](https://github.com/jelome265/sitolo/actions/runs/39738690317). No local PostgreSQL was run.
 
 AUD-03 remains open; AUD-04 remains partial pending Stage 06 re-audit. AUD-02 is open, with protected HTTP writes still fail-closed. See the follow-up remediation report for exact disposition.
+
+## Delivery-readiness addendum — 2026-11-09 (executive directive, candidate head `4b24937`)
+
+**Scope of this addendum:** Append-only delivery-readiness determination for the current PR #49 candidate head. All earlier sections (including October 2026 delivery history to `96ca56b`) are preserved for provenance and are not rewritten. This section records the current ICM-governed state after Stage 06 approval-validation, Stage 07 handoff-validation, independent-review inspection, and Stage 08 exact-head verification at `4b24937`.
+
+### Final SHAs
+
+| Item | SHA |
+|---|---|
+| Final implementation source (Stage 06 pinned audited source) | `5e963123dcb84d9d1d50993d7611ddbc1bae0466` |
+| Final documentation head (GitHub PR metadata) | `4b24937a9787c03977d98c262e21b517c47637bb` |
+| PR base (`main`) | `d2dbcce6606db49b1b87669f364721905c6509f8` |
+| What changed between them | Docs-only, 3 files (+208): `06-audit-pr009-part8.md`, `07-remediation-pr009-part8.md`, `08-verification-pr009-part8.md`. No implementation, migration, workflow or security-control path changed. |
+
+FACT — `5e963123…4b24937` is six `docs(icm)` / `docs(sitolo)` commits. The implementation audit remains current on provenance; no fresh implementation audit is triggered.
+ASSUMPTION — None. PR-body head (`a83d9d1`) differs from GitHub metadata head (`4b24937`); metadata is authoritative. The PR body also names `f42c54ef` as the implementation-unchanged point, one docs-only commit behind `5e963123`; this does not affect the conclusion.
+
+### Stage dispositions
+
+- **Stage 06 — VALIDATED for audit scope, NOT APPROVED.** Audit identity, requirement → implementation → evidence → disposition trace (PASS/PARTIAL/FAIL/NOT EVIDENCED only), findings S06-01…S06-06 + ECC manifest warning, and overall disposition **NOT READY FOR MERGE OR PHASE 4 PART 8 CLOSURE** are complete and internally consistent. The audit distinguishes verified implementation behaviour, CI, AI findings, external owner decisions, production evidence, and human review; it claims no certification, production readiness or merge readiness. FACT — Historical F-01…F-04 reconcile to current dispositions without silently rewriting provenance.
+- **Stage 07 — VALIDATED as handoff, REMEDIATION AND RELEASE GATES REMAIN OPEN.** Each finding carries owner role, required decision/remediation, closure evidence and release impact; classifications CLOSED (scoped, historical only) / PARTIALLY RESOLVED / PARTIAL / BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED / OPEN are retained without inflating them. No code path existence is treated as decision approval.
+- **Independent reviewer (mandatory gate) — NOT OBTAINED.** FACT — PR #49 `reviewRequests: [zagweratadala33-cpu]`; `gh api pulls/49/reviews` = 0; no GitHub `COMMENT` review stating `STAGE 06 AUDIT: APPROVED FOR AUDIT SCOPE ONLY` / `STAGE 07 HANDOFF: APPROVED FOR AUDIT SCOPE ONLY` (or NOT APPROVED with findings) exists at any head, specifically not at `4b24937`. A request is not an approval; an AI audit is not an independent human review; no `APPROVE` was requested or submitted. If `zagweratadala33-cpu` cannot review, the repository owner must nominate another qualified non-author reviewer. No substitute is manufactured here.
+
+### Stage 08 — exact-head verification (see `08-verification-pr009-part8.md` for full record)
+
+- Exact-head CI at `4b24937`: **PASS 4/4** — Rust 42682309237, PostgreSQL Integration 42682309692, Security 42682309701, Policy 42682309319; every run `head_sha == 4b24937`, every declared job `success`, including canonical verification, ICM, System Map, documentation references, migration inventory, PostgreSQL contract tests, advisories/dependency-policy.
+- Local supplementary: `cargo fmt` PASS, `check-doc-references` PASS, `check-schema-migrations.py` PASS, `check-rust-policy.py` PASS. Local `verify`, `cargo check`/`clippy`/`test`, ICM validator and PostgreSQL execution were NOT RUN locally (host limits + directive authorisation); CI is the evidence. No skipped PostgreSQL test is counted as PASS.
+- Process step 7 (no unresolved material findings / no unproven applicable control) — **NOT SATISFIED** (see remaining findings).
+
+### Remaining unresolved findings and external dependencies
+
+| Finding | Current state | Accountable owner role | Dependency |
+|---|---|---|---|
+| S06-01 Mandatory mutation matrix | PARTIAL, release gate open | Engineering + Product/Security for scope | Disposition each row (live/internal/deferred); prove provenance/scope/permission/state/audit-outbox/denial/rollback/replay/concurrency for every live command; do not expose routes by inference |
+| S06-02 Consumer effect + production composition | BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED | Product/Domain (effect); Platform/Security (SNS/SQS/IAM); Engineering (wiring) | Approved business effect + payload semantics; source/quarantine queue identities, IAM, task role, redrive/DLQ; then compose processor. Fail-closed guard must stay |
+| S06-03 Migration / release ownership | PARTIAL, production release blocked | Database/Platform | Named owner + execution identity + runner + durable ledger + rollout/backup-PITR/recovery owner; preserve immutable migrations + checksums |
+| S06-04 Role-grant risk | BLOCKED_BY_APPROVED_DECISION | Product/Security | Approved risk classes, target constraints, scope, SoD, step-up, second-person approval; generic grant/revoke routes stay absent until implemented + tested |
+| S06-05 Phase 3 identity lifecycle | PARTIAL, cross-phase dependency | Identity/Security + Product | Complete/phase-gate login/session, refresh rotation/reuse, MFA/recovery, device lifecycle, provider evidence, redaction, readiness |
+| S06-06 Production AWS / ops evidence | PARTIAL, production release blocked | Platform/SRE/Security | Deployed resource policies, ECS role trust/permissions, secrets wiring, metrics/alerts, health/shutdown, retry/quarantine/DLQ runbook, incident ownership |
+| ECC manifest warning | OPEN, medium, non-blocking to changed-config PASS | Harness maintainer / owner | Manifest or documented owner disposition; do not treat the harness warning as a Rust/security workflow failure |
+| Human sign-off | NOT OBTAINED | Repository owner to nominate; non-author reviewer to act | COMMENT review with explicit Stage 06 + Stage 07 audit-scope dispositions at the final reviewed head |
+
+DECISION — None of the above owner decisions is invented or assumed approved in this delivery record.
+RISK — Merging or deploying while any PARTIAL/BLOCKED row remains would collapse CI, audit, approval and production-readiness states.
+UNKNOWN — Whether `zagweratadala33-cpu` will review; whether the owner will name the four unrecorded owner roles above.
+
+### Operational readiness limitations
+
+- No production consumer effect, production SQS loop, live AWS delivery, deployed task role, production migration ledger, or runbook execution has been evidenced at any head.
+- No Phase 3 complete identity lifecycle is evidenced; Part 8 CI does not close Phase 3.
+- Local workstation on this host cannot run the full canonical verifier or PostgreSQL suites (bash/tools/database limits); CI disposable services remain the database evidence.
+
+### Explicit merge-readiness determination
+
+**VERIFIED — NOT MERGE READY** (exact-head CI verified; release gates, owner decisions and independent human approval remain open).
+
+A green pipeline is not a human approval. An audit approval is not merge approval. An implementation is not production readiness. PR #49 remains **OPEN and UNMERGED** at `4b24937`, pending (1) the non-author `COMMENT` audit-sign-off at a final reviewed head, (2) owner-approved dispositions for S06-01…S06-06 and ECC, and (3) a fresh exact-head verification cycle for the head that carries those decisions. Stage 09 does not authorise merge.
