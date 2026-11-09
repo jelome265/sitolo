@@ -160,3 +160,42 @@ GitHub's failed-job rerun endpoint rejected all three failed workflow run IDs (I
 A new PR synchronization is required to cause GitHub to create fresh workflow runs. The next verification must inspect the new run IDs and their actual jobs, confirm every required workflow's `head_sha` equals the new PR head, and require a successful conclusion. The earlier run IDs above remain historical failure evidence only.
 
 No local PostgreSQL was started. PostgreSQL-backed tests remain CI-only. This recovery record does not satisfy the independent non-author review requirement and does not close any Stage 06 finding or owner decision.
+
+## Exact-head verification record — 2026-11-09 (current PR head `a83d9d1`)
+
+**Purpose:** Stage 08 exact-head verification of the current PR #49 head after the Stage 06 / Stage 07 documentation commits, per Stage 07 “Next instruction — Stage 08 exact-head verification and reviewer handoff” (steps 1–5).
+
+**Authority and pinned source (unchanged):**
+- PR: #49 `feat/phase4-pr009-audit-outbox` → `main`, state OPEN / UNMERGED.
+- Stage 06 pinned audited implementation source remains `5e963123dcb84d9d1d50993d7611ddbc1bae0466`. Its conclusion is not rewritten by this later documentation head.
+- Current PR head (documentation / synchronization head): `a83d9d1e70e4d2a1d73278cbede2324a22514764`. The audit source SHA and the new PR head differ by design.
+- Local HEAD at time of observation equals PR head: `a83d9d1e70e4d2a1d73278cbede2324a22514764`.
+
+**Exact-head required workflow evidence (all `head_sha == a83d9d1…`):**
+
+| Required workflow | Run ID | Conclusion | Jobs / steps observed |
+|---|---:|---|---|
+| Rust | [42679540840](https://github.com/jelome265/sitolo/actions/runs/42679540840) | PASS | `toolchain`, `architecture`, `verify` all `success`; `verify` step “Run canonical verification” `success` |
+| PostgreSQL Integration | [42679541158](https://github.com/jelome265/sitolo/actions/runs/42679541158) | PASS | `application and contract tests with PostgreSQL` `success`; step “Run boundary and contract tests” `success` |
+| Security | [42679541133](https://github.com/jelome265/sitolo/actions/runs/42679541133) | PASS | `dependency-policy`, `codeql`, `offensive-regression`, `secrets`, `advisories` all `success` (advisories job present, unlike `325d5d9` anomaly) |
+| Policy | [42679541080](https://github.com/jelome265/sitolo/actions/runs/42679541080) | PASS | `policy` `success`; steps include Workflow policy, Rust lint and test policy, Rust lint exception inventory, ICM workspace policy, ICM PowerShell parity, System Map generated-file, Documentation reference, Repository policy presence — all `success` |
+
+**Required-gate coverage confirmed:**
+- Disposable PostgreSQL service in CI used for database suites (`boundary and contract tests` with PostgreSQL; application/contract tests). No local PostgreSQL was installed or started.
+- Migration-manifest verification and ICM / documentation-reference checks are included in the exact-head required gates and passed via the Rust canonical verifier and Policy workflow above.
+
+**Local checks run on this host (Windows, PowerShell 5.1):**
+
+| Command | Result |
+|---|---|
+| `cargo fmt --all -- --check` | PASS (exit 0) |
+| `python scripts/ci/check-doc-references` | PASS — 262 Markdown files, 1162 resolved references, 0 unresolved/ambiguous/escaping errors |
+| `python scripts/ci/check-schema-migrations.py` | PASS — `SCHEMA MIGRATION INVENTORY PASSED: ordered versions and SHA-256 checksums match` |
+| `powershell -ExecutionPolicy Bypass -File scripts/ci/check-icm-workspace.ps1` | NOT RUN — host has no `bash` (`Get-Command bash` not found). ICM workspace check remains evidenced only by the exact-head Policy workflow step above. Do not report as locally passed. |
+| PostgreSQL integration / RLS execution locally | NOT RUN — no local PostgreSQL per Stage 07 instruction; CI PostgreSQL suites are the evidence. |
+
+**Disposition:**
+- **Exact-head CI: PASS (4/4 required workflows, head_sha == a83d9d1).** The earlier `325d5d9` NOT VERIFIED / ACTIONS EXECUTION ANOMALY remains historical failure evidence only and is not reused as proof for this head.
+- **Stage 06 findings remain open.** S06-01 (mutation matrix), S06-03 (migration/release ownership), S06-05 (Phase 3 identity), S06-06 (production AWS/ops) remain PARTIAL; S06-02 (consumer business effect) and S06-04 (role-risk governance) remain BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED. Green CI does **not** close owner decisions, production evidence gaps, or Stage 07 owner assignments.
+- **Independent non-author review: NOT OBTAINED in this record.** Per Stage 07, the repository owner must nominate a qualified non-author reviewer who submits a GitHub `COMMENT` review explicitly stating `APPROVED FOR AUDIT SCOPE ONLY` or `NOT APPROVED` for Stage 06 and Stage 07. No `APPROVE` is requested here. This verification record is not a human review, approval, or merge authorization.
+- **Do not merge, close the PR, close Phase 4 Part 8, or claim production readiness.** Stage 09 delivery remains blocked until the approved effect, mutation scope, migration ownership, role-risk policy, Phase 3 release dependency and required human approval have been resolved or formally accepted by their accountable owners.
