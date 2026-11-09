@@ -466,8 +466,8 @@ mod contract_tests {
     }
 
     #[test]
-    fn consumer_destination_rejects_missing_region_and_malformed_urls()
-    -> Result<(), Box<dyn Error>> {
+    fn consumer_destination_rejects_missing_region_and_malformed_urls() -> Result<(), Box<dyn Error>>
+    {
         let missing_region = EnvLoader::from_pairs([
             (
                 "SITOLO__WORKER__DATABASE__PASSWORD_REF".into(),
