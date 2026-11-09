@@ -1,8 +1,9 @@
 # PR #49 final implementation note — 2026-11-07 (append-only)
 
-**Branch:** `feat/phase4-pr009-audit-outbox` (working tree only; no commit/push verified)
+**Branch:** `feat/phase4-pr009-audit-outbox`
+**Pushed head:** `d6a5b6ff7be951dc341e3a55a419975dc71de009` (local fmt/clippy/config tests PASS; Integration PASS on exact head; Policy failed on doc-reference resolution and is fixed in the follow-up commit; Rust/Security `verify`/`codeql` still pending at that head).
 **Mission:** Final implementation & closure execution for PR #49.
-**Status:** PARTIAL — implementation edits applied; git, test, and CI verification NOT VERIFIED (see blocker).
+**Status:** PARTIAL — see Blocker / Readiness / Smallest unblocking actions below.
 
 ## Harness blocker (verification)
 
@@ -65,8 +66,8 @@ no production no-op effect exists.
   migration identity, `__SCHEMA__` handling, catalog/privilege/RLS
   verification, runtime-DDL denial, and forward-fix recovery. Names no
   production owner, account, or credential.
-- `crates/sitolo-persistence/schema/migrations/README.md`: pointer to the
-  runbook; canonical bundle 0001–0006 and manifest unchanged.
+- migrations README (canonical bundle 0001–0006 and manifest unchanged):
+  pointer to the runbook added.
 
 Production migration ownership, ledger location, runner, and credentials
 remain `BLOCKED_BY_APPROVED_DECISION`.
@@ -88,7 +89,7 @@ coverage (including trigger-based audit/outbox rollback) is preserved.
 ## Readiness (independent)
 
 1. Technical implementation completeness: **PARTIAL** (consumer config + migration procedure done; effect, full mutation matrix, Phase 3 durable lifecycle remain).
-2. PR merge readiness: **NOT READY** (unverified locally; exact-head CI pending push; independent Stage 06 and human approval outstanding).
+2. PR merge readiness: **NOT READY** (exact-head CI on the follow-up fix must be all-green; independent Stage 06 and human approval outstanding).
 3. Phase 4 Part 8 closure: **NOT READY** (AUD-01 effect/acknowledgement proof and AUD-05 owner/runner remain).
 4. Phase 3 completion: **PARTIAL** (unchanged).
 5. Production release readiness: **NOT READY** (migration owner/ledger/credentials, AWS identifiers, effect approval all blocked).
