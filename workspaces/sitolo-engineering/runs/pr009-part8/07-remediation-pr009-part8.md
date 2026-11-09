@@ -1,5 +1,62 @@
 # Stage 07 Remediation — PR-009 Part 8
 
+## Current exact-head Stage 07 handoff — 2026-11-09
+
+**Current authoritative handoff.** This addendum consumes the exact-head Stage 06 re-audit recorded at the top of 06-audit-pr009-part8.md. It supersedes older readiness and owner statements below where they conflict. Historical records remain unchanged for provenance.
+
+### Input, scope and authority
+
+- Audited implementation source: 5e963123dcb84d9d1d50993d7611ddbc1bae0466.
+- Stage 06 artifact update commit: 4c98284be05c1af567a77d59b03e3222f30c49f9.
+- PR: #49, feat/phase4-pr009-audit-outbox → main.
+- Stage 07 purpose: disposition each current Stage 06 finding, identify the accountable owner role, record required decision/remediation and define evidence required for closure. This is not a claim that implementation or production deployment has occurred.
+- No source-code remediation is authorized by this handoff without the owner decisions listed below. Do not invent business effects, AWS resource identities, migration ownership or role-risk rules.
+- The repository owner remains the implementation/merge authority. The non-author human reviewer is not yet identified.
+
+### Finding disposition and required handoff
+
+| Finding / prior item | Current disposition | Accountable owner role | Required decision or remediation | Closure evidence |
+|---|---|---|---|---|
+| Historical F-01 — unauthenticated durable provisioning path | CLOSED for the unsafe route path | Engineering / API | Preserve production bootstrap composition using PgRequestIdentityAuthority and PgTenancyUnitOfWork. Keep owner and actor identity derived from verified SecurityContext; do not reintroduce caller-supplied authority. | Exact-head API and PostgreSQL tests continue to pass; route test verifies principal-derived owner and audit actor. Broader mutation coverage remains S06-01. |
+| Historical F-02 — concurrent same-payload organization provisioning | CLOSED for organization provisioning only | Engineering / Persistence | Preserve unique/idempotent bundle semantics and the concurrent same-payload regression. Do not treat this as proof for every other command. | PostgreSQL Integration exact-head evidence for the application provisioning suite, including same-payload concurrent retry and divergent-ID conflict. |
+| Historical F-03 — relay destination | PARTIALLY RESOLVED; consumer side remains blocked | Domain/Product + Platform/Security + Engineering | Preserve the explicit SNS FIFO producer contract. Obtain approval for the concrete consumer business effect and payload semantics; confirm exact source/quarantine queue identities, IAM permissions, deployment role and redrive policy before composing the SQS processor. | Real disposable integration evidence for publish/receive, effect+inbox atomicity, duplicate replay, acknowledgement only after commit, retry, quarantine and permission denial; production resource/role evidence. |
+| Historical F-04 — RSA dependency advisory | CLOSED for the configured dependency gate | Engineering / Supply-chain | Keep the SQLx dependency remediation and advisory gate intact. Do not add ignores or suppressions. | Current exact-head Security workflow succeeds; dependency-policy/advisory evidence remains in that run. |
+| S06-01 — mandatory mutation matrix not fully closed | PARTIAL — release gate remains open | Engineering, with Product/Security for operation scope | For every matrix row, record whether it is a live command, an internal application capability or explicitly deferred. For every live command, prove principal/actor provenance, tenant scope, permission, state transition, same-transaction audit/outbox, denial/no-write, rollback, replay and concurrency as applicable. Keep unapproved role/scope routes absent. Do not create routes merely to make the matrix look complete. | Updated source-to-test matrix on the implementation SHA; exact-head PostgreSQL success, denied/no-write, rollback, replay and concurrency cases for every command claimed in scope; explicit owner-approved dispositions for deferred commands. |
+| S06-02 — consumer effect and production consumer composition | BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED | Product/Domain owner for the effect; Platform/Security for AWS resources and IAM; Engineering for implementation | The Product/Domain owner must name the real business effect and authoritative input/output semantics. Platform/Security must approve source and quarantine FIFO resources, task role, permissions, secret reference, redrive/DLQ and deployment boundary. Engineering may then inject the approved effect and compose ConsumerProcessor in worker startup. Never use a no-op effect or clear the existing fail-closed guard without that approval. | Integration run against approved disposable PostgreSQL and isolated SNS/SQS resources: inbox marker and business effect commit/rollback together; duplicate delivery applies the effect once; source acknowledgement follows commit; failed/retryable effect remains unacknowledged; permanent failure transfers to quarantine before source deletion. Capture resource and role evidence. |
+| S06-03 — production migration/release ownership | PARTIAL; production release blocked | Database/Platform owner | Name the accountable migration owner and execution identity; identify the runner and durable schema-version ledger; approve rollout window, backup/PITR readiness, role provisioning and incident/recovery owner. Preserve immutable numbered migrations and manifest checksums. | Owner-approved release record; clean apply and upgrade evidence; ledger state; catalog/RLS/privilege checks; runtime DDL denial; documented recovery/forward-fix execution. |
+| S06-04 — role-grant risk governance | BLOCKED_BY_APPROVED_DECISION | Product/Security owner | Approve role-risk classes, target-role constraints, scope rules, SoD, step-up requirements, second-person approval and ownership-transfer handling. Keep generic role assignment/revocation routes absent until the policy is approved and implemented. | Signed/recorded decision; application enforcement and PostgreSQL denial/no-write tests for owner/admin/cashier and cross-scope cases; independent re-audit. |
+| S06-05 — Phase 3 identity lifecycle | PARTIAL; cross-phase release dependency | Identity / Security Engineering and Product owner | Complete or explicitly phase-gate durable login/session creation, refresh rotation/reuse detection, MFA/recovery, device lifecycle, provider evidence, secret redaction and readiness evidence. Do not claim Phase 3 complete from the logout implementation alone. | Updated Phase 3 evidence matrix with real PostgreSQL/provider lifecycle, invalidation, replay/race and failure evidence on an exact implementation SHA. |
+| S06-06 — production AWS and operations evidence | PARTIAL; production release blocked | Platform/SRE/Security | Provide deployed SNS/SQS resource policies, ECS task-role trust/permissions, secret-manager wiring, metrics/alerts, worker health/shutdown, retry/quarantine/DLQ runbook and incident ownership. | Deployment configuration review; runtime identity and least-privilege tests; successful and failed delivery evidence; operator runbook validated in a controlled environment. |
+| ECC Tools harness warning — missing manifest for .agents/skills/rust-enterprise-audit/SKILL.md | OPEN, medium, non-blocking to the changed-config PASS unless repository ECC policy says otherwise | Harness maintainer / repository owner | Check the expected ECC manifest format and decide whether the skill needs a manifest. Do not mistake this warning for a Rust/security/config workflow failure. | ECC harness audit no longer reports the warning, or a documented owner disposition explains why the file is intentionally not manifested. |
+| Non-author human approval | NOT OBTAINED | Repository owner to nominate; designated non-author reviewer to act | Select a qualified GitHub reviewer with write/review permission who did not author the PR. Request review against the final post-documentation head. The reviewer must inspect the source diff, this Stage 06 report and this Stage 07 handoff, then submit an actual APPROVE or REQUEST_CHANGES review. | GitHub review record with reviewer login distinct from jelome265, state APPROVED, and commit association to the final reviewed PR head. |
+
+### Ownership and approval ledger
+
+| Gate | Owner identity | Current state |
+|---|---|---|
+| Repository implementation and merge authority | jelome265 (PR author) | Owner; not eligible to satisfy the non-author review requirement |
+| Product/domain business-effect approval | Not appointed in the repository evidence | NOT RECORDED |
+| Product/security role-risk approval | Not appointed in the repository evidence | NOT RECORDED |
+| Database/platform migration owner | Not appointed in the repository evidence | NOT RECORDED |
+| Platform/AWS runtime owner | Not appointed in the repository evidence | NOT RECORDED |
+| Independent human reviewer | Not requested or identified | NOT RECORDED; GitHub currently has zero submitted reviews |
+
+No individual or team has been assigned by inference. The owner must supply accountable identities through the repository’s normal governance process.
+
+### Next instruction — Stage 08 exact-head verification and reviewer handoff
+
+**Instruction for the next engineering/audit agent:**
+
+1. Read this current Stage 07 section and the current exact-head Stage 06 section before taking action. Preserve the pinned audit source SHA 5e963123; do not rewrite its conclusion to match a later branch tip.
+2. Fetch PR #49 and record its actual head SHA after the Stage 06 and Stage 07 documentation commits. The source-audit SHA and the new documentation/PR head are different by design.
+3. Run or observe the required Rust, PostgreSQL Integration, Security and Policy workflows on that exact current PR head. Verify that every required run’s tested commit SHA equals the PR head SHA and that each conclusion is success. Do not reuse the 5e963123 run IDs as proof for a later documentation head.
+4. Use the disposable PostgreSQL service in CI for database suites. Do not install or start a local database merely to reproduce CI. Confirm migration-manifest verification and ICM/document-reference checks are included in the exact-head required gates.
+5. Append the exact new head, run IDs, per-workflow conclusions, and any test omissions to 08-verification-pr009-part8.md. Keep PARTIAL and BLOCKED findings open; green CI does not close owner decisions or production evidence gaps.
+6. After the exact-head evidence is recorded, the repository owner must nominate a qualified non-author reviewer and request review. The reviewer must independently validate the Stage 06 trace and the unresolved Stage 07 dispositions, then submit an actual GitHub review. Do not create or imply approval through an AI account, bot comment, author self-review or unsubmitted draft.
+7. Do not merge, close the PR, close Phase 4 Part 8, or claim production readiness. Stage 09 delivery remains blocked until the approved effect, mutation scope, migration ownership, role-risk policy, Phase 3 release dependency and required human approval have been resolved or formally accepted by their accountable owners.
+
+**Stage 07 outcome:** HANDOFF RECORDED; REMEDIATION AND RELEASE GATES REMAIN OPEN. PR #49 stays OPEN and UNMERGED.
+
 ## Current remediation addendum — 2026-10-25
 
 - R-07: replaced the empty testkit scaffold with reusable validated tenancy identifiers and active organization/branch/membership fixtures; tenancy-domain and application tests consume them; dependency edges are test-only and boundary-checked. Exact-head CI passed on `468186c`.
