@@ -594,7 +594,15 @@ fn check_consumer(b: &defaults::Builder, problems: &mut Vec<ConfigProblem>) {
             "must be lowercase ASCII, digits, _ or -; 1..=64 bytes",
         );
     }
-    let region = b.relay_aws_region.as_deref();
+    let Some(region) = b.relay_aws_region.as_deref() else {
+        push(
+            problems,
+            ValidationLayer::CrossField,
+            "consumer_destination",
+            "consumer destination requires the shared relay AWS region",
+        );
+        return;
+    };
     if let Some(queue_url) = b.consumer_sqs_queue_url.as_deref()
         && !is_sqs_fifo_queue_url(queue_url, region)
     {
@@ -629,12 +637,8 @@ fn check_consumer(b: &defaults::Builder, problems: &mut Vec<ConfigProblem>) {
     }
 }
 
-/// Whether `value` is an SQS FIFO queue URL in `region`, if a region is set.
-/// Without a relay region the host cannot be checked, so the URL is rejected
-/// unless the region itself is absent-and-accepted; callers pair it with the
-/// relay destination check so a consumer-only deployment must still supply
-/// the relay region as the shared AWS region.
-fn is_sqs_fifo_queue_url(value: &str, region: Option<&str>) -> bool {
+/// Whether `value` is an SQS FIFO queue URL in the required `region`.
+fn is_sqs_fifo_queue_url(value: &str, region: &str) -> bool {
     let Some(authority_and_path) = value.strip_prefix("https://") else {
         return false;
     };
@@ -644,11 +648,7 @@ fn is_sqs_fifo_queue_url(value: &str, region: Option<&str>) -> bool {
     if path.contains(['?', '#', '@', '\\']) {
         return false;
     }
-    if let Some(expected_region) = region {
-        if host != format!("sqs.{expected_region}.amazonaws.com") {
-            return false;
-        }
-    } else if !(host.starts_with("sqs.") && host.ends_with(".amazonaws.com")) {
+    if host != format!("sqs.{region}.amazonaws.com") {
         return false;
     }
     let mut parts = path.split('/');

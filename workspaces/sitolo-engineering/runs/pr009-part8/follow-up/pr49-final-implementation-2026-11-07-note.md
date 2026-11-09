@@ -107,3 +107,51 @@ coverage (including trigger-based audit/outbox rollback) is preserved.
   runner; run this runbook in the disposable environment.
 - Reviewer: independent Stage 06 re-audit of the config diff + mutation matrix,
   then human approval. PR #49 remains open and unmerged by this execution.
+
+## Verification update — 2026-11-09 (append-only; preserves the record above)
+
+The Harness blocker section above describes the agent session at
+2026-11-07 (harness `shell` quoting defect; no commands run from that
+session). It is superseded by the owner-run PowerShell 7.6.9 evidence
+below. Nothing above is deleted.
+
+**Commits (owner-executed):**
+
+- `d6a5b6ff7be951dc341e3a55a419975dc71de009`: implementation (12 files:
+  consumer config + refinements, migration runbook, docs).
+- `55dd2c058b63674e8f42e0bde6d3fdfc487cdf2d`: documentation correction
+  (note reference fix that resolved the Policy doc-reference failure).
+
+**Local commands (owner PowerShell 7.6.9 at repo root):**
+
+- `cargo fmt --all -- --check`: PASS.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`: PASS.
+- `cargo test -p sitolo-config --all-targets --all-features --locked`: PASS (27 + 2).
+- `rustup`/full-workspace local runs: blocked by Windows tooling; deferred
+  to CI per owner direction. No local PostgreSQL used.
+
+**Exact-head CI on `55dd2c058b63674e8f42e0bde6d3fdfc487cdf2d`** (`gh pr view 49`
+`headRefOid` matches all four `headSha`):
+
+- Rust `42657265915` (`architecture`, `toolchain`, `verify`): PASS
+- Integration `42657265905` (`application and contract tests with PostgreSQL`): PASS
+- Security `42657266191` (`dependency-policy`, `advisories`, `secrets`,
+  `offensive-regression`, `codeql` + Advanced Security CodeQL): PASS
+- Policy `42657266328`: PASS
+
+Prior-head runs on `d6a5b6f...` (Integration PASS, Security PASS, Policy
+FAILURE on doc-reference, Rust completed) are historical evidence only.
+
+**Review findings (2026-11-09) addressed after this update:**
+
+- Missing-region validation inconsistency: `check_consumer` now requires
+  the shared relay AWS region whenever consumer configuration is present;
+  negative tests for missing region, malformed hostname, and invalid queue
+  URLs added. Awaiting new exact-head CI on the fix commit.
+- PR description head (`db071f`): to be updated to the current verified head
+  by the PR owner.
+
+**Readiness supersession:** the Readiness section above predates the
+verified `55dd2c05...` green set. Current status remains NOT READY for
+merge pending the missing-region fix CI, independent Stage 06 re-audit,
+and human approval. PR #49 remains open and unmerged.

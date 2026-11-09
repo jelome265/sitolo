@@ -462,6 +462,60 @@ mod contract_tests {
         ])
         .map_err(|error| io::Error::other(error.0))?;
         assert!(validate(mismatched).is_err());
+
+        let missing_region = EnvLoader::from_pairs([
+            (
+                "SITOLO__WORKER__DATABASE__PASSWORD_REF".into(),
+                "development/sitolo/worker".into(),
+            ),
+            (
+                "SITOLO__EVENTS__CONSUMER__NAME".into(),
+                "iam-projection".into(),
+            ),
+            (
+                "SITOLO__EVENTS__CONSUMER__SQS_QUEUE_URL".into(),
+                "https://sqs.af-south-1.amazonaws.com/123456789012/iam.fifo".into(),
+            ),
+            (
+                "SITOLO__EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL".into(),
+                "https://sqs.af-south-1.amazonaws.com/123456789012/iam-dlq.fifo".into(),
+            ),
+        ])
+        .map_err(|error| io::Error::other(error.0))?;
+        assert!(validate(missing_region).is_err());
+
+        for bad_url in [
+            "https://example.com/123456789012/iam.fifo",
+            "https://sqs.af-south-1.amazonaws.com/123456789012/iam",
+            "http://sqs.af-south-1.amazonaws.com/123456789012/iam.fifo",
+            "https://sqs.af-south-1.amazonaws.com/123/iam.fifo",
+        ] {
+            let bad = EnvLoader::from_pairs([
+                (
+                    "SITOLO__EVENTS__RELAY__AWS_REGION".into(),
+                    "af-south-1".into(),
+                ),
+                (
+                    "SITOLO__EVENTS__RELAY__SNS_TOPIC_ARN".into(),
+                    "arn:aws:sns:af-south-1:123456789012:sitolo-iam-events-prod.fifo".into(),
+                ),
+                (
+                    "SITOLO__WORKER__DATABASE__PASSWORD_REF".into(),
+                    "development/sitolo/worker".into(),
+                ),
+                (
+                    "SITOLO__EVENTS__CONSUMER__NAME".into(),
+                    "iam-projection".into(),
+                ),
+                ("SITOLO__EVENTS__CONSUMER__SQS_QUEUE_URL".into(), bad_url.into()),
+                (
+                    "SITOLO__EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL".into(),
+                    "https://sqs.af-south-1.amazonaws.com/123456789012/iam-dlq.fifo".into(),
+                ),
+            ])
+            .map_err(|error| io::Error::other(error.0))?;
+            assert!(validate(bad).is_err(), "bad_url={bad_url}");
+        }
         Ok(())
     }
 }
