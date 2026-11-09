@@ -148,6 +148,11 @@ fn apply(b: &mut defaults::Builder, key: &str, value: &str) -> Result<(), Unknow
         "EVENTS__RELAY__MAX_ATTEMPTS" => b.relay_max_attempts = parse_value(key, value)?,
         "EVENTS__RELAY__BACKOFF_MAX_MS" => b.relay_backoff_max_ms = parse_value(key, value)?,
         "SECRETS__AWS_REGION" => b.secrets_aws_region = Some(value.into()),
+        "EVENTS__CONSUMER__NAME" => b.consumer_name = Some(value.into()),
+        "EVENTS__CONSUMER__SQS_QUEUE_URL" => b.consumer_sqs_queue_url = Some(value.into()),
+        "EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL" => {
+            b.consumer_sqs_quarantine_queue_url = Some(value.into());
+        }
         // Defense in depth: `ACCEPTED_KEYS` is checked above, so this arm is
         // not expected to be reached. It is intentionally a structured
         // error rather than `unreachable!()` so that a future maintenance

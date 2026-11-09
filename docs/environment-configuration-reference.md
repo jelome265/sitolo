@@ -96,6 +96,9 @@ database identity and a production secret reference.
 | `EVENTS__RELAY__BATCH_SIZE` | `10` | Positive claim batch size, at most 100 |
 | `EVENTS__RELAY__MAX_ATTEMPTS` | `10` | Positive delivery attempt ceiling, at most 10 |
 | `EVENTS__RELAY__BACKOFF_MAX_MS` | `3600000` | Retry delay ceiling, at most one hour |
+| `EVENTS__CONSUMER__NAME` | absent | Consumer name (lowercase ASCII, digits, `_` or `-`; 1..=64 bytes); required with both consumer queue URLs |
+| `EVENTS__CONSUMER__SQS_QUEUE_URL` | absent | SQS FIFO source queue URL in the relay AWS region; required with the name and quarantine URL |
+| `EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL` | absent | SQS FIFO quarantine queue URL in the relay AWS region; required with the name and source URL |
 
 The source of truth for this table is
 `crates/sitolo-config/src/field.rs`; the typed model and defaults live in
@@ -137,9 +140,11 @@ variable by design.
 - The worker is a separate binary with an SNS FIFO relay runtime. It resolves
   `WORKER__DATABASE__PASSWORD_REF` through the managed provider in production,
   verifies the direct `app_worker` login and required outbox routines, and
-  requires explicit relay region/topic settings. Consumer SQS operations are
-  provided as an adapter, but a consumer executable still requires its own
-  database composition and owner-supplied business effect. `.env.example` is
+  requires explicit relay region/topic settings. Consumer SQS configuration
+  (`EVENTS__CONSUMER__*`) is strictly validated and pairs with the relay
+  region, but configuring it fails worker startup until an owner-approved
+  business effect is supplied: the consumer adapter exists, yet no consumer
+  executable is published with an invented effect. `.env.example` is
   an API configuration reference, not a production deployment manifest.
 - Production and staging require explicit database host, name, user, and secret
   reference; the development defaults and the `development/` secret namespace

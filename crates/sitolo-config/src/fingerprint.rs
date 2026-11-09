@@ -23,6 +23,7 @@ pub fn canonical_non_secret_config(config: &AppConfig) -> String {
     write_secrets_and_pool(&mut output, config);
     write_telemetry(&mut output, config);
     write_relay(&mut output, config);
+    write_consumer(&mut output, config);
     output
 }
 
@@ -165,6 +166,21 @@ fn write_relay(output: &mut String, config: &AppConfig) {
     );
 }
 
+/// Consumer SQS destination; references and URLs only, never credentials.
+fn write_consumer(output: &mut String, config: &AppConfig) {
+    optional_line(output, "consumer_name", config.consumer_name.as_deref());
+    optional_line(
+        output,
+        "consumer_sqs_queue_url",
+        config.consumer_sqs_queue_url.as_deref(),
+    );
+    optional_line(
+        output,
+        "consumer_sqs_quarantine_queue_url",
+        config.consumer_sqs_quarantine_queue_url.as_deref(),
+    );
+}
+
 /// Appends one length-prefixed `key=len:value` line.
 fn line(output: &mut String, key: &str, value: &str) {
     output.push_str(key);
@@ -259,6 +275,9 @@ mod tests {
             relay_max_attempts: _,
             relay_backoff_max_ms: _,
             secrets_aws_region: _,
+            consumer_name: _,
+            consumer_sqs_queue_url: _,
+            consumer_sqs_quarantine_queue_url: _,
         } = config;
     }
 
@@ -350,6 +369,15 @@ mod tests {
         changed!(relay_max_attempts, 9);
         changed!(relay_backoff_max_ms, 3_000_000);
         changed!(secrets_aws_region, Some("af-south-1".into()));
+        changed!(consumer_name, Some("iam-projection".into()));
+        changed!(
+            consumer_sqs_queue_url,
+            Some("https://sqs.af-south-1.amazonaws.com/123456789012/iam.fifo".into())
+        );
+        changed!(
+            consumer_sqs_quarantine_queue_url,
+            Some("https://sqs.af-south-1.amazonaws.com/123456789012/iam-dlq.fifo".into())
+        );
         Ok(())
     }
 

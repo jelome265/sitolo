@@ -44,6 +44,19 @@ async fn run() -> Result<(), Box<dyn Error>> {
     ) else {
         return Err("SNS FIFO relay destination is not configured".into());
     };
+    // Consumer SQS configuration is validated here, but an owner-approved
+    // business effect is still required before the consumer loop can run.
+    // Fail closed instead of silently ignoring the configured queues or
+    // defaulting to a no-op effect.
+    if config.consumer_name.is_some()
+        || config.consumer_sqs_queue_url.is_some()
+        || config.consumer_sqs_quarantine_queue_url.is_some()
+    {
+        return Err(
+            "consumer SQS destination is configured but no approved business effect is supplied"
+                .into(),
+        );
+    }
     let database = config
         .worker_database_runtime()
         .ok_or("separate app_worker secret reference is required")?;

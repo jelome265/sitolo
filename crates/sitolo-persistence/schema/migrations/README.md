@@ -40,3 +40,8 @@ forward-fix/recovery procedure, and how the migration identity is provisioned.
 The owner must then run the immutable source revision in an approved disposable
 environment and verify deployed catalog privileges before production use.
 This directory alone is not approval to deploy these migrations.
+
+The repository-side procedure is recorded in
+[`docs/runbooks/postgresql-migration-release.md`](../../../../docs/runbooks/postgresql-migration-release.md),
+which covers preflight, catalog/privilege/RLS verification, and forward-fix
+recovery without naming production identities or credentials.

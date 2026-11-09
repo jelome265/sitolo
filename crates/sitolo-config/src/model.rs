@@ -189,6 +189,12 @@ pub struct AppConfig {
     pub relay_backoff_max_ms: u64,
     /// Explicit AWS region for managed production secret retrieval.
     pub secrets_aws_region: Option<String>,
+    /// Optional SQS consumer name; required with the consumer queue URLs.
+    pub consumer_name: Option<String>,
+    /// Optional SQS FIFO source queue URL paired with the quarantine URL.
+    pub consumer_sqs_queue_url: Option<String>,
+    /// Optional SQS FIFO quarantine queue URL paired with the source URL.
+    pub consumer_sqs_quarantine_queue_url: Option<String>,
 }
 
 /// Validated, non-connecting PostgreSQL runtime intent.
@@ -379,6 +385,12 @@ pub mod defaults {
         pub relay_backoff_max_ms: u64,
         /// Explicit AWS region for managed secret retrieval.
         pub secrets_aws_region: Option<String>,
+        /// Optional SQS consumer name.
+        pub consumer_name: Option<String>,
+        /// Optional SQS FIFO source queue URL.
+        pub consumer_sqs_queue_url: Option<String>,
+        /// Optional SQS FIFO quarantine queue URL.
+        pub consumer_sqs_quarantine_queue_url: Option<String>,
         /// `None` until a secret reference is supplied from an upper layer.
         pub db_password_ref: Option<SecretRef>,
         /// `None` until the restricted worker reference is supplied.
@@ -423,6 +435,12 @@ pub mod defaults {
                 .field("relay_max_attempts", &self.relay_max_attempts)
                 .field("relay_backoff_max_ms", &self.relay_backoff_max_ms)
                 .field("secrets_aws_region", &self.secrets_aws_region)
+                .field("consumer_name", &self.consumer_name)
+                .field("consumer_sqs_queue_url", &self.consumer_sqs_queue_url)
+                .field(
+                    "consumer_sqs_quarantine_queue_url",
+                    &self.consumer_sqs_quarantine_queue_url,
+                )
                 .field(
                     "db_password_ref",
                     &self.db_password_ref.as_ref().map(|_| "<secret-reference>"),
@@ -473,6 +491,9 @@ pub mod defaults {
                 relay_max_attempts: 10,
                 relay_backoff_max_ms: 3_600_000,
                 secrets_aws_region: None,
+                consumer_name: None,
+                consumer_sqs_queue_url: None,
+                consumer_sqs_quarantine_queue_url: None,
                 db_password_ref: None,
                 worker_db_password_ref: None,
             }

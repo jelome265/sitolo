@@ -285,6 +285,27 @@ const CATALOGUE: &[ConfigField] = &[
         "platform",
         "positive milliseconds <= 1 hour"
     ),
+    field!(
+        "EVENTS__CONSUMER__NAME",
+        Static,
+        false,
+        "platform",
+        "consumer name: lowercase ASCII, digits, _ or -; 1..=64 bytes"
+    ),
+    field!(
+        "EVENTS__CONSUMER__SQS_QUEUE_URL",
+        Static,
+        false,
+        "platform",
+        "SQS FIFO source queue URL in the relay AWS region"
+    ),
+    field!(
+        "EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL",
+        Static,
+        false,
+        "platform",
+        "SQS FIFO quarantine queue URL in the relay AWS region"
+    ),
 ];
 /// Returns the version-controlled catalogue of every accepted configuration
 /// key.
@@ -333,4 +354,7 @@ pub const ACCEPTED_KEYS: &[&str] = &[
     "EVENTS__RELAY__BATCH_SIZE",
     "EVENTS__RELAY__MAX_ATTEMPTS",
     "EVENTS__RELAY__BACKOFF_MAX_MS",
+    "EVENTS__CONSUMER__NAME",
+    "EVENTS__CONSUMER__SQS_QUEUE_URL",
+    "EVENTS__CONSUMER__SQS_QUARANTINE_QUEUE_URL",
 ];

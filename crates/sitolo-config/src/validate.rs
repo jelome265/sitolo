@@ -119,6 +119,7 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
     check_otel_endpoint(&b, &mut problems);
     check_secret_references(&b, &mut problems);
     check_relay(&b, &mut problems);
+    check_consumer(&b, &mut problems);
     check_schema_version(&b, &mut problems);
 
     if !problems.is_empty() {
@@ -172,6 +173,9 @@ pub fn validate(b: defaults::Builder) -> Result<AppConfig, ConfigValidationError
         relay_max_attempts: b.relay_max_attempts,
         relay_backoff_max_ms: b.relay_backoff_max_ms,
         secrets_aws_region: b.secrets_aws_region,
+        consumer_name: b.consumer_name,
+        consumer_sqs_queue_url: b.consumer_sqs_queue_url,
+        consumer_sqs_quarantine_queue_url: b.consumer_sqs_quarantine_queue_url,
     })
 }
 
@@ -469,14 +473,16 @@ fn check_secret_references(b: &defaults::Builder, problems: &mut Vec<ConfigProbl
             "required secret reference absent",
         );
     }
-    if b.worker_db_password_ref.is_some()
-        != (b.relay_aws_region.is_some() && b.relay_sns_topic_arn.is_some())
-    {
+    let relay_configured = b.relay_aws_region.is_some() && b.relay_sns_topic_arn.is_some();
+    let consumer_configured = b.consumer_name.is_some()
+        || b.consumer_sqs_queue_url.is_some()
+        || b.consumer_sqs_quarantine_queue_url.is_some();
+    if b.worker_db_password_ref.is_some() != (relay_configured || consumer_configured) {
         push(
             problems,
             ValidationLayer::CrossField,
             "worker_db_password_ref",
-            "worker credential and complete relay destination must be configured together",
+            "worker credential and complete relay or consumer destination must be configured together",
         );
     }
     if b.environment.is_production()
@@ -549,6 +555,116 @@ fn check_relay(b: &defaults::Builder, problems: &mut Vec<ConfigProblem>) {
             "must be positive and at most one hour",
         );
     }
+}
+
+/// Consumer SQS destination is all-or-nothing, same-region, and FIFO-only.
+///
+/// The consumer name grammar mirrors `ConsumerProcessor::new` so a value
+/// accepted here cannot fail at processor construction. Queue URLs mirror
+/// `SqsFifoConsumerConfig::new`: distinct same-region FIFO URLs over HTTPS.
+fn check_consumer(b: &defaults::Builder, problems: &mut Vec<ConfigProblem>) {
+    let configured = b.consumer_name.is_some()
+        || b.consumer_sqs_queue_url.is_some()
+        || b.consumer_sqs_quarantine_queue_url.is_some();
+    if !configured {
+        return;
+    }
+    if b.consumer_name.is_none()
+        || b.consumer_sqs_queue_url.is_none()
+        || b.consumer_sqs_quarantine_queue_url.is_none()
+    {
+        push(
+            problems,
+            ValidationLayer::CrossField,
+            "consumer_destination",
+            "consumer name and both SQS FIFO queue URLs must be configured together",
+        );
+    }
+    if let Some(name) = b.consumer_name.as_deref()
+        && (name.is_empty()
+            || name.len() > 64
+            || !name.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+            }))
+    {
+        push(
+            problems,
+            ValidationLayer::Semantic,
+            "consumer_name",
+            "must be lowercase ASCII, digits, _ or -; 1..=64 bytes",
+        );
+    }
+    let region = b.relay_aws_region.as_deref();
+    if let Some(queue_url) = b.consumer_sqs_queue_url.as_deref()
+        && !is_sqs_fifo_queue_url(queue_url, region)
+    {
+        push(
+            problems,
+            ValidationLayer::Semantic,
+            "consumer_sqs_queue_url",
+            "must be an SQS FIFO queue URL in the relay AWS region",
+        );
+    }
+    if let Some(quarantine_url) = b.consumer_sqs_quarantine_queue_url.as_deref()
+        && !is_sqs_fifo_queue_url(quarantine_url, region)
+    {
+        push(
+            problems,
+            ValidationLayer::Semantic,
+            "consumer_sqs_quarantine_queue_url",
+            "must be an SQS FIFO queue URL in the relay AWS region",
+        );
+    }
+    if let (Some(source), Some(quarantine)) = (
+        b.consumer_sqs_queue_url.as_deref(),
+        b.consumer_sqs_quarantine_queue_url.as_deref(),
+    ) && source == quarantine
+    {
+        push(
+            problems,
+            ValidationLayer::CrossField,
+            "consumer_destination",
+            "source and quarantine queue URLs must be distinct",
+        );
+    }
+}
+
+/// Whether `value` is an SQS FIFO queue URL in `region`, if a region is set.
+/// Without a relay region the host cannot be checked, so the URL is rejected
+/// unless the region itself is absent-and-accepted; callers pair it with the
+/// relay destination check so a consumer-only deployment must still supply
+/// the relay region as the shared AWS region.
+fn is_sqs_fifo_queue_url(value: &str, region: Option<&str>) -> bool {
+    let Some(authority_and_path) = value.strip_prefix("https://") else {
+        return false;
+    };
+    let Some((host, path)) = authority_and_path.split_once('/') else {
+        return false;
+    };
+    if path.contains(['?', '#', '@', '\\']) {
+        return false;
+    }
+    if let Some(expected_region) = region {
+        if host != format!("sqs.{expected_region}.amazonaws.com") {
+            return false;
+        }
+    } else if !(host.starts_with("sqs.") && host.ends_with(".amazonaws.com")) {
+        return false;
+    }
+    let mut parts = path.split('/');
+    let account = parts.next();
+    let queue = parts.next();
+    account.is_some_and(|account| {
+        account.len() == 12 && account.bytes().all(|byte| byte.is_ascii_digit())
+    }) && queue.is_some_and(|queue| {
+        queue.strip_suffix(".fifo").is_some_and(|base| {
+            !base.is_empty()
+                && base.len() <= 75
+                && base
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
+    }) && parts.next().is_none()
 }
 
 /// Unknown schema versions fail startup instead of being interpreted.
