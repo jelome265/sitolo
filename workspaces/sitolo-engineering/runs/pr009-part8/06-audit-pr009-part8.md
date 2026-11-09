@@ -1,5 +1,85 @@
 # Stage 06 Audit — PR-009 Part 8
 
+## Current exact-head Stage 06 re-audit — 2026-11-09
+
+**Current authoritative audit section.** This re-audit supersedes the old disposition below for the implementation source identified here. The earlier October audit is retained as historical provenance and must not be read as the current-head conclusion.
+
+### Engagement and audit identity
+
+- Repository / PR: jelome265/sitolo, PR #49, base main.
+- Audited implementation HEAD: 5e963123dcb84d9d1d50993d7611ddbc1bae0466.
+- Audited branch: feat/phase4-pr009-audit-outbox. The branch resolved to the same SHA when checked.
+- Audit date: 2026-11-09.
+- Auditor: GPT-6, OpenAI AI assistant, performing a read-only source and evidence review separate from the implementation commits. This is an AI audit record, not a human auditor’s attestation, certification, GitHub review, or approval.
+- Scope: PR-009 Part 8 source and evidence relevant to transactional tenancy, audit/outbox persistence, API authority, worker relay/consumer, current SQS configuration delta, migration/release controls, and carried Phase 3 release dependencies.
+- Binding basis: docs/phase4_part8_audit_outbox_implementation_contract.md; Stage 01 brief; Stage 04 plan; Stage 05 implementation record; mandatory mutation transaction matrix; SC-002, SC-006, SC-009, SC-010 and SC-011; migration release runbook.
+- Method: read-only inspection of the pinned source files, their test targets, the requirement and mutation matrices, and GitHub workflow results. No source files or runtime systems were modified by this audit.
+- Execution limitation: no local build, test, PostgreSQL server, AWS account, SNS topic, SQS queue, or production deployment was executed by the auditor. Passing test claims below are limited to the exact-head GitHub workflow evidence and the named test implementations.
+- Review boundary: the PR contains 248 changed paths. This audit traces the security-critical Part 8/API/worker/config paths and the directly relevant test suites; it is not a claim that every line in all 248 changed paths received a full line-by-line audit.
+
+### Exact-head evidence
+
+PR #49 was open and unmerged at the audited HEAD. All four required workflows completed successfully on that exact SHA:
+
+| Required workflow | Exact-head run | Result |
+|---|---:|---|
+| Rust | 42666982592 | PASS |
+| PostgreSQL Integration | 42666982770 | PASS |
+| Security, including CodeQL and offensive regression | 42666983110 | PASS |
+| Policy | 42666983348 | PASS |
+
+The ECC Tools changed-configuration audit also reported no changed-config issues on 5e963123. Its separate harness audit reported one medium warning: the ECC manifest is missing for .agents/skills/rust-enterprise-audit/SKILL.md. That warning is not a changed-config failure and is dispositioned separately in Stage 07.
+
+### Requirement → implementation → test/evidence → disposition
+
+| Requirement / control | Implementation path examined | Test / evidence examined | Disposition |
+|---|---|---|---|
+| Canonical Rust, PostgreSQL, security and policy gates | .github/workflows/rust.yml, integration.yml, security.yml and policy.yml; canonical scripts/ci/verify and migration checks | Four required workflow runs above, all completed successfully on 5e963123 | PASS for the configured CI surface on this SHA. This is not production deployment evidence. |
+| Atomic organization provisioning with mandatory audit and outbox (SC-006, SC-009) | apps/api/src/bootstrap.rs; apps/api/src/serve.rs; crates/sitolo-application/src/tenancy.rs; crates/sitolo-persistence/src/tenancy_unit_of_work.rs and tenancy_postgres.rs | part8_provision_organization_evidence_tests; membership_transaction_integration; PostgreSQL Integration workflow. Source shows business rows, audit and outbox use one caller-owned transaction and commit once. | PASS for the exercised provisioning transaction, including success, rollback, retry and concurrent same-payload cases. Do not generalize this result to every IAM command. |
+| Tenant identity and protected HTTP authority (SC-002) | apps/api/src/bootstrap.rs composes PgRuntimePool, PgRequestIdentityAuthority and PgTenancyUnitOfWork; apps/api/src/serve.rs authenticates before handlers; organization owner identity is taken from SecurityContext; branch and member commands use authenticated service wrappers. | apps/api/tests/tenancy_api.rs: live_organization_route_derives_owner_and_audit_actor_from_authenticated_subject; live_branch_route_authorizes_and_mutates_only_the_verified_tenant; live_branch_activation_authenticates_and_commits_authorized_transition; live_membership_revoke_authorizes_tenant_and_records_verified_actor (also exercises suspend); axum_boundary.rs enumerates protected routes and missing-credential denial. | PASS for the current exposed route inventory and exercised PostgreSQL request paths. The route inventory is intentionally narrower than the full mutation matrix. |
+| PostgreSQL RLS, role separation and SECURITY DEFINER boundaries | crates/sitolo-persistence/schema/migrations/0001–0006; postgres.rs; runtime_pool.rs; tenancy_unit_of_work.rs; worker pool and evidence repositories | part8_postgres_integration_tests: test_security_definer_functions_are_hardened; test_part8_relation_ownership_and_rls_metadata; test_runtime_cannot_read_or_truncate_evidence; test_worker_cannot_select_outbox_table; test_runtime_cannot_execute_worker_transitions; test_outbox_cross_tenant_insert_is_denied; plus PostgreSQL Integration and Rust workflow results. | PASS for the catalog, privilege, RLS and role behaviors exercised by those PostgreSQL tests. Production-cluster role provisioning remains a deployment gate. |
+| Complete mandatory Phase 4 mutation matrix (SC-002, SC-006, SC-009) | crates/sitolo-application/src/tenancy.rs; persistence unit of work; workspaces/sitolo-engineering/runs/pr009-part8/follow-up/pr49-mandatory-mutation-transaction-matrix-2026-10-23.md | membership_transaction_integration includes lifecycle success/rollback, branch creation rollback, invitation issue/accept/withdraw/expiry races, member transitions, role and scope grant/revocation, concurrency and evidence-failure cases. Live HTTP coverage is a smaller subset; many commands remain actor-taking application operations without a live authenticated route. | PARTIAL. PostgreSQL transaction evidence is substantial, but the matrix is not closed for every required command’s public authority, request boundary, denied/no-write and concurrency contract. The owner must explicitly close or exclude each non-live command; do not expose generic routes by inference. |
+| Outbox claim fencing, aggregate order, retry and quarantine | apps/worker/src/relay.rs; crates/sitolo-persistence/src/outbox_repository.rs; apps/worker/src/sns.rs | part8_postgres_integration_tests: concurrent worker claim, lease recovery, concurrent aggregate sequence assignment, same-aggregate order, retry reschedule/fencing, terminal quarantine and attempt-budget exhaustion; RelayWorker tests cover event/version rejection and publisher failure classes. | PASS for the tested repository/relay policy and state transitions. Live AWS delivery and production IAM are not established by unit or PostgreSQL CI. |
+| Production SNS FIFO relay composition | apps/worker/src/main.rs; apps/worker/src/sns.rs; apps/worker/src/relay.rs; PgWorkerPool and PostgresOutboxRepository | Source composition uses explicit SNS FIFO topic ARN, region, ECS task-role credentials, bounded calls, worker DB secret reference and the relay worker. SNS tests validate region/topic, stable event identity and envelope contents. No live AWS publish/deployment test was evidenced. | PARTIAL. The producer runtime and adapter are implemented; actual AWS resource policy, deployed task role, queue/topic configuration, delivery and operational proof remain unverified. |
+| Transactional consumer inbox marker and tenant/order constraints | crates/sitolo-persistence/src/consumer_inbox.rs; crates/sitolo-persistence/schema/migrations/0004_worker_consumer_inbox.sql; apps/worker/src/consumer.rs | part8_postgres_integration_tests: test_consumer_inbox_rolls_back_and_deduplicates_identical_events and test_consumer_inbox_serializes_concurrent_aggregate_sequences. | PASS for the inbox marker, duplicate identity, rollback, tenant scope and sequence checks that those tests exercise. This does not prove a real business effect. |
+| Concrete consumer effect, production SQS loop and acknowledgement-after-effect | apps/worker/src/consumer.rs and sqs.rs define the injected effect/transport contracts; apps/worker/src/main.rs is the production entry point. | ConsumerProcessor source commits inbox and injected effect in one transaction, then acknowledges after commit. However, worker main deliberately exits when consumer SQS configuration is present because no approved business effect is supplied. Inbox database tests do not execute a production effect. | BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED. No concrete business effect or production consumer composition exists. No acknowledgement-after-real-effect, duplicate-effect or end-to-end SQS proof may be claimed. |
+| Consumer SQS configuration delta | crates/sitolo-config/src/validate.rs; crates/sitolo-config/src/model.rs and fingerprint.rs; apps/worker/src/sqs.rs; environment configuration docs | consumer_settings_are_typed_and_invalid_values_fail_closed; SQS FIFO URL/region tests; owner-local fmt, strict Clippy and sitolo-config tests (28 + 2) recorded in the 2026-11-09 implementation note; exact-head CI above. | PASS for the configuration delta and tested validation behavior. This does not unblock consumer execution without an approved effect. |
+| Schema migration source integrity and repository procedure | crates/sitolo-persistence/schema/migrations/0001–0006 and manifest.toml; scripts/ci/check-schema-migrations.py; docs/runbooks/postgresql-migration-release.md | Exact-head Rust and Integration workflows; manifest/checker are included in repository verification and disposable PostgreSQL test application. | PARTIAL. Ordered, checksum-pinned repository migrations and a repository-side runbook exist. A production migration owner, execution identity/runner, durable schema-version ledger, approved rollout, backup/PITR and incident/recovery ownership are not evidenced. |
+| Risk-aware role assignment and revocation policy | crates/sitolo-application/src/tenancy.rs; role/scope operations and Phase 4 decision records | The authenticated application wrapper checks ROLE_ASSIGN and transactional tests exist, but the binding API/Phase 4 policy requires target-role risk classes, scope, SoD, step-up and any second-person approval. No generic assignment/revocation HTTP route is exposed. | BLOCKED_BY_APPROVED_DECISION. Do not expose generic role grant/revoke routes or infer risk policy. |
+| Phase 3 identity/session completeness carried into release readiness | apps/api/src/bootstrap.rs; identity authority and session persistence; migrations 0005 and 0006; Phase 3 evidence matrix | Current session/logout implementation and related PostgreSQL tests exist. The carried requirements matrix still identifies missing complete login/session creation, refresh rotation/reuse, MFA/recovery, device lifecycle and real-provider evidence. | PARTIAL. This is a cross-phase release dependency; Part 8 CI success does not close Phase 3. |
+| Operational observability and runbooks | worker relay trace/report paths; bounded worker metrics view; docs/runbooks/postgresql-migration-release.md | PostgreSQL metrics-view bounds and relay policy tests; repository migration runbook | PARTIAL. Technical bounds and repository migration procedure exist, but production metrics export/alerting, quarantine/DLQ operator procedure, deployment ownership and incident response evidence are not established. |
+
+### Current audit findings
+
+**S06-01 — Mandatory mutation matrix is not fully closed.** Severity: release-blocking for the claimed full Phase 4 mutation scope. Disposition: PARTIAL. The code has a durable transaction path and broad PostgreSQL evidence, but not every command has a demonstrated authenticated request path and complete actor/scope/denied-no-write/replay/concurrency evidence. The Stage 07 handoff must disposition each non-live command with an accountable owner; it must not silently equate an application method accepting ActorRef with a production-authorized command.
+
+**S06-02 — No approved consumer business effect or production consumer composition.** Severity: release-blocking for consumer delivery. Disposition: BLOCKED_BY_APPROVED_DECISION / NOT EVIDENCED. The fail-closed startup guard is correct; removing it or supplying a no-op would be unsafe. A domain owner must approve the effect and its payload semantics before Engineering wires ConsumerProcessor into the worker runtime.
+
+**S06-03 — Production migration/release governance is incomplete.** Severity: production-release blocker. Disposition: PARTIAL. Source migrations and a repository procedure are present, but the named accountable production owner, execution identity, runner, durable ledger location, rollout approval, backup/PITR and recovery/incident ownership are not recorded.
+
+**S06-04 — Role-grant risk governance is not approved.** Severity: privileged-access blocker. Disposition: BLOCKED_BY_APPROVED_DECISION. The code’s ROLE_ASSIGN check is not a substitute for approved target-role risk classes, scope, separation-of-duties, step-up and second-person approval rules. Routes remain correctly absent.
+
+**S06-05 — Phase 3 identity lifecycle evidence remains partial.** Severity: cross-phase release dependency. Disposition: PARTIAL. Existing OIDC/session/logout code does not prove the full login, refresh, MFA, recovery, device and provider lifecycle requirement.
+
+**S06-06 — Production AWS and operations evidence remains partial.** Severity: production-release blocker. Disposition: PARTIAL. Source uses ECS task roles, SNS/SQS adapters and bounded processing, but live resource policy, runtime role deployment, delivery, metrics/alerts and quarantine/DLQ operations are not demonstrated.
+
+### Historical Stage 06 finding reconciliation
+
+| Historical finding | Current disposition | Basis / boundary |
+|---|---|---|
+| F-01 — unauthenticated provisioning could be wired to durable state | CLOSED for the previously unsafe route path. | The production bootstrap now composes persistent identity authority and PgTenancyUnitOfWork; the HTTP route derives owner identity from the verified SecurityContext. This does not close the entire mutation matrix. |
+| F-02 — same-ID organization provisioning concurrency was unverified | CLOSED for organization provisioning. | The exact-head PostgreSQL Integration workflow passes the provisioning evidence suite; the same-payload concurrent case is included in the recorded evidence. Do not generalize it to all mutation commands. |
+| F-03 — relay destination/runtime contract unresolved | SUPERSEDED / PARTIAL. | An explicit SNS FIFO producer adapter and production relay composition now exist. Consumer business effect and production SQS consumer composition remain blocked under S06-02. |
+| F-04 — locked RSA dependency advisory | CLOSED for the configured dependency gate. | The dependency remediation was recorded in the implementation history and the current exact-head Security workflow succeeds. No advisory suppression is claimed. |
+
+### Overall Stage 06 disposition
+
+**AUDIT RESULT: NOT READY FOR MERGE OR PHASE 4 PART 8 CLOSURE.** Exact-head CI and the changed configuration audit pass. The organization provisioning transaction, tested RLS/privilege boundary, selected API authority paths and outbox state machine have meaningful source and PostgreSQL evidence. The outstanding findings above are not waived by a green build.
+
+**Independence limitation:** this is a read-only AI source audit, not the required non-author human approval. A designated independent human reviewer must inspect this artifact and the pinned source and submit an actual GitHub APPROVE review. No approval is claimed or synthesized here.
+
+**Disposition:** PR #49 remains OPEN and UNMERGED. Do not mark merge-ready, production-ready or Phase 4 Part 8 complete.
+
 **Disposition:** Re-audit after Stage 07 remediation and exact-head CI on `dd583b2`. The newly introduced durable API wiring is removed. The same-payload concurrent provisioning requirement now has real PostgreSQL CI evidence. Other material requirements remain incomplete, so Stage 08 cannot clear the release gates.
 **Review basis:** implementation diff and code paths, Stage 01 brief, Stage 02 research, Stage 04 plan, Stage 05 report, security controls SC-002, SC-006, SC-009, SC-010, and audit/security/correctness contracts.
 **Human check:** The requester authorized autonomous continuation after saying the file was not visible. This is not recorded as manual review or acceptance of findings.
