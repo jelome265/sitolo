@@ -128,3 +128,35 @@ When run with `ripgrep` available, `check-phase2-policy` flags bare `DATABASE_UR
 - `crates/sitolo-persistence/tests/rls_security_tests.rs`
 
 Those reads are test harness inputs, not runtime production source, and the test files predate this change. The policy text says “Runtime database identity is assembled only from typed, canonical fields.” A separate human decision is required to either scope the policy check to runtime source or remove the test aliases. No gate was weakened or silently changed by this remediation.
+
+
+## Exact-head CI recovery record — 2026-11-09
+
+**Purpose:** preserve the failed-run evidence for the PR synchronization immediately preceding this record. These failures are not treated as passing checks, and no gate is weakened to make them green.
+
+- Repository / PR: `jelome265/sitolo`, PR #49.
+- Branch: `feat/phase4-pr009-audit-outbox`.
+- Pre-recovery exact PR head: `325d5d98f932ed29f08917c4fe8c9ed6e7379f85`.
+- Base: `main` at `d2dbcce6606db49b1b87669f364721905c6509f8`.
+- The Stage 06 audit remains pinned to `5e963123dcb84d9d1d50993d7611ddbc1bae0466`; this CI recovery does not amend or close its findings.
+
+### Workflow observations on `325d5d9`
+
+| Required workflow | Run | GitHub conclusion | Job evidence |
+|---|---:|---|---|
+| Rust | [42671177853](https://github.com/jelome265/sitolo/actions/runs/42671177853) | PASS | `architecture`, `toolchain`, and `verify` all completed successfully. |
+| PostgreSQL Integration | [42671177582](https://github.com/jelome265/sitolo/actions/runs/42671177582) | FAILURE | The run and attempt-1 Jobs API both returned `total_count: 0`, `jobs: []`; no test step or assertion failure was available to inspect. |
+| Security | [42671177674](https://github.com/jelome265/sitolo/actions/runs/42671177674) | FAILURE | The workflow declares five jobs, including `advisories`. The completed Jobs API returned only four jobs (`secrets`, `dependency-policy`, `codeql`, `offensive-regression`), all successful; no `advisories` job record was present. |
+| Policy | [42671177516](https://github.com/jelome265/sitolo/actions/runs/42671177516) | FAILURE | The run and attempt-1 Jobs API both returned `total_count: 0`, `jobs: []`; no policy script output or failed step was available to inspect. |
+
+The workflow definitions at this branch head still declare their expected jobs and commands. The Policy workflow includes workflow-policy, Rust policy, ICM, System Map, documentation-reference and required-file checks. The Integration workflow includes the PostgreSQL service and application/contract test command. The Security workflow includes the advisory scan. There is no source-level failure message in the returned run/job records.
+
+### Recovery attempt and disposition
+
+GitHub's failed-job rerun endpoint rejected all three failed workflow run IDs (Integration `42671177582`, Security `42671177674`, Policy `42671177516`) with HTTP 403 and message `This workflow run cannot be retried`. This is consistent with an Actions run/job state that GitHub will not replay through the failed-jobs endpoint; it is not evidence that the corresponding test commands failed.
+
+**Disposition:** NOT VERIFIED / ACTIONS EXECUTION ANOMALY for Integration, Security and Policy on `325d5d9`; PASS for Rust on that SHA. Do not report 4/4. Do not add `continue-on-error`, skip persistence tests, narrow the policy paths, suppress advisories, or otherwise weaken the required gates.
+
+A new PR synchronization is required to cause GitHub to create fresh workflow runs. The next verification must inspect the new run IDs and their actual jobs, confirm every required workflow's `head_sha` equals the new PR head, and require a successful conclusion. The earlier run IDs above remain historical failure evidence only.
+
+No local PostgreSQL was started. PostgreSQL-backed tests remain CI-only. This recovery record does not satisfy the independent non-author review requirement and does not close any Stage 06 finding or owner decision.
