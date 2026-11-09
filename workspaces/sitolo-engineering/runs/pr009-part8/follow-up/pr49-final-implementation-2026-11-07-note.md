@@ -155,3 +155,51 @@ FAILURE on doc-reference, Rust completed) are historical evidence only.
 verified `55dd2c05...` green set. Current status remains NOT READY for
 merge pending the missing-region fix CI, independent Stage 06 re-audit,
 and human approval. PR #49 remains open and unmerged.
+
+## Verification update 2 — 2026-11-09 (append-only; supersedes stale claims above)
+
+The mentions above of “awaiting exact-head CI on the fix commit”,
+“PR description head (`db071f`): to be updated”, and “NOT READY pending
+the missing-region fix CI” were accurate at write time and are now
+superseded as follows. No historical line above is rewritten.
+
+**Later commits (owner-executed, pushed without force):**
+
+- `4c7e8c8`: `fix(config): require shared region for consumer SQS destination`
+  (region-required validation + negative tests; initially pushed with
+  failing `fmt`/`clippy` states).
+- `54f2afb`: `style(config): split consumer test and format` (test split
+  resolved `too_many_lines`; one `fmt` signature diff remained).
+- `f42c54ef3447f2a7b86ec3e4b69407569d8295e7`:
+  `style(config): apply fmt to consumer test signature` (current head).
+
+**Local commands on the final state (owner PowerShell 7.6.9):**
+
+- `cargo fmt --all -- --check`: PASS.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`: PASS.
+- `cargo test -p sitolo-config --all-targets --all-features --locked`: PASS (28 + 2).
+
+**Exact-head CI on `f42c54ef3447f2a7b86ec3e4b69407569d8295e7`** (`gh pr view 49`
+`headRefOid` matches all four `headSha`):
+
+- Rust `42662823615` (`architecture`, `toolchain`, `verify`): PASS
+- Integration `42662823609` (`application and contract tests with PostgreSQL`): PASS
+- Security `42662823468` (`dependency-policy`, `advisories`, `secrets`,
+  `offensive-regression`, `codeql` + Advanced Security CodeQL): PASS
+- Policy `42662823451`: PASS
+
+Intermediate-head runs on `4c7e8c8...` / `54f2afb...` (notably Rust failures
+from the transient `fmt`/`clippy` states) are historical evidence only.
+
+**PR description:** updated by the owner via `gh pr edit 49`; current-head
+line now reads `f42c54ef3447f2a7b86ec3e4b69407569d8295e7` with the four
+exact-head run links above. Verified: `headRefOid` matches, body contains
+`f42c54e`.
+
+**Readiness supersession 2:** with the `f42c54e...` 4/4 green set and the
+corrected PR description, the config-delta documentation finding is closed.
+Broader Part 8 dispositions are unchanged: complete mandatory mutation
+matrix PARTIAL, approved consumer effect BLOCKED, Phase 3 PARTIAL,
+production migration owner/runner/ledger PARTIAL. Independent formal Stage
+06 artifact and human approval (non-author reviewer) remain outstanding.
+PR #49 remains open and unmerged.
