@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod consumer;
+pub mod consumer_compose;
 pub mod relay;
 pub mod sns;
 pub mod sqs;

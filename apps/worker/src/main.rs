@@ -47,7 +47,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // Consumer SQS configuration is validated here, but an owner-approved
     // business effect is still required before the consumer loop can run.
     // Fail closed instead of silently ignoring the configured queues or
-    // defaulting to a no-op effect.
+    // defaulting to a no-op effect. The presence-based check below mirrors the
+    // original guard exactly: if any consumer field is present, return the
+    // approved error before any AWS client is constructed, any credential is
+    // resolved, or any network call is made. No composition occurs here and
+    // no consumer is activated.
     if config.consumer_name.is_some()
         || config.consumer_sqs_queue_url.is_some()
         || config.consumer_sqs_quarantine_queue_url.is_some()
