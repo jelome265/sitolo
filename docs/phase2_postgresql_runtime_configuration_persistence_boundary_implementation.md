@@ -145,13 +145,15 @@ The security crate already contains a `SecretProvider` abstraction and a develop
 
 ## 1.5 Current development-provider caveat
 
-The development secret provider currently maps the database secret class to:
+The development secret provider maps the database secret class to:
 
 ```text
-SITOLO__DATABASE__PASSWORD
+SITOLO_SECRET__DATABASE__PASSWORD
 ```
 
 This value is acceptable only as a **development secret-provider input**. It must not be promoted into the canonical configuration contract.
+
+The namespaces are disjoint: `SITOLO__` is parsed by the canonical configuration loader and rejects unknown keys, while `SITOLO_SECRET__` is read only by the development provider. The former `SITOLO__DATABASE__PASSWORD` spelling is an unknown configuration key and fails startup before the provider can resolve it.
 
 Therefore the distinction must remain:
 
@@ -160,7 +162,7 @@ CANONICAL CONFIG
 SITOLO__DATABASE__PASSWORD_REF
 
 DEVELOPMENT-ONLY SECRET INPUT
-SITOLO__DATABASE__PASSWORD
+SITOLO_SECRET__DATABASE__PASSWORD
 ```
 
 The production runtime must not use the environment-backed secret provider.
@@ -508,10 +510,10 @@ Production must hard-fail if the selected provider is local/environment-backed.
 The development provider may read a synthetic password from:
 
 ```text
-SITOLO__DATABASE__PASSWORD
+SITOLO_SECRET__DATABASE__PASSWORD
 ```
 
-but that key must not appear in the canonical field catalogue as an ordinary configuration field.
+but that key must not appear in the canonical field catalogue as an ordinary configuration field. The dedicated `SITOLO_SECRET__` namespace is deliberately outside `SITOLO__`; it cannot be parsed as configuration.
 
 This distinction prevents developers from accidentally creating a production deployment where the password is considered normal configuration.
 
@@ -2007,10 +2009,10 @@ This prevents local development from hiding privilege problems that would fail i
 A developer may configure:
 
 ```text
-SITOLO__DATABASE__PASSWORD
+SITOLO_SECRET__DATABASE__PASSWORD
 ```
 
-for the environment-backed development secret provider.
+for the environment-backed development secret provider. This is the dedicated secret-value namespace, not ordinary configuration.
 
 That value must:
 
@@ -2027,7 +2029,8 @@ The canonical configuration remains `PASSWORD_REF`.
 
 # 76. `.env.example` Contract
 
-A safe example should contain no credential:
+A safe example may document the development secret placeholder, but it must
+contain no real credential:
 
 ```text
 SITOLO__RUNTIME__ENVIRONMENT=development
@@ -2039,13 +2042,20 @@ SITOLO__DATABASE__PASSWORD_REF=development/sitolo/db
 SITOLO__DATABASE__POOL_MIN=5
 SITOLO__DATABASE__POOL_MAX=20
 SITOLO__DATABASE__ACQUIRE_TIMEOUT_MS=2000
+SITOLO_SECRET__DATABASE__PASSWORD=replace-with-local-disposable-password
 ```
+
+The secret line is a placeholder for a disposable local database. It must be
+clearly marked as development-only; production rejects the local provider.
 
 Do not include:
 
 ```text
 SITOLO__DATABASE__PASSWORD=...
 ```
+
+The former name is in the configuration namespace and would be rejected as an
+unknown key rather than read as a secret.
 
 in a committed example file.
 

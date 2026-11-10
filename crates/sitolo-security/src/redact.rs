@@ -6,13 +6,15 @@
 //! emitted and it *might* contain forbidden data, we redact the forbidden data
 //! and, on redaction failure, refuse to emit the raw payload.
 
-use std::fmt::Write;
+use std::fmt;
 
 /// Budgets that bound redaction and serialization work so hostile input cannot
 /// become an allocation-blowup path (Phase 2 specification, §28, §47-§49).
 #[derive(Debug, Clone, Copy)]
 pub struct RedactLimits {
+    /// Largest input, in bytes, that will be scanned for secrets.
     pub max_input_bytes: usize,
+    /// Largest redacted output, in bytes, before the result is dropped.
     pub max_output_bytes: usize,
 }
 
@@ -26,7 +28,7 @@ impl Default for RedactLimits {
 }
 
 /// A fixed ASCII placeholder used whenever redacted content appears.
-pub const REDACTED: &str = "<redacted>";
+pub(crate) const REDACTED: &str = "<redacted>";
 
 /// Outcome of attempting to redact a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,10 +47,21 @@ pub enum RedactionOutcome {
 /// Given a set of exact byte sequences that must never appear in a sink, this
 /// replaces every occurrence with `<redacted>` so downstream code cannot leak
 /// them by accident (Phase 2 specification, §46, Appendix X).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecretRedaction {
     secrets: Vec<Vec<u8>>,
     limits: RedactLimits,
+}
+
+impl fmt::Debug for SecretRedaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `secrets` holds the exact byte sequences this redactor removes.
+        // Rendering them would defeat the redaction.
+        f.debug_struct("SecretRedaction")
+            .field("secrets", &"***")
+            .field("limits", &self.limits)
+            .finish()
+    }
 }
 
 impl SecretRedaction {
@@ -61,6 +74,13 @@ impl SecretRedaction {
     }
 
     /// Redacts a CSV-style cell (or any bounded text).
+    #[must_use]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing,
+        reason = "every slice and index is guarded by an explicit `i < bytes.len()` or \
+                  `bytes[i..].len() >= s.len()` check against the same buffer"
+    )]
     pub fn redact(&self, input: &str) -> RedactionOutcome {
         if input.len() > self.limits.max_input_bytes {
             return RedactionOutcome::BoundedDrop;
@@ -81,18 +101,15 @@ impl SecretRedaction {
                     break;
                 }
             }
-            match matched {
-                Some((_, end)) => {
-                    let _ = out.write_str(REDACTED);
-                    if out.len() > self.limits.max_output_bytes {
-                        return RedactionOutcome::BoundedDrop;
-                    }
-                    i = end;
+            if let Some((_, end)) = matched {
+                out.push_str(REDACTED);
+                if out.len() > self.limits.max_output_bytes {
+                    return RedactionOutcome::BoundedDrop;
                 }
-                None => {
-                    out.push(bytes[i] as char);
-                    i += 1;
-                }
+                i = end;
+            } else {
+                out.push(char::from(bytes[i]));
+                i += 1;
             }
         }
         RedactionOutcome::Ok(out)
@@ -124,6 +141,7 @@ impl RedactBuf {
     }
 
     /// The current safe text.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -150,6 +168,12 @@ fn is_field_boundary(byte: u8) -> bool {
     !(byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "`end` is derived from `at` and validated against `bytes.len()` before every \
+              slice, and all byte offsets stay within the same bounded buffer"
+)]
 fn field_at(bytes: &[u8], at: usize, name: &str) -> bool {
     let end = at + name.len();
     if end > bytes.len() || !bytes[at..end].eq_ignore_ascii_case(name.as_bytes()) {
@@ -163,6 +187,12 @@ fn field_at(bytes: &[u8], at: usize, name: &str) -> bool {
     before_ok && after_ok
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "the scan advances only while `i < bytes.len()` and clamps the quoted-value \
+              return to `bytes.len()`"
+)]
 fn value_end(bytes: &[u8], start: usize) -> usize {
     let mut i = start;
     // Quoted value: consume through the closing quote.
@@ -185,6 +215,11 @@ fn value_end(bytes: &[u8], start: usize) -> usize {
     i
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "the scan advances only while `i < bytes.len()`"
+)]
 fn eol_end(bytes: &[u8], start: usize) -> usize {
     let mut i = start;
     while i < bytes.len() && !matches!(bytes[i], b'\n' | b'\r') {
@@ -200,6 +235,13 @@ fn eol_end(bytes: &[u8], start: usize) -> usize {
 /// stylistic). `name=value`, `name: value`, and `"name":"value"` shapes have
 /// their value replaced with `REDACTED`; `Bearer ...` credentials are
 /// likewise replaced.
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "the scan keeps `i < bytes.len()` and `i + 7 <= bytes.len()` proven before every \
+              slice, and `j` advances only while bounded by `bytes.len()`"
+)]
+#[must_use]
 pub fn sanitize_authentication_text(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
@@ -216,7 +258,11 @@ pub fn sanitize_authentication_text(input: &str) -> String {
         let mut replaced = false;
         for name in AUTH_FORBIDDEN_FIELDS {
             if field_at(bytes, i, name) {
-                out.push_str(&input[i..i + name.len()]);
+                // `field_at` matched an ASCII field name, so these bytes are
+                // ASCII and pushing them as chars preserves the original text.
+                for &byte in &bytes[i..i + name.len()] {
+                    out.push(char::from(byte));
+                }
                 let mut j = i + name.len();
                 // Consume the `=`/`:` separator and any spaces/quote after it.
                 while j < bytes.len()
@@ -225,7 +271,7 @@ pub fn sanitize_authentication_text(input: &str) -> String {
                         || bytes[j] == b' '
                         || bytes[j] == b'"')
                 {
-                    out.push(bytes[j] as char);
+                    out.push(char::from(bytes[j]));
                     j += 1;
                 }
                 let value_end_at = if name.eq_ignore_ascii_case("authorization") {
@@ -240,7 +286,7 @@ pub fn sanitize_authentication_text(input: &str) -> String {
             }
         }
         if !replaced {
-            out.push(bytes[i] as char);
+            out.push(char::from(bytes[i]));
             i += 1;
         }
     }
@@ -262,15 +308,21 @@ mod tests {
     }
 
     #[test]
-    fn redacts_exact_secret_sequences() {
+    fn redacts_exact_secret_sequences() -> Result<(), Box<dyn std::error::Error>> {
         let r = redactor();
         let out = match r.redact("connect with TEST_SECRET_DATABASE_001 now") {
             RedactionOutcome::Ok(s) => s,
-            other => panic!("unexpected {other:?}"),
+            other @ (RedactionOutcome::Refused | RedactionOutcome::BoundedDrop) => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected redaction outcome: {other:?}"
+                ))
+                .into());
+            }
         };
         assert!(!out.contains("TEST_SECRET_DATABASE_001"));
         assert!(out.contains(REDACTED));
         assert!(out.contains("connect with"));
+        Ok(())
     }
 
     // Phase 3 specification, §40/§78: CI must prove authentication credentials
@@ -344,5 +396,13 @@ mod tests {
             sanitize_authentication_text("method=password platform=android"),
             "method=password platform=android"
         );
+    }
+
+    #[test]
+    fn debug_never_carries_configured_secrets() {
+        let text = format!("{:?}", redactor());
+        assert!(!text.contains("TEST_SECRET_DATABASE_001"));
+        assert!(!text.contains("TEST_SECRET_PAYMENT_002"));
+        assert!(text.contains("***"));
     }
 }

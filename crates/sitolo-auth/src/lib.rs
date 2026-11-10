@@ -6,11 +6,12 @@
 //! offline capability, and the security context (§15, §32, §33).
 //!
 //! This crate deliberately provides protocol-neutral state machines and ports.
-//! OIDC, password hashing, TOTP, and WebAuthn protocol processing belong to
+//! OIDC, password hashing, TOTP, and `WebAuthn` protocol processing belong to
 //! maintained adapters selected at deployment time (§6.1); tenant membership
 //! and permission checks belong to later phases (§1.2, §69).
 #![forbid(unsafe_code)]
 
+pub mod authority;
 pub mod device;
 pub mod error;
 pub mod id;
@@ -27,6 +28,7 @@ pub mod reset;
 pub mod session;
 pub mod token;
 
+pub use authority::{RequestIdentityAuthority, SessionSnapshot};
 pub use device::{Device, DeviceRevocationEffect, DeviceState};
 pub use error::{AuthError, CredentialMaterial};
 pub use id::{

@@ -4,8 +4,19 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Tenant topology and effective-scope resolution for Sitolo."
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 sitolo-authz = { path = "../sitolo-authz" }
 sitolo-domain = { path = "../sitolo-domain" }
 thiserror.workspace = true
+
+[dev-dependencies]
+sitolo-testkit = { path = "../sitolo-testkit" }
+
+[lints]
+workspace = true

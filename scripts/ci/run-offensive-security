@@ -48,6 +48,7 @@ fail() {
 [[ "${SITOLO_OFFENSIVE_ALLOWED:-}" == "true" ]] ||   fail "explicit authorization flag SITOLO_OFFENSIVE_ALLOWED=true is required"
 
 [[ "${SITOLO_OFFENSIVE_ENV:-}" == "disposable" ]] ||   fail "offensive tests require SITOLO_OFFENSIVE_ENV=disposable"
+[[ "${SITOLO_TEST_DATABASE_DISPOSABLE:-}" == "true" ]] ||   fail "SITOLO_TEST_DATABASE_DISPOSABLE=true is required for database target validation"
 
 for var in ADMIN_DATABASE_URL RUNTIME_DATABASE_URL; do
   [[ -n "${!var:-}" ]] || fail "$var is required for the real PostgreSQL adversarial suite"

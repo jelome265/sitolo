@@ -11,6 +11,15 @@ echo "==> Verify toolchain"
 rustc --version
 cargo --version
 
+echo "==> Architecture check (early, fail-closed)"
+./scripts/ci/check-architecture
+
+echo "==> Versioned schema migration inventory"
+python3 ./scripts/ci/check-schema-migrations.py
+
+echo "==> Rust lint and unsafe-code policy"
+python3 ./scripts/ci/check-rust-policy.py
+
 echo "==> Verify lockfile (fails if stale)"
 cargo metadata --format-version 1 --locked >/dev/null
 
@@ -26,29 +35,21 @@ cargo check --workspace --all-targets --all-features --locked
 echo "==> Unit tests"
 cargo test --workspace --all-targets --all-features --locked
 
+echo "==> Phase 4 Part 8 PostgreSQL integration suite"
+cargo test -p sitolo-persistence --test part8_postgres_integration_tests --all-features --locked
+
 echo "==> PostgreSQL RLS Security Suite"
 cargo test -p sitolo-persistence --test rls_security_tests --all-features --locked
 
 echo "==> Release build"
 cargo build --workspace --release --locked
 
-echo "==> Architecture check"
-./scripts/ci/check-architecture
-
 echo "==> Phase 2 policy check"
 ./scripts/ci/check-phase2-policy
 
 echo "==> Dependency and license policy"
-if ! command -v cargo-deny >/dev/null 2>&1; then
-  echo "FAIL-CLOSED: cargo-deny is not installed. Mandatory security tool cargo-deny must be present." >&2
-  exit 1
-fi
+python3 ./scripts/ci/install-policy-tools.py
 cargo deny check
-
-if ! command -v cargo-audit >/dev/null 2>&1; then
-  echo "FAIL-CLOSED: cargo-audit is not installed. Mandatory security tool cargo-audit must be present." >&2
-  exit 1
-fi
 cargo audit
 
 echo "==> All verification passed"

@@ -9,6 +9,10 @@
 //! serialized, logged, or propagated accidentally. This crate never stores a
 //! raw secret in a long-lived object; it only provides the narrow capability
 //! handles consumers need.
+//!
+//! The development provider reads secret values from the dedicated
+//! `SITOLO_SECRET__` namespace, which is disjoint from the ordinary `SITOLO__`
+//! configuration namespace. See [`SECRET_ENV_PREFIX`].
 #![forbid(unsafe_code)]
 
 mod protected;
@@ -19,7 +23,7 @@ mod reference;
 mod value;
 
 pub use protected::{InMemoryProtectedStore, SealedRef, SecretAtRest, SecretAtRestError};
-pub use provider::{EnvSecretProvider, SecretError, SecretProvider};
+pub use provider::{EnvSecretProvider, SECRET_ENV_PREFIX, SecretError, SecretProvider};
 pub use random::{DeterministicRandom, RandomSource, RandomSourceError};
 pub use redact::{
     AUTH_FORBIDDEN_FIELDS, RedactBuf, RedactLimits, RedactionOutcome, SecretRedaction,

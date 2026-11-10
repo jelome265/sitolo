@@ -4,6 +4,10 @@
 //! `unsafe` in edition 2024 and library sources forbid unsafe code outright.
 //! Each test scopes its mutation and no other test target in this package
 //! reads process environment, so a scoped set/remove cannot race a reader.
+#![expect(
+    unsafe_code,
+    reason = "Rust 2024 requires unsafe environment mutation in this serialized integration-test harness"
+)]
 
 use std::future::Future;
 use std::pin::Pin;
@@ -11,12 +15,13 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use sitolo_security::{EnvSecretProvider, SecretClass, SecretError, SecretProvider, SecretRef};
 
-const VAR: &str = "SITOLO__DATABASE__PASSWORD";
+const VAR: &str = "SITOLO_SECRET__DATABASE__PASSWORD";
+const CONFIG_VAR: &str = "SITOLO__DATABASE__PASSWORD";
 const SENTINEL: &str = "TEST_ONLY_PROVIDER_SECRET_001";
 
 /// Minimal single-poll executor. Provider futures complete without yielding,
 /// so a noop waker suffices and no async runtime dependency is introduced.
-fn block_on<F: Future>(mut future: F) -> F::Output {
+fn block_on<F: Future>(mut future: F) -> Result<F::Output, std::io::Error> {
     unsafe fn clone(_: *const ()) -> RawWaker {
         raw_waker()
     }
@@ -34,13 +39,15 @@ fn block_on<F: Future>(mut future: F) -> F::Output {
     // completion on this stack before this function returns.
     let mut pinned = unsafe { Pin::new_unchecked(&mut future) };
     match pinned.as_mut().poll(&mut context) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("test provider future must resolve without yielding"),
+        Poll::Ready(output) => Ok(output),
+        Poll::Pending => Err(std::io::Error::other(
+            "test provider future unexpectedly yielded",
+        )),
     }
 }
 
-fn database_ref(path: &str) -> SecretRef {
-    SecretRef::new(SecretClass::Database, path).unwrap()
+fn database_ref(path: &str) -> Result<SecretRef, Box<dyn std::error::Error>> {
+    Ok(SecretRef::new(SecretClass::Database, path)?)
 }
 
 /// Serializes process-environment mutation: integration tests in one target
@@ -56,75 +63,121 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
 // SAFETY for the helpers below: every caller holds `ENV_LOCK`, and no other
 // test in this package reads process environment.
 unsafe fn set_var() {
+    // SAFETY: the caller holds `ENV_LOCK`, so no other thread in this test
+    // binary can observe or mutate the process environment concurrently.
     unsafe {
         std::env::set_var(VAR, SENTINEL);
     }
 }
 
 unsafe fn remove_var() {
+    // SAFETY: the caller holds `ENV_LOCK`, so no other thread in this test
+    // binary can observe or mutate the process environment concurrently.
     unsafe {
         std::env::remove_var(VAR);
     }
 }
 
 #[test]
-fn production_get_is_forbidden_without_reading_environment() {
+fn production_get_is_forbidden_without_reading_environment()
+-> Result<(), Box<dyn std::error::Error>> {
     // The sentinel proves the guard fires before any environment read:
     // even with a configured value present, production is refused.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test, so no
+    // other thread in this binary touches the process environment.
     unsafe { set_var() };
-    let denied = block_on(EnvSecretProvider::new(true).get(&database_ref("prod/sitolo/db")));
+    let denied = block_on(EnvSecretProvider::new(true).get(&database_ref("prod/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert!(
         matches!(denied, Err(SecretError::LocalProviderForbidden)),
         "production provider must fail closed, got: {denied:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn development_resolves_configured_value() {
+fn development_resolves_configured_value() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { set_var() };
-    let value = block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")));
+    let value =
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))??;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
-    assert_eq!(
-        value.expect("development resolution").into_string(),
-        SENTINEL
-    );
+    assert_eq!(value.into_string(), SENTINEL);
+    Ok(())
 }
 
 #[test]
-fn missing_and_empty_secrets_fail_closed() {
+fn configuration_namespace_is_not_a_secret_value_source() -> Result<(), Box<dyn std::error::Error>>
+{
+    // The provider must read only the dedicated `SITOLO_SECRET__` namespace.
+    // A value under the former `SITOLO__` configuration name is ignored rather
+    // than treated as a secret, so a leftover variable cannot silently become
+    // the credential.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
+    unsafe {
+        std::env::remove_var(VAR);
+    }
+    // SAFETY: `_guard` still holds `ENV_LOCK`; this block performs a single
+    // environment mutation.
+    unsafe {
+        std::env::set_var(CONFIG_VAR, SENTINEL);
+    }
+    let value =
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
+    unsafe { std::env::remove_var(CONFIG_VAR) };
+    assert!(
+        matches!(&value, Err(SecretError::Missing { .. })),
+        "configuration namespace must not satisfy a secret read, got: {value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn missing_and_empty_secrets_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { remove_var() };
     let missing =
-        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")));
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
     assert!(
         matches!(missing, Err(SecretError::Missing { .. })),
         "absent secret must fail closed, got: {missing:?}"
     );
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe {
         std::env::set_var(VAR, "");
     }
-    let empty = block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")));
+    let empty =
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db")?))?;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
     assert!(
         matches!(empty, Err(SecretError::Missing { .. })),
         "empty secret must fail closed, got: {empty:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn class_only_mapping_is_pinned() {
+fn class_only_mapping_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
     // F-013, Model 1: two references of the same class resolve through the
     // same variable by design; the path selects nothing.
     let _guard = lock_env();
+    // SAFETY: `_guard` keeps `ENV_LOCK` held for the rest of this test.
     unsafe { set_var() };
     let first =
-        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-a")));
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-a")?))??;
     let second =
-        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-b")));
+        block_on(EnvSecretProvider::new(false).get(&database_ref("development/sitolo/db-b")?))??;
+    // SAFETY: `_guard` still holds `ENV_LOCK`.
     unsafe { remove_var() };
-    assert_eq!(first.unwrap().into_string(), SENTINEL);
-    assert_eq!(second.unwrap().into_string(), SENTINEL);
+    assert_eq!(first.into_string(), SENTINEL);
+    assert_eq!(second.into_string(), SENTINEL);
+    Ok(())
 }

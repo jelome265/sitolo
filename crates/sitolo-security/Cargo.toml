@@ -4,8 +4,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Secret references, secret-provider boundary, secret-value hygiene, secure randomness and redaction primitives for Sitolo."
+repository = "https://github.com/jelome265/sitolo"
+readme = "../../README.md"
+keywords = ["secrets", "redaction", "security"]
+categories = ["authentication", "development-tools"]
 
 [dependencies]
 async-trait.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+[lints]
+workspace = true

@@ -78,7 +78,7 @@ OFFENSIVE_RUNNER="scripts/ci/run-offensive-security"
   echo "SECURITY ICM VIOLATION: offensive security runner missing: $OFFENSIVE_RUNNER" >&2
   fail=1
 }
-for runner_requirement in   'SITOLO_OFFENSIVE_ALLOWED'   'SITOLO_OFFENSIVE_ENV'   'rls_security_tests'   'tenancy_api'   'provider_env'   'run.json'; do
+for runner_requirement in   'SITOLO_OFFENSIVE_ALLOWED'   'SITOLO_OFFENSIVE_ENV'   'SITOLO_TEST_DATABASE_DISPOSABLE'   'rls_security_tests'   'tenancy_api'   'provider_env'   'run.json'; do
   grep -Fq "$runner_requirement" "$OFFENSIVE_RUNNER" || {
     echo "SECURITY ICM VIOLATION: offensive runner missing requirement: $runner_requirement" >&2
     fail=1
@@ -86,7 +86,7 @@ for runner_requirement in   'SITOLO_OFFENSIVE_ALLOWED'   'SITOLO_OFFENSIVE_ENV' 
 done
 
 # The live security workflow must expose an isolated offensive regression job.
-for workflow_requirement in   "offensive-regression:"   "SITOLO_OFFENSIVE_ALLOWED: true"   "SITOLO_OFFENSIVE_ENV: disposable"   "postgres:18-alpine"   "run-offensive-security"   "upload-artifact@"; do
+for workflow_requirement in   "offensive-regression:"   "SITOLO_OFFENSIVE_ALLOWED: true"   "SITOLO_OFFENSIVE_ENV: disposable"   "SITOLO_TEST_DATABASE_DISPOSABLE: \"true\""   "postgres:18-alpine"   "run-offensive-security"   "upload-artifact@"; do
   grep -Fq "$workflow_requirement" .github/workflows/security.yml || {
     echo "SECURITY ICM VIOLATION: security workflow missing offensive enforcement: $workflow_requirement" >&2
     fail=1

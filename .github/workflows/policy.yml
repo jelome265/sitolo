@@ -17,6 +17,13 @@ on:
       - "scripts/ci/check-security-icm-policy"
       - "scripts/ci/check-system-map-processes"
       - "scripts/ci/check-doc-references"
+      - "scripts/ci/check-release-workflow"
+      - "scripts/ci/check-rust-policy.py"
+      - "scripts/ci/test_rust_policy.py"
+      - "scripts/ci/rust-lint-exceptions.json"
+      - "scripts/ci/policy-tool-versions.toml"
+      - "scripts/ci/install-policy-tools.py"
+      - "scripts/ci/check-workflow-policy"
       - "scripts/ci/verify"
       - "scripts/ci/verify.ps1"
       - "scripts/agentic/**"
@@ -33,6 +40,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Workflow policy check
         run: ./scripts/ci/check-workflow-policy
+      - name: Rust lint and test policy check
+        run: python3 ./scripts/ci/check-rust-policy.py
+      - name: Rust lint exception inventory regression tests
+        run: python3 -m unittest discover -s scripts/ci -p "test_*.py"
       - name: ICM workspace policy check
         run: bash ./scripts/ci/check-icm-workspace
       - name: ICM PowerShell parity check

@@ -1,275 +1,601 @@
-//! Listener lifecycle: bind-gated serving, bounded probes, ordered shutdown
-//! and tenancy HTTP routing (§28 PR-006).
+//! Axum HTTP boundary with a reviewed route inventory and bounded ingress.
 
+use std::convert::Infallible;
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sitolo_api::tenancy::{
-    CreateBranchRequest, CreateOrganizationRequest, handle_activate_branch,
-    handle_activate_organization, handle_begin_close_branch, handle_begin_close_organization,
-    handle_close_branch, handle_close_organization, handle_create_branch,
-    handle_provision_organization, handle_resume_branch, handle_resume_organization,
-    handle_suspend_branch, handle_suspend_organization,
+use axum::body::Body;
+use axum::error_handling::HandleErrorLayer;
+use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{MethodRouter, get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde_json::json;
+use thiserror::Error;
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tower::ServiceBuilder;
+use tower::limit::ConcurrencyLimitLayer;
+use tower::load_shed::LoadShedLayer;
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
+
+use crate::shutdown::{
+    MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, ShutdownCoordinator, Subsystem,
 };
-use sitolo_api::{AppError, ProblemDetails};
-use sitolo_observability::RequestId;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Semaphore, oneshot};
-
-use crate::shutdown::{MAX_IN_FLIGHT_CONNECTIONS, SHUTDOWN_DRAIN_DEADLINE_SECS, Subsystem};
 use crate::state::AppState;
+use sitolo_api::{AppError, ProblemDetails};
+use sitolo_api::{
+    BranchResponse, CreateBranchRequest, CreateOrganizationRequest,
+    ProvisionedOrganizationResponse, map_authorized_tenancy_error, validate_create_branch_input,
+    validate_create_organization_input,
+};
+use sitolo_auth::SecurityContext;
+use sitolo_domain::tenancy::{BranchId, MembershipId, OrganizationId, TenantUserId};
+use sitolo_observability::RequestId;
 
-const PROBE_READ_TIMEOUT_SECS: u64 = 5;
-const PROBE_MAX_BYTES: usize = 32 * 1024;
+const MAX_INGRESS_BODY_BYTES: usize = 32 * 1024;
+const MAX_PROBE_BODY_BYTES: usize = 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Serves probes and tenancy APIs until `shutdown` fires, then drains
-/// in-flight connections within [`SHUTDOWN_DRAIN_DEADLINE_SECS`] and stops
-/// subsystems in deterministic order. Returns the completed shutdown order.
+/// Whether a route is public or requires a permission decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Public { reason: &'static str },
+    Authenticated,
+    Permission(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Method {
+    Get,
+    Post,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RouteSpec {
+    method: Method,
+    path: &'static str,
+    access: Access,
+    body_limit: usize,
+    timeout: Duration,
+}
+
+const ROUTES: &[RouteSpec] = &[
+    RouteSpec {
+        method: Method::Get,
+        path: "/process/live",
+        access: Access::Public {
+            reason: "container liveness probe",
+        },
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: PROBE_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Get,
+        path: "/process/ready",
+        access: Access::Public {
+            reason: "container readiness probe",
+        },
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: PROBE_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/auth/logout",
+        access: Access::Authenticated,
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations",
+        access: Access::Permission("organization.create"),
+        body_limit: MAX_INGRESS_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/branches",
+        access: Access::Permission("branch.create"),
+        body_limit: MAX_INGRESS_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
+        access: Access::Permission("branch.lifecycle"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
+        access: Access::Permission("membership.revoke"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+    RouteSpec {
+        method: Method::Post,
+        path: "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
+        access: Access::Permission("membership.suspend"),
+        body_limit: MAX_PROBE_BODY_BYTES,
+        timeout: REQUEST_TIMEOUT,
+    },
+];
+
+/// Returns the reviewed inventory as `(method, path, permission)` rows.
+///
+/// `permission` is `None` for a public route. Exposed so integration tests can
+/// prove deny-by-default coverage over the exact set the listener serves.
+#[must_use]
+pub fn declared_routes() -> Vec<(&'static str, &'static str, Option<&'static str>)> {
+    ROUTES
+        .iter()
+        .map(|spec| {
+            let method = match spec.method {
+                Method::Get => "GET",
+                Method::Post => "POST",
+            };
+            let permission = match spec.access {
+                Access::Public { .. } => None,
+                Access::Authenticated => Some("authenticated"),
+                Access::Permission(permission) => Some(permission),
+            };
+            (method, spec.path, permission)
+        })
+        .collect()
+}
+
+/// Reviewed route snapshot. Update only with an intentional route change and its tests.
+pub const ROUTE_INVENTORY_SNAPSHOT: &str = "GET /process/live access=public(container liveness probe) body<=1024 timeout=1000ms\nGET /process/ready access=public(container readiness probe) body<=1024 timeout=1000ms\nPOST /v1/auth/logout access=authenticated body<=1024 timeout=10000ms\nPOST /v1/organizations access=perm(organization.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches access=perm(branch.create) body<=32768 timeout=10000ms\nPOST /v1/organizations/{organization_id}/branches/{branch_id}/activate access=perm(branch.lifecycle) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/revoke access=perm(membership.revoke) body<=1024 timeout=10000ms\nPOST /v1/organizations/{organization_id}/members/{membership_id}/suspend access=perm(membership.suspend) body<=1024 timeout=10000ms";
+
+/// Errors returned while validating the static route inventory or serving HTTP.
+#[derive(Debug, Error)]
+pub enum ServeError {
+    /// The route list is invalid or differs from its reviewed snapshot.
+    #[error("HTTP route inventory is invalid")]
+    InvalidRouteInventory,
+    /// The HTTP listener terminated unexpectedly.
+    #[error("HTTP listener failed")]
+    Listener(#[source] std::io::Error),
+    /// Graceful shutdown exceeded its configured drain deadline.
+    #[error("HTTP listener drain deadline exceeded")]
+    DrainDeadlineExceeded,
+}
+
+/// Builds the single live router from its validated permission/body/deadline inventory.
+///
+/// Every declared protected route authenticates before typed request extraction
+/// and invokes a durable, transaction-authorized command. An undeclared
+/// protected route is a startup error; the unavailable organization activation
+/// route is absent from both the inventory and the router.
+///
+/// # Errors
+/// Returns [`ServeError::InvalidRouteInventory`] if declarations are invalid or the
+/// reviewed snapshot does not match.
+// FW-AXM-01: this is the reviewed route registry. Every route comes from
+// `ROUTES` with a declared access policy, body limit and deadline, and the
+// snapshot comparison in this function rejects an unreviewed route set.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "FW-AXM-01: the inventory registry is the only sanctioned `Router::route` call site; each spec is validated and snapshot-checked."
+)]
+pub fn app_router(state: Arc<AppState>) -> Result<Router, ServeError> {
+    let snapshot = validate_route_inventory()?;
+    if snapshot != ROUTE_INVENTORY_SNAPSHOT {
+        return Err(ServeError::InvalidRouteInventory);
+    }
+
+    let mut router = Router::new();
+    for spec in ROUTES {
+        router = router.route(spec.path, method_router(spec, &state)?);
+    }
+
+    Ok(router.with_state(state).layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(ingress_error))
+            .layer(LoadShedLayer::new())
+            .layer(ConcurrencyLimitLayer::new(MAX_IN_FLIGHT_CONNECTIONS))
+            .layer(RequestBodyLimitLayer::new(MAX_INGRESS_BODY_BYTES))
+            .layer(TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                REQUEST_TIMEOUT,
+            )),
+    ))
+}
+
+/// Builds the handler for one declared route. An undeclared method/path pair is
+/// rejected rather than silently served.
+fn method_router(
+    spec: &RouteSpec,
+    state: &Arc<AppState>,
+) -> Result<MethodRouter<Arc<AppState>>, ServeError> {
+    match (spec.method, spec.path, spec.access) {
+        (Method::Get, "/process/live", Access::Public { .. }) => Ok(bounded(spec, get(liveness))),
+        (Method::Get, "/process/ready", Access::Public { .. }) => Ok(bounded(spec, get(readiness))),
+        (Method::Post, "/v1/auth/logout", Access::Authenticated) => {
+            Ok(authenticated(spec, state, post(logout_route)))
+        }
+        (Method::Post, "/v1/organizations", Access::Permission(_)) => {
+            Ok(authenticated(spec, state, post(create_organization_route)))
+        }
+        (Method::Post, "/v1/organizations/{organization_id}/branches", Access::Permission(_)) => {
+            Ok(authenticated(spec, state, post(create_branch_route)))
+        }
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/branches/{branch_id}/activate",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(activate_branch_route))),
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/members/{membership_id}/revoke",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(revoke_member_route))),
+        (
+            Method::Post,
+            "/v1/organizations/{organization_id}/members/{membership_id}/suspend",
+            Access::Permission(_),
+        ) => Ok(authenticated(spec, state, post(suspend_member_route))),
+        // Any other declared protected route must have an explicit arm above.
+        // Falling through is a startup error, not a silent 503.
+        _ => Err(ServeError::InvalidRouteInventory),
+    }
+}
+
+/// Applies the declared body limit and request deadline to a public handler.
+fn bounded<S>(spec: &RouteSpec, handler: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    handler
+        .layer::<_, Infallible>(DefaultBodyLimit::max(spec.body_limit))
+        .layer::<_, Infallible>(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            spec.timeout,
+        ))
+}
+
+/// Applies the declared body limit, request deadline, and authentication
+/// middleware to a protected handler.
+fn authenticated<S>(
+    spec: &RouteSpec,
+    state: &Arc<AppState>,
+    handler: MethodRouter<S>,
+) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    bounded(spec, handler).route_layer(middleware::from_fn_with_state(
+        Arc::clone(state),
+        authenticate_protected_request,
+    ))
+}
+
+/// Serves the validated router and drains in-flight requests within the process deadline.
+///
+/// # Errors
+/// Returns a listener error or drain timeout. In either case the error contains no
+/// request data or credentials.
 pub async fn serve(
     listener: TcpListener,
     state: Arc<AppState>,
     shutdown: oneshot::Receiver<()>,
-) -> Vec<Subsystem> {
-    let mut shutdown = shutdown;
-    let semaphore = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
-    let mut in_flight = tokio::task::JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
-                let Ok(permit) = semaphore.clone().try_acquire_owned() else { continue };
-                let state = Arc::clone(&state);
-                in_flight.spawn(async move {
-                    let _permit = permit;
-                    handle_connection(stream, &state).await;
-                });
-            }
+) -> Result<Vec<Subsystem>, ServeError> {
+    let router = app_router(state)?;
+    let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+        // The sender dropping also requests shutdown; either outcome drains.
+        let _shutdown = shutdown.await;
+    });
+    match tokio::time::timeout(Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS), server).await {
+        Ok(Ok(())) => {
+            let mut coordinator = ShutdownCoordinator::new();
+            Ok(coordinator.shutdown().to_vec())
         }
+        Ok(Err(error)) => Err(ServeError::Listener(error)),
+        Err(_) => Err(ServeError::DrainDeadlineExceeded),
     }
-    let _ = tokio::time::timeout(
-        Duration::from_secs(SHUTDOWN_DRAIN_DEADLINE_SECS),
-        in_flight.join_all(),
-    )
-    .await;
-    let mut coordinator = crate::shutdown::ShutdownCoordinator::new();
-    coordinator.shutdown().to_vec()
 }
 
-async fn handle_connection(mut stream: TcpStream, state: &AppState) {
-    let mut buf = vec![0u8; PROBE_MAX_BYTES];
-    let read = tokio::time::timeout(
-        Duration::from_secs(PROBE_READ_TIMEOUT_SECS),
-        stream.read(&mut buf),
-    )
-    .await;
-    let n = match read {
-        Ok(Ok(n)) if n > 0 => n,
-        _ => return,
+fn validate_route_inventory() -> Result<String, ServeError> {
+    let mut lines = Vec::with_capacity(ROUTES.len());
+    for (index, spec) in ROUTES.iter().enumerate() {
+        let access_ok = match spec.access {
+            Access::Public { reason } => !reason.trim().is_empty(),
+            Access::Authenticated => true,
+            Access::Permission(permission) => !permission.trim().is_empty(),
+        };
+        let duplicate = ROUTES.get(..index).is_some_and(|prior| {
+            prior
+                .iter()
+                .any(|entry| entry.method == spec.method && entry.path == spec.path)
+        });
+        if !access_ok
+            || spec.body_limit == 0
+            || spec.body_limit > MAX_INGRESS_BODY_BYTES
+            || spec.timeout.is_zero()
+            || spec.timeout > Duration::from_secs(60)
+            || duplicate
+        {
+            return Err(ServeError::InvalidRouteInventory);
+        }
+        lines.push(render_route(spec));
+    }
+    lines.sort_unstable();
+    Ok(lines.join("\n"))
+}
+
+fn render_route(spec: &RouteSpec) -> String {
+    let method = match spec.method {
+        Method::Get => "GET",
+        Method::Post => "POST",
     };
-    let raw = &buf[..n];
-    let header_end = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
-        .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|p| p + 2))
-        .unwrap_or(n);
-    let headers_part = String::from_utf8_lossy(&raw[..header_end]);
-    let body_part = if header_end < n {
-        String::from_utf8_lossy(&raw[header_end..]).into_owned()
+    let access = match spec.access {
+        Access::Public { reason } => format!("public({reason})"),
+        Access::Authenticated => "authenticated".to_owned(),
+        Access::Permission(permission) => format!("perm({permission})"),
+    };
+    format!(
+        "{method} {} access={} body<={} timeout={}ms",
+        spec.path,
+        access,
+        spec.body_limit,
+        spec.timeout.as_millis()
+    )
+}
+
+async fn liveness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(json!({
+        "status": "live",
+        "service": state.service_name(),
+        "version": state.service_version(),
+    }))
+}
+
+async fn readiness(State(state): State<Arc<AppState>>) -> Response {
+    if state.runtime_ready().await {
+        (StatusCode::OK, Json(json!({"status": "ready"}))).into_response()
     } else {
-        String::new()
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "not_ready"})),
+        )
+            .into_response()
+    }
+}
+
+async fn logout_route(
+    State(state): State<Arc<AppState>>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    match state.logout_current_session(&security_context).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(&error),
+    }
+}
+
+async fn authenticate_protected_request(
+    State(state): State<Arc<AppState>>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    let authorization = header_text(request.headers(), header::AUTHORIZATION);
+    let session_selector = header_text(request.headers(), "session-id");
+    match state
+        .authenticate_request(authorization, session_selector)
+        .await
+    {
+        Ok(security_context) => {
+            request.extensions_mut().insert(security_context);
+            next.run(request).await
+        }
+        Err(error) => app_error_response(&error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticatedCreateOrganizationBody {
+    organization_id: String,
+    organization_name: String,
+    owner_membership_id: String,
+    default_branch_id: String,
+    default_branch_name: String,
+}
+
+async fn create_organization_route(
+    State(state): State<Arc<AppState>>,
+    Extension(security_context): Extension<SecurityContext>,
+    Json(body): Json<AuthenticatedCreateOrganizationBody>,
+) -> Response {
+    let request = CreateOrganizationRequest {
+        organization_id: body.organization_id,
+        organization_name: body.organization_name,
+        owner_membership_id: body.owner_membership_id,
+        owner_user_id: security_context.principal.subject_id.as_str().to_owned(),
+        default_branch_id: body.default_branch_id,
+        default_branch_name: body.default_branch_name,
     };
-    let first_line = headers_part.lines().next().unwrap_or("");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return;
+    if let Err(error) = validate_create_organization_input(&request) {
+        return app_error_response(&error);
     }
-    let method = parts[0];
-    let path = parts[1];
-    let (status_str, body) = dispatch_request(method, path, &body_part, state).await;
-    let response = format!(
-        "HTTP/1.1 {status_str}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-}
-
-pub async fn dispatch_request(
-    method: &str,
-    path: &str,
-    body: &str,
-    state: &AppState,
-) -> (&'static str, String) {
-    // Liveness / readiness probes remain authoritative and unconditional.
-    if method == "GET" {
-        if path == "/process/live" {
-            return (
-                "200 OK",
-                format!(
-                    "{{\"status\":\"live\",\"service\":\"{}\",\"version\":\"{}\"}}",
-                    json_escape(state.service_name()),
-                    json_escape(state.service_version())
-                ),
-            );
-        } else if path == "/process/ready" {
-            return ("200 OK", "{\"status\":\"ready\"}".to_string());
-        }
-    }
-
-    // Tenancy APIs (§28 PR-006). All mutations are bounded (§10.2) and
-    // validated before domain work (§39); tenant binding is enforced
-    // server-side (§27.1).
-    if method == "POST" {
-        let segments: Vec<&str> = path.split('/').collect();
-        if segments.len() >= 3 && segments[1] == "v1" && segments[2] == "organizations" {
-            if body.len() > sitolo_api::tenancy::bounds::MAX_TENANCY_BODY_BYTES {
-                return format_error_response(&AppError::Validation);
-            }
-            let svc = state.tenancy_service();
-            if segments.len() == 3 {
-                // POST /v1/organizations
-                let req: Result<CreateOrganizationRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_provision_organization(svc, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 && segments[4] == "branches" {
-                // POST /v1/organizations/{org_id}/branches
-                let org_id = segments[3];
-                let req: Result<CreateBranchRequest, _> = serde_json::from_str(body);
-                match req {
-                    Ok(parsed) => match handle_create_branch(svc, org_id, parsed).await {
-                        Ok(res) => {
-                            return (
-                                "201 Created",
-                                serde_json::to_string(&res).unwrap_or_default(),
-                            );
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    Err(_) => return format_error_response(&AppError::Validation),
-                }
-            } else if segments.len() == 5 {
-                let org_id = segments[3];
-                let action = segments[4];
-                match action {
-                    "activate" => match handle_activate_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => match handle_begin_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "close" => match handle_close_organization(svc, org_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            } else if segments.len() == 7 && segments[4] == "branches" {
-                let org_id = segments[3];
-                let branch_id = segments[5];
-                let action = segments[6];
-                match action {
-                    "activate" => match handle_activate_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "suspend" => match handle_suspend_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "resume" => match handle_resume_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    "begin_close" => {
-                        match handle_begin_close_branch(svc, org_id, branch_id).await {
-                            Ok(res) => {
-                                return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                            }
-                            Err(e) => return format_error_response(&e),
-                        }
-                    }
-                    "close" => match handle_close_branch(svc, org_id, branch_id).await {
-                        Ok(res) => {
-                            return ("200 OK", serde_json::to_string(&res).unwrap_or_default());
-                        }
-                        Err(e) => return format_error_response(&e),
-                    },
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    ("404 Not Found", "{\"status\":\"not_found\"}".to_string())
-}
-
-fn format_error_response(err: &AppError) -> (&'static str, String) {
-    let status = match err {
-        AppError::Validation => "422 Unprocessable Entity",
-        AppError::Authentication => "401 Unauthorized",
-        AppError::Authorization => "403 Forbidden",
-        AppError::NotFound => "404 Not Found",
-        AppError::Conflict | AppError::IdempotencyConflict => "409 Conflict",
-        AppError::RateLimited => "429 Too Many Requests",
-        AppError::DependencyUnavailable
-        | AppError::UpstreamInvalidResponse
-        | AppError::UpstreamTimeout
-        | AppError::UnknownOutcome
-        | AppError::Internal => "500 Internal Server Error",
+    let organization_id = match OrganizationId::new(request.organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
     };
-    let body = ProblemDetails::from_error(err, &RequestId::new_server()).json();
-    (status, body)
+    let membership_id = match MembershipId::new(request.owner_membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let owner_user_id = match TenantUserId::new(request.owner_user_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(request.default_branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(&AppError::DependencyUnavailable);
+    };
+    match service
+        .provision_organization(
+            organization_id,
+            &request.organization_name,
+            membership_id,
+            owner_user_id,
+            branch_id,
+            &request.default_branch_name,
+        )
+        .await
+    {
+        Ok(bundle) => (
+            StatusCode::CREATED,
+            Json(ProvisionedOrganizationResponse::from(&bundle)),
+        )
+            .into_response(),
+        Err(error) => app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    }
 }
 
-/// Minimal JSON string escaping for operator-controlled identity fields.
-fn json_escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(c),
-        }
+async fn create_branch_route(
+    State(state): State<Arc<AppState>>,
+    Path(organization_id): Path<String>,
+    Extension(security_context): Extension<SecurityContext>,
+    Json(request): Json<CreateBranchRequest>,
+) -> Response {
+    if let Err(error) = validate_create_branch_input(&organization_id, &request) {
+        return app_error_response(&error);
     }
-    out
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(request.branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(&AppError::DependencyUnavailable);
+    };
+    match service
+        .create_branch_for_authenticated_user(
+            &security_context,
+            branch_id,
+            organization_id,
+            &request.name,
+        )
+        .await
+    {
+        Ok(branch) => Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
+    }
+}
+
+async fn activate_branch_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, branch_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let branch_id = match BranchId::new(branch_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(&AppError::DependencyUnavailable);
+    };
+    match service
+        .activate_branch_for_authenticated_user(&security_context, organization_id, branch_id)
+        .await
+    {
+        Ok(branch) => Json(BranchResponse::from(&branch)).into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
+    }
+}
+
+async fn revoke_member_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, membership_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let membership_id = match MembershipId::new(membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(&AppError::DependencyUnavailable);
+    };
+    match service
+        .revoke_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
+        .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
+    }
+}
+
+async fn suspend_member_route(
+    State(state): State<Arc<AppState>>,
+    Path((organization_id, membership_id)): Path<(String, String)>,
+    Extension(security_context): Extension<SecurityContext>,
+) -> Response {
+    let organization_id = match OrganizationId::new(organization_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let membership_id = match MembershipId::new(membership_id) {
+        Ok(value) => value,
+        Err(error) => return app_error_response(&sitolo_api::map_tenancy_error(&error)),
+    };
+    let Some(service) = state.tenancy_service() else {
+        return app_error_response(&AppError::DependencyUnavailable);
+    };
+    match service
+        .suspend_member_for_authenticated_user(&security_context, &organization_id, &membership_id)
+        .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => app_error_response(&map_authorized_tenancy_error(&error)),
+    }
+}
+
+fn header_text(headers: &HeaderMap, name: impl header::AsHeaderName) -> Option<&str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+async fn ingress_error(error: Box<dyn StdError + Send + Sync>) -> Response {
+    tracing::warn!(error_class = %std::any::type_name_of_val(error.as_ref()), "HTTP ingress rejected request");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "service temporarily unavailable",
+    )
+        .into_response()
+}
+
+fn app_error_response(error: &AppError) -> Response {
+    let request_id = RequestId::new_server();
+    let details = ProblemDetails::from_error(error, &request_id);
+    let status = StatusCode::from_u16(details.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/problem+json")],
+        details.json(),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -277,8 +603,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_escape_neutralizes_quotes() {
-        assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
-        assert_eq!(json_escape("plain"), "plain");
+    fn route_inventory_matches_reviewed_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(validate_route_inventory()?, ROUTE_INVENTORY_SNAPSHOT);
+        Ok(())
     }
 }

@@ -4,24 +4,40 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "PostgreSQL and in-memory persistence adapters for Sitolo."
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []
-test-support = []
 
 [dependencies]
+chrono = { workspace = true }
+serde_json = { workspace = true }
 async-trait.workspace = true
 sha2.workspace = true
 sitolo-auth.workspace = true
+sitolo-application = { path = "../sitolo-application" }
 sitolo-audit.workspace = true
 sitolo-authz = { path = "../sitolo-authz" }
 sitolo-config.workspace = true
 sitolo-domain = { path = "../sitolo-domain" }
+sitolo-events.workspace = true
 sitolo-security.workspace = true
 sitolo-tenancy = { path = "../sitolo-tenancy" }
-sqlx.workspace = true
+rustls.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
 uuid.workspace = true
+sitolo-testkit = { path = "../sitolo-testkit" }
+
+[lints]
+workspace = true

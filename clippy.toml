@@ -1,1 +1,58 @@
-msrv = "1.98.1"
+# Framework APIs that are unsafe by design or violate the repository runtime policy.
+# Clippy reads this file at the workspace root; `clippy::disallowed_methods` and
+# `clippy::disallowed_types` are deny in `[workspace.lints.clippy]`, so every entry
+# is a build error at the call site.
+#
+# Reconciliation with `.agents/skills/rust-enterprise-frameworks/references/clippy.service.toml`
+# (2026-10-25): every reference ban is either active below or deliberately omitted
+# with its reason recorded here. Do not add a ban without a call-site inventory.
+# A ban that fires on a sanctioned pattern trains blanket suppression and is worse
+# than no ban.
+#
+# Deliberate omission: `tokio::runtime::Runtime::block_on`.
+# Verified on the pinned toolchain with a scratch crate: the lint fires on
+# `#[tokio::main]` (the 2 sanctioned binary entry points) *and* on every
+# `#[tokio::test]` expansion (183 test attributes in this workspace), because the
+# test macro expands to `Runtime::block_on`. A workspace-level ban would therefore
+# require 183 suppressions. The runtime-creation risk is controlled instead by
+# banning `Builder::new_multi_thread` and `Runtime::new` (a library must never
+# build a runtime), by the `tokio::spawn` ban, and by the crate-boundary contract.
+# Revisit if tokio changes the `#[tokio::test]` expansion.
+disallowed-methods = [
+  # ---- Async runtime (FW-TOK) ----
+  { path = "std::thread::sleep", reason = "FW-TOK-02 / BP-AS-01: blocks the async runtime; use tokio::time::sleep." },
+  { path = "tokio::spawn", reason = "FW-TOK-03 / BP-AS-04: fire-and-forget task; keep the JoinHandle and await or abort it, or use an owned JoinSet." },
+  { path = "tokio::runtime::Builder::new_multi_thread", reason = "FW-TOK-01: only a binary entry point may construct a runtime; libraries receive a runtime or an executor." },
+  { path = "tokio::runtime::Runtime::new", reason = "FW-TOK-01: only a binary entry point may construct a runtime; libraries receive a runtime or an executor." },
+
+  # ---- Outbound HTTP (FW-RQW) ----
+  { path = "reqwest::Client::new", reason = "FW-RQW-01 / SEC-TLS-04: a client without explicit timeouts is forbidden; build through the policy builder." },
+  { path = "reqwest::Client::builder", reason = "FW-RQW-01: the policy builder is the only sanctioned constructor; it sets timeouts, TLS and pool bounds." },
+
+  # ---- HTTP routing (FW-AXM) ----
+  { path = "axum::Router::route", reason = "FW-AXM-01: routes are registered only through the reviewed inventory registry, which requires a permission, body limit and timeout." },
+
+  # ---- Middleware (FW-TWR) ----
+  { path = "tower_http::timeout::TimeoutLayer::new", reason = "FW-TWR-01: deprecated in tower-http 0.7; use TimeoutLayer::with_status_code." },
+
+  # ---- Configuration (FW-CLP, IMP-6.1) ----
+  { path = "clap::Parser::parse", reason = "FW-CLP-01: parse() exits the process on error; use try_parse() and map the error." },
+  { path = "clap::Command::get_matches", reason = "FW-CLP-01: get_matches() exits the process on error; use try_get_matches()." },
+  { path = "std::env::var", reason = "FW-CLP-02 / IMP-6.1: configuration is read once at the binary boundary; only the local-only secret adapter may read the environment." },
+  { path = "std::env::var_os", reason = "FW-CLP-02 / IMP-6.1: configuration is read once at the binary boundary; only the local-only secret adapter may read the environment." },
+
+  # ---- Serialisation limits (FW-SRD) ----
+  # `serde_json::de::Deserializer::disable_recursion_limit` is not listed here:
+  # the method only exists when the `unbounded_depth` feature is enabled, so a
+  # Clippy path ban is unreachable and `-D warnings` rejects it as dead config.
+  # The enforcing control is the `serde_json/unbounded_depth` feature denial in
+  # `deny.toml`, which fails the supply-chain gate if anything enables it.
+
+  # ---- TLS (FW-RLS) ----
+  { path = "rustls::ClientConfig::dangerous", reason = "FW-RLS-02 / SEC-TLS-03: certificate verification must not be disabled or replaced." },
+  { path = "rustls::client::danger::DangerousClientConfig::set_certificate_verifier", reason = "FW-RLS-02 / SEC-TLS-03: certificate verification must remain on the approved validation path." },
+]
+disallowed-types = [
+  # ---- Blocking HTTP in async services (FW-RQW-02) ----
+  { path = "reqwest::blocking::Client", reason = "FW-RQW-02 / BP-AS-01: blocking HTTP is forbidden inside async services." },
+]

@@ -15,6 +15,17 @@ use thiserror::Error;
 use crate::value::SecretValue;
 use crate::{SecretClass, SecretRef};
 
+/// Environment-variable namespace for development secret *values*.
+///
+/// This namespace is deliberately disjoint from the canonical configuration
+/// namespace (`SITOLO__`). The configuration loader treats every `SITOLO__`
+/// key as configuration and rejects unknown keys; a secret value placed there
+/// would fail startup before the provider could resolve it. The single
+/// underscore after `SITOLO` means `SITOLO_SECRET__...` never matches the
+/// `SITOLO__` prefix, so configuration parsing and secret ingestion can share
+/// one process environment without colliding.
+pub const SECRET_ENV_PREFIX: &str = "SITOLO_SECRET__";
+
 /// Errors produced by a [`SecretProvider`].
 ///
 /// Secrets fail closed: a missing, invalid, or expired secret is never replaced
@@ -25,21 +36,42 @@ use crate::{SecretClass, SecretRef};
 /// naming, so they never enter error strings, logs, or telemetry.
 #[derive(Debug, Error)]
 pub enum SecretError {
+    /// The secret authority holds no value for the requested reference.
     #[error("secret missing: {class} ref {reference}")]
     Missing {
+        /// Operational class of the secret that could not be resolved.
         class: SecretClass,
+        /// Non-secret reference fingerprint, for correlation only.
         reference: String,
     },
+    /// The secret authority could not be reached.
     #[error("secret provider unavailable for {class}")]
-    Unavailable { class: SecretClass },
+    Unavailable {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The secret authority refused access to the credential.
     #[error("secret provider denied access for {class}")]
-    ProviderAuthorizationDenied { class: SecretClass },
+    ProviderAuthorizationDenied {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The resolved material failed validation for its class.
     #[error("secret invalid for {class}")]
-    Invalid { class: SecretClass },
+    Invalid {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The resolved material is past its expiry.
     #[error("secret expired for {class}")]
-    Expired { class: SecretClass },
+    Expired {
+        /// Operational class of the secret that was requested.
+        class: SecretClass,
+    },
+    /// The development environment provider was selected in production.
     #[error("local secret provider is forbidden in the current environment")]
     LocalProviderForbidden,
+    /// The provider failed for a reason it cannot classify more precisely.
     #[error("secret provider failure: {0}")]
     Other(String),
 }
@@ -63,6 +95,7 @@ pub trait SecretProvider: Send + Sync {
 /// secret *class* maps to a variable. Two references of the same class
 /// therefore resolve through the same variable by design. Changing a path
 /// does not change which credential is selected.
+#[derive(Debug)]
 pub struct EnvSecretProvider {
     production: bool,
     /// Maps a `SecretClass` to the environment variable name it should read.
@@ -71,6 +104,7 @@ pub struct EnvSecretProvider {
 
 impl EnvSecretProvider {
     /// `production = true` hard-fails all reads.
+    #[must_use]
     pub fn new(production: bool) -> Self {
         EnvSecretProvider {
             production,
@@ -85,22 +119,32 @@ impl EnvSecretProvider {
 }
 
 /// Default environment variable names for each secret class.
+///
+/// Every name uses [`SECRET_ENV_PREFIX`], never the ordinary `SITOLO__`
+/// configuration namespace.
 fn default_env_name(class: SecretClass) -> &'static str {
     match class {
-        SecretClass::Database => "SITOLO__DATABASE__PASSWORD",
-        SecretClass::Identity => "SITOLO__IDENTITY__CLIENT_SECRET",
-        SecretClass::Payment => "SITOLO__PAYMENT__CREDENTIAL",
-        SecretClass::Webhook => "SITOLO__WEBHOOK__VERIFICATION_SECRET",
-        SecretClass::MraTerminal => "SITOLO__MRA__TERMINAL_SECRET",
-        SecretClass::Telemetry => "SITOLO__TELEMETRY__EXPORTER_CREDENTIAL",
-        SecretClass::SigningKey => "SITOLO__SIGNING_KEY",
-        SecretClass::ObjectStorage => "SITOLO__OBJECT_STORAGE__CREDENTIAL",
-        SecretClass::Service => "SITOLO__SERVICE__CREDENTIAL",
+        SecretClass::Database => "SITOLO_SECRET__DATABASE__PASSWORD",
+        SecretClass::Identity => "SITOLO_SECRET__IDENTITY__CLIENT_SECRET",
+        SecretClass::Payment => "SITOLO_SECRET__PAYMENT__CREDENTIAL",
+        SecretClass::Webhook => "SITOLO_SECRET__WEBHOOK__VERIFICATION_SECRET",
+        SecretClass::MraTerminal => "SITOLO_SECRET__MRA__TERMINAL_SECRET",
+        SecretClass::Telemetry => "SITOLO_SECRET__TELEMETRY__EXPORTER_CREDENTIAL",
+        SecretClass::SigningKey => "SITOLO_SECRET__SIGNING_KEY",
+        SecretClass::ObjectStorage => "SITOLO_SECRET__OBJECT_STORAGE__CREDENTIAL",
+        SecretClass::Service => "SITOLO_SECRET__SERVICE__CREDENTIAL",
     }
 }
 
 #[async_trait]
 impl SecretProvider for EnvSecretProvider {
+    // FW-CLP-02: the local-only provider is the single sanctioned environment
+    // read. It refuses to serve in production, where the managed secret store is
+    // the only provider, so this cannot become a hidden production config path.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "FW-CLP-02: the local-only secret adapter is the one sanctioned environment read and is rejected in production."
+    )]
     async fn get(&self, reference: &SecretRef) -> Result<SecretValue, SecretError> {
         if self.production {
             return Err(SecretError::LocalProviderForbidden);
@@ -123,18 +167,48 @@ mod tests {
     const SENTINEL: &str = "TEST_ONLY_PROVIDER_SECRET_001";
 
     #[test]
-    fn missing_secret_error_carries_no_path_or_value() {
+    fn default_secret_names_use_the_dedicated_secret_namespace() {
+        let classes = [
+            SecretClass::Database,
+            SecretClass::Identity,
+            SecretClass::Payment,
+            SecretClass::Webhook,
+            SecretClass::MraTerminal,
+            SecretClass::Telemetry,
+            SecretClass::SigningKey,
+            SecretClass::ObjectStorage,
+            SecretClass::Service,
+        ];
+        for class in classes {
+            let name = default_env_name(class);
+            assert!(
+                name.starts_with(SECRET_ENV_PREFIX),
+                "{class:?} maps to {name}, outside {SECRET_ENV_PREFIX}"
+            );
+            assert!(
+                !name.starts_with("SITOLO__"),
+                "{class:?} maps into the configuration namespace: {name}"
+            );
+        }
+        assert_eq!(
+            default_env_name(SecretClass::Database),
+            "SITOLO_SECRET__DATABASE__PASSWORD"
+        );
+    }
+
+    #[test]
+    fn missing_secret_error_carries_no_path_or_value() -> Result<(), Box<dyn std::error::Error>> {
         // F-014: the error identifies the class and a non-secret reference
         // fingerprint, never the raw path or a value.
         let error = SecretError::Missing {
             class: SecretClass::Database,
-            reference: SecretRef::new(SecretClass::Database, "prod/sitolo/db")
-                .unwrap()
+            reference: SecretRef::new(SecretClass::Database, "prod/sitolo/db")?
                 .reference_fingerprint(),
         };
         let text = format!("{error}");
         assert!(text.contains("database"));
         assert!(!text.contains("prod/sitolo/db"));
         assert!(!text.contains(SENTINEL));
+        Ok(())
     }
 }

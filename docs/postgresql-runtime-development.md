@@ -22,7 +22,19 @@ SITOLO__DATABASE__USER=sitolo_app_runtime
 SITOLO__DATABASE__PASSWORD_REF=development/sitolo/db
 ```
 
-For isolated development only, the environment secret provider resolves the synthetic password from `SITOLO__DATABASE__PASSWORD`. Do not commit that value, `.env` files, connection URLs, or provider credentials. The local provider is rejected in production.
+For isolated development only, the environment secret provider resolves the
+synthetic password from the disjoint secret namespace:
+
+```text
+SITOLO_SECRET__DATABASE__PASSWORD=replace-with-local-disposable-password
+```
+
+`SITOLO_SECRET__` is not configuration and is never parsed by the configuration
+loader; the former `SITOLO__DATABASE__PASSWORD` name is an unknown configuration
+key and fails startup. Do not commit that value, real `.env` files, connection
+URLs, or provider credentials. The local provider is rejected in production. See
+[Environment configuration reference](environment-configuration-reference.md)
+and `.env.example`; the example file is documentation, not an automatic loader.
 
 Use a separate future migration-owner role and runtime application role. The runtime role must not be a PostgreSQL superuser, `BYPASSRLS`, role creator, database creator, or unrestricted schema owner. Phase 5 will define actual grants, schemas, migrations, RLS, and real PostgreSQL integration tests.
 
